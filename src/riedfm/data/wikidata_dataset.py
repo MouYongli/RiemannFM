@@ -90,7 +90,7 @@ class RieDFMWikiDataDataset(Dataset):
             # Return dummy data for development
             return self._dummy_graph()
 
-        node_ids, subgraph_triples = self.sampler.sample()
+        node_ids, subgraph_triples, depth_map = self.sampler.sample()
         N = len(node_ids)
 
         # Build node coordinates
@@ -105,11 +105,16 @@ class RieDFMWikiDataDataset(Dataset):
         for h, r, t in subgraph_triples:
             edge_types[h, t] = r
 
-        # Get hierarchy depths
+        # Get hierarchy depths from sampler depth_map or entity info
         depth = torch.zeros(N, dtype=torch.long)
+        for local_idx, hop_dist in depth_map.items():
+            depth[local_idx] = hop_dist
+        # Override with entity-level depth info if available
         for i, nid in enumerate(node_ids):
             if nid in self.entity_info:
-                depth[i] = self.entity_info[nid].get("depth", 0)
+                entity_depth = self.entity_info[nid].get("depth", None)
+                if entity_depth is not None:
+                    depth[i] = entity_depth
 
         # Get entity IDs and labels
         entity_ids = [str(nid) for nid in node_ids]

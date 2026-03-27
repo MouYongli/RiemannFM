@@ -1,8 +1,8 @@
 """Hierarchical subgraph sampling from knowledge graphs.
 
 Implements the sampling strategies described in the paper:
-1. Random seed entity selection
-2. k-hop neighborhood expansion
+1. Random seed entity selection or specific seed
+2. k-hop neighborhood expansion with BFS depth tracking
 3. Importance sampling (high-degree nodes, rare relations)
 4. Fan-out sampling for one-to-many relations
 """
@@ -54,32 +54,49 @@ class RieDFMSubgraphSampler:
         max_count = max(self.relation_count.values()) if self.relation_count else 1
         self.relation_weight = {r: max_count / c for r, c in self.relation_count.items()}
 
-    def sample(self) -> tuple[list[int], list[tuple[int, int, int]]]:
-        """Sample a subgraph.
+    def sample(self) -> tuple[list[int], list[tuple[int, int, int]], dict[int, int]]:
+        """Sample a subgraph from a random seed.
 
         Returns:
-            (node_ids, subgraph_triples): List of node IDs and list of
-            (local_head, relation, local_tail) triples within the subgraph.
+            (node_ids, subgraph_triples, depth_map):
+                - node_ids: Global node IDs in the subgraph.
+                - subgraph_triples: (local_head, relation, local_tail) triples.
+                - depth_map: Mapping from local node index to BFS hop distance from seed.
         """
-        # 1. Select seed entity
         seed = random.choice(self.all_nodes)
+        return self.sample_from_seed(seed)
 
-        # 2. BFS expansion
+    def sample_from_seed(self, seed: int) -> tuple[list[int], list[tuple[int, int, int]], dict[int, int]]:
+        """Sample a subgraph starting from a specific seed node.
+
+        Args:
+            seed: Seed entity ID to start BFS from.
+
+        Returns:
+            (node_ids, subgraph_triples, depth_map):
+                - node_ids: Global node IDs in the subgraph.
+                - subgraph_triples: (local_head, relation, local_tail) triples.
+                - depth_map: Mapping from local node index to BFS hop distance from seed.
+        """
+        if seed not in self.adj:
+            # Seed not in graph, return minimal subgraph
+            return [seed], [], {0: 0}
+
+        # BFS expansion with depth tracking
         visited = {seed}
+        node_depth: dict[int, int] = {seed: 0}
         frontier = [seed]
 
-        for _hop in range(self.max_hops):
+        for hop in range(1, self.max_hops + 1):
             if len(visited) >= self.max_nodes:
                 break
             next_frontier = []
             for node in frontier:
                 neighbors = self.adj[node]
                 if self.importance_sample:
-                    # Weight by inverse relation frequency (prefer rare relations)
                     weights = [self.relation_weight.get(r, 1.0) for _, r in neighbors]
                     total_w = sum(weights)
                     weights = [w / total_w for w in weights]
-                    # Sample subset of neighbors
                     k = min(len(neighbors), self.max_nodes - len(visited))
                     if k > 0 and len(neighbors) > 0:
                         indices = random.choices(range(len(neighbors)), weights=weights, k=k)
@@ -92,11 +109,12 @@ class RieDFMSubgraphSampler:
                 for neighbor, _rel in selected:
                     if neighbor not in visited and len(visited) < self.max_nodes:
                         visited.add(neighbor)
+                        node_depth[neighbor] = hop
                         next_frontier.append(neighbor)
 
             frontier = next_frontier
 
-        # 3. Extract subgraph triples
+        # Extract subgraph triples with local indexing
         node_list = list(visited)
         node_set = visited
         node_to_local = {n: i for i, n in enumerate(node_list)}
@@ -109,23 +127,27 @@ class RieDFMSubgraphSampler:
                     local_t = node_to_local[neighbor]
                     subgraph_triples.append((local_h, rel, local_t))
 
-        return node_list, subgraph_triples
+        # Build depth_map with local indices
+        depth_map = {node_to_local[n]: d for n, d in node_depth.items()}
 
-    def sample_fanout(self, head: int, relation: int) -> tuple[list[int], list[tuple[int, int, int]]]:
+        return node_list, subgraph_triples, depth_map
+
+    def sample_fanout(self, head: int, relation: int) -> tuple[list[int], list[tuple[int, int, int]], dict[int, int]]:
         """Sample a complete fan-out subgraph for one-to-many relations.
-
-        Collects all tails for a given (head, relation) pair.
 
         Args:
             head: Head entity ID.
             relation: Relation type ID.
 
         Returns:
-            (node_ids, subgraph_triples) for the fan-out subgraph.
+            (node_ids, subgraph_triples, depth_map) for the fan-out subgraph.
         """
         tails = [n for n, r in self.adj[head] if r == relation]
         nodes = [head, *tails[: self.max_nodes - 1]]
         node_to_local = {n: i for i, n in enumerate(nodes)}
 
         triples = [(0, relation, node_to_local[t]) for t in tails if t in node_to_local]
-        return nodes, triples
+        depth_map = {0: 0}
+        for i in range(1, len(nodes)):
+            depth_map[i] = 1
+        return nodes, triples, depth_map

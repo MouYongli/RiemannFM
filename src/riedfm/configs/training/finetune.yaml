@@ -15,3 +15,7 @@ temperature: 0.07
 activation_checkpointing: false
 use_riemannian_optim: true
 freeze_backbone_layers: 0
+
+eval_every: 5
+eval_batch_size: 64
+patience: 10

@@ -1,10 +1,15 @@
 """RieDFM-G evaluation script.
 
-Usage:
-    python -m riedfm.cli.evaluate checkpoint=path/to/checkpoint.pt data=fb15k237
+Link prediction:
+    python -m riedfm.cli.evaluate checkpoint=outputs/best_model.pt data=fb15k237
+
+Graph generation:
+    python -m riedfm.cli.evaluate checkpoint=outputs/pretrain/checkpoint.pt eval.mode=generation
 """
 
+import json
 import logging
+from pathlib import Path
 
 import hydra
 import torch
@@ -19,7 +24,7 @@ def main(cfg: DictConfig):
 
     device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
 
-    # Build manifold and model
+    # ─── Build manifold ───────────────────────────────────────────────
     from riedfm.manifolds.product import RieDFMProductManifold
 
     manifold = RieDFMProductManifold(
@@ -28,52 +33,165 @@ def main(cfg: DictConfig):
         dim_euclidean=cfg.manifold.dim_euclidean,
     ).to(device)
 
-    from riedfm.models.riedfm_g import RieDFMG
+    results: dict[str, object] = {}
+    eval_mode = cfg.eval.get("mode", "link_prediction")
 
-    model = RieDFMG(
-        manifold=manifold,
-        num_layers=cfg.model.num_layers,
-        node_dim=cfg.model.node_dim,
-        edge_dim=cfg.model.edge_dim,
-        num_heads=cfg.model.num_heads,
-        num_edge_types=cfg.data.num_edge_types,
-        text_dim=cfg.model.text_dim,
-        dropout=0.0,  # No dropout during eval
+    # ─── Link Prediction Evaluation ───────────────────────────────────
+    if eval_mode in ("link_prediction", "all"):
+        logger.info("Running link prediction evaluation...")
+        results.update(_evaluate_link_prediction(cfg, manifold, device))
+
+    # ─── Graph Generation Evaluation ──────────────────────────────────
+    if eval_mode in ("generation", "all"):
+        logger.info("Running graph generation evaluation...")
+        results.update(_evaluate_generation(cfg, manifold, device))
+
+    # ─── Save results ─────────────────────────────────────────────────
+    output_dir = Path(cfg.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    results_path = output_dir / "eval_results.json"
+
+    # Convert non-serializable types
+    serializable = {k: float(v) if isinstance(v, int | float) else v for k, v in results.items()}
+    with open(results_path, "w") as f:
+        json.dump(serializable, f, indent=2)
+
+    logger.info(f"Results saved to {results_path}")
+    for k, v in results.items():
+        if isinstance(v, float):
+            logger.info(f"  {k}: {v:.4f}")
+        else:
+            logger.info(f"  {k}: {v}")
+
+    logger.info("Evaluation complete!")
+
+
+def _evaluate_link_prediction(
+    cfg: DictConfig,
+    manifold: object,
+    device: torch.device,
+) -> dict[str, float]:
+    """Run link prediction evaluation on test set."""
+    from riedfm.data.kg_datasets import RieDFMKGDataset
+    from riedfm.models.downstream.link_prediction import RieDFMLinkPredictionHead
+    from riedfm.utils.metrics import evaluate_link_prediction
+
+    test_dataset = RieDFMKGDataset(
+        data_dir=cfg.data.data_dir,
+        manifold=manifold,  # type: ignore[arg-type]
+        split="test",
+        mode="triple",
+    )
+
+    if test_dataset.num_entities == 0:
+        logger.error("No test data found.")
+        return {}
+
+    # Build and load link prediction head
+    lp_head = RieDFMLinkPredictionHead(
+        manifold=manifold,  # type: ignore[arg-type]
+        num_entities=test_dataset.num_entities,
+        num_relations=test_dataset.num_relations,
     ).to(device)
 
     # Load checkpoint
     checkpoint_path = cfg.get("checkpoint", None)
     if checkpoint_path:
-        from riedfm.utils.checkpoint import load_checkpoint
+        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+        if "model_state_dict" in checkpoint:
+            lp_head.load_state_dict(checkpoint["model_state_dict"], strict=False)
+            logger.info(f"Loaded checkpoint from {checkpoint_path}")
+        else:
+            logger.warning("Checkpoint has no model_state_dict, using random weights")
 
-        load_checkpoint(checkpoint_path, model=model, device=device)
-        logger.info(f"Loaded checkpoint from {checkpoint_path}")
+    lp_head.eval()
 
+    results = evaluate_link_prediction(
+        lp_head,
+        test_dataset,
+        device,
+        batch_size=cfg.eval.get("batch_size", 64),
+    )
+
+    return {f"lp_{k}": v for k, v in results.items()}
+
+
+def _evaluate_generation(
+    cfg: DictConfig,
+    manifold: object,
+    device: torch.device,
+) -> dict[str, float]:
+    """Run graph generation evaluation."""
+    from riedfm.models.riedfm_g import RieDFMG
+    from riedfm.utils.metrics import clustering_mmd, compute_vun, degree_mmd, spectral_mmd
+
+    # Build model
+    model = RieDFMG(
+        manifold=manifold,  # type: ignore[arg-type]
+        num_layers=cfg.model.num_layers,
+        node_dim=cfg.model.node_dim,
+        edge_dim=cfg.model.edge_dim,
+        num_heads=cfg.model.num_heads,
+        num_edge_types=cfg.data.num_edge_types,
+        dropout=0.0,
+    ).to(device)
+
+    # Load checkpoint
+    checkpoint_path = cfg.get("checkpoint", None)
+    if checkpoint_path:
+        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+        if "model_state_dict" in checkpoint:
+            model.load_state_dict(checkpoint["model_state_dict"], strict=False)
     model.eval()
 
-    # Generate graphs
-    logger.info(f"Generating {cfg.eval.num_generation_samples} graphs...")
-    generated_graphs = []
-    with torch.no_grad():
-        for i in range(cfg.eval.num_generation_samples):
-            x, e = model.generate(
-                num_nodes=cfg.data.max_nodes,
-                num_steps=cfg.eval.num_inference_steps,
-                device=device,
-            )
-            generated_graphs.append((x.cpu(), e.cpu()))
+    num_samples = cfg.eval.get("num_generation_samples", 100)
+    num_steps = cfg.eval.get("num_inference_steps", 100)
+    max_nodes = cfg.data.get("max_nodes", 32)
 
-            if (i + 1) % 100 == 0:
-                logger.info(f"Generated {i + 1}/{cfg.eval.num_generation_samples} graphs")
+    # Generate graphs
+    logger.info(f"Generating {num_samples} graphs...")
+    gen_adjs = []
+    with torch.no_grad():
+        for i in range(num_samples):
+            _x, e = model.generate(num_nodes=max_nodes, num_steps=num_steps, device=device)
+            gen_adjs.append(e.cpu().numpy())
+            if (i + 1) % 50 == 0:
+                logger.info(f"  Generated {i + 1}/{num_samples}")
+
+    # Load reference graphs from dataset
+    from riedfm.data.kg_datasets import RieDFMKGDataset
+
+    ref_dataset = RieDFMKGDataset(
+        data_dir=cfg.data.data_dir,
+        manifold=manifold,  # type: ignore[arg-type]
+        split="test",
+        mode="subgraph",
+        max_nodes=max_nodes,
+    )
+
+    num_ref = min(len(ref_dataset), num_samples)
+    ref_adjs = []
+    for i in range(num_ref):
+        sample = ref_dataset[i]
+        if hasattr(sample, "edge_types"):
+            ref_adjs.append(sample.edge_types.numpy())
+
+    if not ref_adjs:
+        logger.warning("No reference graphs available. Skipping generation metrics.")
+        return {}
 
     # Compute metrics
-    from riedfm.utils.metrics import compute_vun
+    results: dict[str, float] = {}
+    results["gen_degree_mmd"] = degree_mmd(gen_adjs, ref_adjs)
+    results["gen_clustering_mmd"] = clustering_mmd(gen_adjs, ref_adjs)
+    results["gen_spectral_mmd"] = spectral_mmd(gen_adjs, ref_adjs)
 
-    adj_matrices = [e.numpy() for _, e in generated_graphs]
-    vun = compute_vun(adj_matrices, adj_matrices[:10])  # Placeholder ref graphs
-    logger.info(f"V.U.N. metrics: {vun}")
+    vun = compute_vun(gen_adjs, ref_adjs)
+    results["gen_validity"] = vun["validity"]
+    results["gen_uniqueness"] = vun["uniqueness"]
+    results["gen_novelty"] = vun["novelty"]
 
-    logger.info("Evaluation complete!")
+    return results
 
 
 if __name__ == "__main__":

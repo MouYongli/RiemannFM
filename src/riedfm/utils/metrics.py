@@ -7,6 +7,7 @@ Includes:
 """
 
 import numpy as np
+import torch
 from torch import Tensor
 
 
@@ -105,6 +106,89 @@ def mean_reciprocal_rank(ranks: Tensor) -> float:
 def hits_at_k(ranks: Tensor, k: int) -> float:
     """Compute Hits@K from a tensor of ranks."""
     return float((ranks <= k).float().mean().item())
+
+
+def compute_filtered_rank(
+    scores: Tensor,
+    true_idx: int,
+    filter_ids: set[int] | None = None,
+) -> int:
+    """Compute filtered rank for a single prediction.
+
+    Standard KG evaluation protocol: rank the true entity among all entities,
+    but exclude other correct answers from the ranking.
+
+    Args:
+        scores: Scores for all entities, shape (num_entities,).
+        true_idx: Index of the true entity.
+        filter_ids: Set of entity indices that are also correct (to exclude).
+
+    Returns:
+        Filtered rank (1-based).
+    """
+    true_score = scores[true_idx].item()
+    # Count how many entities have a strictly higher score
+    rank = (scores > true_score).sum().item()
+    # Exclude other correct answers that scored higher
+    if filter_ids:
+        for fid in filter_ids:
+            if scores[fid].item() > true_score:
+                rank -= 1
+    return int(rank) + 1  # 1-based
+
+
+@torch.no_grad()
+def evaluate_link_prediction(
+    head_model: object,
+    dataset: object,
+    device: torch.device,
+    batch_size: int = 128,
+) -> dict[str, float]:
+    """Run full filtered link prediction evaluation.
+
+    Args:
+        head_model: RieDFMLinkPredictionHead with score_all_tails/score_all_heads.
+        dataset: RieDFMKGDataset with triples and get_filter_masks().
+        device: Torch device.
+        batch_size: Evaluation batch size.
+
+    Returns:
+        Dict with MRR, Hits@1, Hits@3, Hits@10.
+    """
+    all_ranks: list[int] = []
+
+    triples = dataset.triples  # type: ignore[attr-defined]
+    for i in range(0, len(triples), batch_size):
+        batch = triples[i : i + batch_size]
+        h_ids = torch.tensor([t[0] for t in batch], device=device)
+        r_ids = torch.tensor([t[1] for t in batch], device=device)
+        t_ids = torch.tensor([t[2] for t in batch], device=device)
+
+        # Tail prediction
+        tail_scores = head_model.score_all_tails(h_ids, r_ids)  # type: ignore[attr-defined]
+        # Head prediction
+        head_scores = head_model.score_all_heads(t_ids, r_ids)  # type: ignore[attr-defined]
+
+        for j, (h, r, t) in enumerate(batch):
+            tail_filter, head_filter = dataset.get_filter_masks(h, r, t)  # type: ignore[attr-defined]
+
+            # Tail rank
+            t_rank = compute_filtered_rank(tail_scores[j], t, tail_filter)
+            all_ranks.append(t_rank)
+
+            # Head rank
+            h_rank = compute_filtered_rank(head_scores[j], h, head_filter)
+            all_ranks.append(h_rank)
+
+    ranks_tensor = torch.tensor(all_ranks, dtype=torch.float)
+    return {
+        "mrr": mean_reciprocal_rank(ranks_tensor),
+        "hits_at_1": hits_at_k(ranks_tensor, 1),
+        "hits_at_3": hits_at_k(ranks_tensor, 3),
+        "hits_at_10": hits_at_k(ranks_tensor, 10),
+        "num_triples": len(triples),
+        "mean_rank": float(ranks_tensor.mean().item()),
+    }
 
 
 # --- Helper functions ---
