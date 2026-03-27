@@ -1,0 +1,17 @@
+epochs: 50
+batch_size: 32
+gradient_accumulation_steps: 2
+lr: 5.0e-5
+curvature_lr: 1.0e-6
+weight_decay: 0.01
+warmup_steps: 2000
+max_grad_norm: 1.0
+mixed_precision: bf16
+
+lambda_disc: 1.0
+mu_align: 0.0
+temperature: 0.07
+
+activation_checkpointing: false
+use_riemannian_optim: true
+freeze_backbone_layers: 0

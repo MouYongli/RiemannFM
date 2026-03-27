@@ -1,0 +1,18 @@
+epochs: 100
+batch_size: 64
+gradient_accumulation_steps: 4
+lr: 1.0e-4
+curvature_lr: 1.0e-5
+weight_decay: 0.01
+warmup_steps: 10000
+max_grad_norm: 1.0
+mixed_precision: bf16
+
+# Loss weights
+lambda_disc: 1.0
+mu_align: 0.1
+temperature: 0.07
+
+# Optimization
+activation_checkpointing: true
+use_riemannian_optim: true

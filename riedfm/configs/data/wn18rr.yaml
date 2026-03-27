@@ -1,0 +1,5 @@
+dataset: kg_benchmark
+data_dir: data/wn18rr
+num_edge_types: 12
+max_nodes: 256
+num_workers: 4

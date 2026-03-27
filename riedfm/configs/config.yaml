@@ -1,0 +1,15 @@
+defaults:
+  - model: red_former_base
+  - manifold: product_h_s_e
+  - flow: default
+  - data: wikidata_5m
+  - training: pretrain
+  - eval: default
+  - _self_
+
+seed: 42
+project_name: riedfm-g
+run_name: ${now:%Y%m%d_%H%M%S}
+output_dir: outputs/${run_name}
+device: cuda
+num_gpus: 1
