@@ -28,7 +28,7 @@ def set_seed(seed: int):
         torch.cuda.manual_seed_all(seed)
 
 
-@hydra.main(version_base=None, config_path="../riedfm/configs", config_name="config")
+@hydra.main(version_base=None, config_path="../src/riedfm/configs", config_name="config")
 def main(cfg: DictConfig):
     logger.info(f"Configuration:\n{OmegaConf.to_yaml(cfg)}")
     set_seed(cfg.seed)
