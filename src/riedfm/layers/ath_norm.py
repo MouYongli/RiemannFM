@@ -114,7 +114,9 @@ class RieDFMATHNorm(nn.Module):
 
         d_embed = self.depth_embed(depth)  # (N, time_embed_dim)
 
-        # Broadcast t_embed if needed
+        # Flatten t_embed to 2D (N, time_embed_dim) and broadcast if needed
+        while t_embed.dim() > 2:
+            t_embed = t_embed.squeeze(0)
         if t_embed.shape[0] == 1 and N > 1:
             t_embed = t_embed.expand(N, -1)
 

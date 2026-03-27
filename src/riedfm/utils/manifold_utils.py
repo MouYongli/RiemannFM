@@ -85,3 +85,49 @@ def project_to_sphere(x: Tensor) -> Tensor:
     """
     result: Tensor = x / x.norm(dim=-1, keepdim=True).clamp(min=EPS)
     return result
+
+
+def check_nan(tensor: Tensor, name: str = "tensor") -> Tensor:
+    """Check for NaN/Inf values and raise if found. Use during debugging.
+
+    Args:
+        tensor: Tensor to check.
+        name: Name for error message.
+
+    Returns:
+        The input tensor (unchanged).
+    """
+    if torch.isnan(tensor).any():
+        raise ValueError(f"NaN detected in {name}, shape={tensor.shape}")
+    if torch.isinf(tensor).any():
+        raise ValueError(f"Inf detected in {name}, shape={tensor.shape}")
+    return tensor
+
+
+def register_nan_hooks(model: torch.nn.Module) -> list:
+    """Register forward hooks on all modules to detect NaN outputs.
+
+    Useful for debugging numerical instability during training.
+    Returns list of hook handles (call handle.remove() to detach).
+
+    Args:
+        model: PyTorch model.
+
+    Returns:
+        List of hook handles.
+    """
+    handles = []
+
+    def _hook(module: torch.nn.Module, _input: object, output: object) -> None:
+        if isinstance(output, Tensor):
+            if torch.isnan(output).any():
+                raise ValueError(f"NaN in output of {module.__class__.__name__}")
+        elif isinstance(output, tuple):
+            for i, o in enumerate(output):
+                if isinstance(o, Tensor) and torch.isnan(o).any():
+                    raise ValueError(f"NaN in output[{i}] of {module.__class__.__name__}")
+
+    for _name, module in model.named_modules():
+        handles.append(module.register_forward_hook(_hook))
+
+    return handles

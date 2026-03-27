@@ -91,9 +91,10 @@ class TestREDFormer:
         loss = v_pred.sum() + p_pred.sum()
         loss.backward()
 
-        # Check gradients exist for all parameters
+        # Check gradients exist for network parameters
+        # (curvature params only get gradients through manifold distance in loss)
         for name, param in model.named_parameters():
-            if param.requires_grad:
+            if param.requires_grad and "log_abs_curv" not in name and "log_curv" not in name:
                 assert param.grad is not None, f"No gradient for {name}"
 
 
