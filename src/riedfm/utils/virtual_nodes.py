@@ -8,14 +8,14 @@ removed in post-processing.
 import torch
 from torch import Tensor
 
-from riedfm.manifolds.product import ProductManifold
+from riedfm.manifolds.product import RieDFMProductManifold
 
 
 def add_virtual_nodes(
     x: Tensor,
     edge_types: Tensor,
     target_size: int,
-    manifold: ProductManifold,
+    manifold: RieDFMProductManifold,
 ) -> tuple[Tensor, Tensor, Tensor]:
     """Pad a graph with virtual nodes to reach target_size.
 
@@ -61,7 +61,7 @@ def add_virtual_nodes(
 def remove_virtual_nodes(
     x: Tensor,
     edge_types: Tensor,
-    manifold: ProductManifold,
+    manifold: RieDFMProductManifold,
     threshold: float = 0.5,
 ) -> tuple[Tensor, Tensor]:
     """Remove virtual nodes from a generated graph.

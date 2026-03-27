@@ -7,7 +7,6 @@ Includes:
 """
 
 import numpy as np
-import torch
 from torch import Tensor
 
 
@@ -100,12 +99,12 @@ def compute_vun(
 
 def mean_reciprocal_rank(ranks: Tensor) -> float:
     """Compute MRR from a tensor of ranks."""
-    return (1.0 / ranks.float()).mean().item()
+    return float((1.0 / ranks.float()).mean().item())
 
 
 def hits_at_k(ranks: Tensor, k: int) -> float:
     """Compute Hits@K from a tensor of ranks."""
-    return (ranks <= k).float().mean().item()
+    return float((ranks <= k).float().mean().item())
 
 
 # --- Helper functions ---

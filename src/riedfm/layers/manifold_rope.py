@@ -10,16 +10,14 @@ The rotation only depends on the relative geometric relationship between
 nodes, automatically preserving permutation equivariance.
 """
 
-import math
-
 import torch
 import torch.nn as nn
 from torch import Tensor
 
-from riedfm.manifolds.product import ProductManifold
+from riedfm.manifolds.product import RieDFMProductManifold
 
 
-class ManifoldRoPE(nn.Module):
+class RieDFMManifoldRoPE(nn.Module):
     """Manifold-aware Rotary Position Encoding.
 
     For each pair of nodes (i, j), computes rotation angles based on
@@ -136,7 +134,7 @@ class ManifoldRoPE(nn.Module):
         self,
         q: Tensor,
         k: Tensor,
-        manifold: ProductManifold,
+        manifold: RieDFMProductManifold,
         positions: Tensor,
     ) -> tuple[Tensor, Tensor]:
         """Compute and apply M-RoPE.

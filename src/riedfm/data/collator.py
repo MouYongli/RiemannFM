@@ -5,14 +5,13 @@ and stacks them into batched tensors.
 """
 
 import torch
-from torch import Tensor
 
-from riedfm.data.graph_data import GraphData
-from riedfm.manifolds.product import ProductManifold
+from riedfm.data.graph_data import RieDFMGraphData
+from riedfm.manifolds.product import RieDFMProductManifold
 
 
-class GraphCollator:
-    """Collates a list of GraphData into a padded batch.
+class RieDFMGraphCollator:
+    """Collates a list of RieDFMGraphData into a padded batch.
 
     Pads all graphs to max_nodes using virtual nodes:
     - Virtual node coordinates are set to the manifold origin
@@ -25,15 +24,15 @@ class GraphCollator:
                    If None, pads to the maximum in the batch.
     """
 
-    def __init__(self, manifold: ProductManifold, max_nodes: int | None = None):
+    def __init__(self, manifold: RieDFMProductManifold, max_nodes: int | None = None):
         self.manifold = manifold
         self.max_nodes = max_nodes
 
-    def __call__(self, batch: list[GraphData]) -> dict[str, Tensor]:
-        """Collate a batch of GraphData.
+    def __call__(self, batch: list[RieDFMGraphData]) -> dict[str, object]:
+        """Collate a batch of RieDFMGraphData.
 
         Args:
-            batch: List of GraphData samples.
+            batch: List of RieDFMGraphData samples.
 
         Returns:
             Dictionary with batched tensors:
@@ -48,7 +47,6 @@ class GraphCollator:
         """
         B = len(batch)
         N_max = self.max_nodes or max(g.num_nodes for g in batch)
-        D = batch[0].x.shape[-1]
         device = batch[0].device
 
         # Get manifold origin for virtual nodes

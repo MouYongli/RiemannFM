@@ -41,7 +41,7 @@ def load_checkpoint(
     path: str | Path,
     model: nn.Module | None = None,
     optimizer: torch.optim.Optimizer | None = None,
-    device: torch.device = torch.device("cpu"),
+    device: torch.device | None = None,
 ) -> dict:
     """Load a training checkpoint.
 
@@ -54,6 +54,8 @@ def load_checkpoint(
     Returns:
         Full checkpoint dictionary.
     """
+    if device is None:
+        device = torch.device("cpu")
     checkpoint = torch.load(path, map_location=device, weights_only=False)
 
     if model is not None:
@@ -61,14 +63,14 @@ def load_checkpoint(
     if optimizer is not None and "optimizer_state_dict" in checkpoint:
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
 
-    return checkpoint
+    return dict(checkpoint)
 
 
 def load_backbone(
     path: str | Path,
     model: nn.Module,
     strict: bool = False,
-    device: torch.device = torch.device("cpu"),
+    device: torch.device | None = None,
 ):
     """Load only the backbone (RED-Former) weights for fine-tuning.
 
@@ -80,12 +82,12 @@ def load_backbone(
         strict: Whether to require exact key match.
         device: Device to map tensors to.
     """
+    if device is None:
+        device = torch.device("cpu")
     checkpoint = torch.load(path, map_location=device, weights_only=False)
     state_dict = checkpoint.get("model_state_dict", checkpoint)
 
     # Filter for backbone keys
-    backbone_dict = {
-        k: v for k, v in state_dict.items() if k.startswith("backbone.")
-    }
+    backbone_dict = {k: v for k, v in state_dict.items() if k.startswith("backbone.")}
 
     model.load_state_dict(backbone_dict, strict=strict)

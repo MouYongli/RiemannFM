@@ -8,10 +8,10 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from riedfm.manifolds.product import ProductManifold
+from riedfm.manifolds.product import RieDFMProductManifold
 
 
-class ManifoldODEFunc(nn.Module):
+class RieDFMODEFunc(nn.Module):
     """Wraps a velocity field network as an ODE function for torchdiffeq.
 
     The ODE is defined in the tangent space:
@@ -23,7 +23,7 @@ class ManifoldODEFunc(nn.Module):
     def __init__(
         self,
         network_fn,
-        manifold: ProductManifold,
+        manifold: RieDFMProductManifold,
         edge_types: Tensor,
         condition: Tensor | None = None,
     ):
@@ -47,11 +47,11 @@ class ManifoldODEFunc(nn.Module):
         """
         v_pred, _ = self.network_fn(x, self.edge_types, t, self.condition)
         # Project onto tangent space for numerical safety
-        v_pred = self.manifold.proj_tangent(x, v_pred)
-        return v_pred
+        result: Tensor = self.manifold.proj_tangent(x, v_pred)
+        return result
 
 
-class ManifoldODESolver(nn.Module):
+class RieDFMODESolver(nn.Module):
     """Adaptive ODE solver on product manifolds.
 
     Uses Euler method with manifold exponential map by default.
@@ -60,7 +60,7 @@ class ManifoldODESolver(nn.Module):
 
     def __init__(
         self,
-        manifold: ProductManifold,
+        manifold: RieDFMProductManifold,
         method: str = "euler",
         atol: float = 1e-5,
         rtol: float = 1e-5,
@@ -138,7 +138,7 @@ class ManifoldODESolver(nn.Module):
         """
         from torchdiffeq import odeint
 
-        ode_func = ManifoldODEFunc(network_fn, self.manifold, e_t, condition)
+        ode_func = RieDFMODEFunc(network_fn, self.manifold, e_t, condition)
         t_span = torch.tensor([0.0, 1.0], device=x_0.device, dtype=x_0.dtype)
         solution = odeint(
             ode_func,
@@ -153,6 +153,7 @@ class ManifoldODESolver(nn.Module):
         # Re-project onto manifold for safety
         x_h, x_s, x_e = self.manifold.split(x_1)
         from riedfm.utils.manifold_utils import project_to_lorentz, project_to_sphere
+
         x_h = project_to_lorentz(x_h)
         x_s = project_to_sphere(x_s)
         return self.manifold.combine(x_h, x_s, x_e)

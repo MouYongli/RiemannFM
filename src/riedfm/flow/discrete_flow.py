@@ -14,7 +14,7 @@ import torch.nn.functional as F
 from torch import Tensor
 
 
-class DiscreteFlowMatcher(nn.Module):
+class RieDFMDiscreteFlow(nn.Module):
     """Discrete flow matching for edge types using CTMC framework.
 
     At time t=0, all edges are random noise.
@@ -42,10 +42,7 @@ class DiscreteFlowMatcher(nn.Module):
         Returns:
             Interpolated edge types e_t, shape (N, N).
         """
-        if isinstance(t, Tensor):
-            t_val = t.item() if t.numel() == 1 else t
-        else:
-            t_val = t
+        t_val = (t.item() if t.numel() == 1 else t) if isinstance(t, Tensor) else t
         # Each edge independently decides whether to reveal
         mask = torch.rand_like(e_0.float()) < t_val
         return torch.where(mask, e_1, e_0)

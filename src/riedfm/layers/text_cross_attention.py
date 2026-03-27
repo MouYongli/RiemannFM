@@ -12,7 +12,7 @@ from einops import rearrange
 from torch import Tensor
 
 
-class TextCrossAttention(nn.Module):
+class RieDFMTextCrossAttention(nn.Module):
     """Cross-attention from graph nodes (queries) to text tokens (keys/values).
 
     Args:
@@ -83,4 +83,5 @@ class TextCrossAttention(nn.Module):
         out = rearrange(out, "1 h n d -> n (h d)")
         out = self.out_proj(out)
 
-        return self.norm(residual + out)
+        result: Tensor = self.norm(residual + out)
+        return result

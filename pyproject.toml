@@ -36,6 +36,13 @@ dev = [
     "pre-commit>=4.0.0",
 ]
 
+[project.scripts]
+riedfm-pretrain = "riedfm.cli.pretrain:main"
+riedfm-finetune = "riedfm.cli.finetune:main"
+riedfm-evaluate = "riedfm.cli.evaluate:main"
+riedfm-generate = "riedfm.cli.generate:main"
+riedfm-preprocess = "riedfm.cli.preprocess:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -64,6 +71,8 @@ select = [
 ignore = [
     "E501",   # line too long (handled by formatter)
     "B905",   # zip-without-strict (too noisy for torch code)
+    "N806",   # variable in function should be lowercase (math convention: N, B, K, D)
+    "N812",   # lowercase imported as non-lowercase (common in torch: F = nn.functional)
 ]
 
 [tool.ruff.lint.isort]
@@ -72,6 +81,15 @@ known-first-party = ["riedfm"]
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+check_untyped_defs = true
+disallow_untyped_defs = false
+exclude = ["tests/", "scripts/"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

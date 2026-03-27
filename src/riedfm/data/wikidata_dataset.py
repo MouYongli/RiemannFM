@@ -1,6 +1,6 @@
 """WikiData subgraph dataset for pretraining.
 
-Loads preprocessed WikiData subgraphs and provides them as GraphData objects
+Loads preprocessed WikiData subgraphs and provides them as RieDFMGraphData objects
 for training. Supports hierarchical sampling and text feature extraction.
 """
 
@@ -10,12 +10,12 @@ from pathlib import Path
 import torch
 from torch.utils.data import Dataset
 
-from riedfm.data.graph_data import GraphData
-from riedfm.data.subgraph_sampler import SubgraphSampler
-from riedfm.manifolds.product import ProductManifold
+from riedfm.data.graph_data import RieDFMGraphData
+from riedfm.data.subgraph_sampler import RieDFMSubgraphSampler
+from riedfm.manifolds.product import RieDFMProductManifold
 
 
-class WikiDataGraphDataset(Dataset):
+class RieDFMWikiDataDataset(Dataset):
     """WikiData knowledge graph dataset with on-the-fly subgraph sampling.
 
     Expects preprocessed data in the following format:
@@ -35,7 +35,7 @@ class WikiDataGraphDataset(Dataset):
     def __init__(
         self,
         data_dir: str,
-        manifold: ProductManifold,
+        manifold: RieDFMProductManifold,
         max_nodes: int = 256,
         max_hops: int = 3,
         num_edge_types: int = 1200,
@@ -51,7 +51,7 @@ class WikiDataGraphDataset(Dataset):
         self.triples: list[tuple[int, int, int]] = []
         self.entity_info: dict[int, dict] = {}
         self.embeddings: torch.Tensor | None = None
-        self.sampler: SubgraphSampler | None = None
+        self.sampler: RieDFMSubgraphSampler | None = None
 
         self._load_data()
 
@@ -68,7 +68,7 @@ class WikiDataGraphDataset(Dataset):
                     parts = line.strip().split("\t")
                     if len(parts) == 3:
                         self.triples.append((int(parts[0]), int(parts[1]), int(parts[2])))
-            self.sampler = SubgraphSampler(
+            self.sampler = RieDFMSubgraphSampler(
                 triples=self.triples,
                 max_nodes=self.max_nodes,
             )
@@ -84,8 +84,8 @@ class WikiDataGraphDataset(Dataset):
         # For on-the-fly sampling, return a large number (epoch-based training)
         return max(len(self.triples) // 10, 10000)
 
-    def __getitem__(self, idx: int) -> GraphData:
-        """Sample a subgraph and return as GraphData."""
+    def __getitem__(self, idx: int) -> RieDFMGraphData:
+        """Sample a subgraph and return as RieDFMGraphData."""
         if self.sampler is None:
             # Return dummy data for development
             return self._dummy_graph()
@@ -113,11 +113,9 @@ class WikiDataGraphDataset(Dataset):
 
         # Get entity IDs and labels
         entity_ids = [str(nid) for nid in node_ids]
-        node_labels = [
-            self.entity_info.get(nid, {}).get("label", f"Entity_{nid}") for nid in node_ids
-        ]
+        node_labels = [self.entity_info.get(nid, {}).get("label", f"Entity_{nid}") for nid in node_ids]
 
-        return GraphData(
+        return RieDFMGraphData(
             x=x,
             edge_types=edge_types,
             num_nodes=N,
@@ -126,7 +124,7 @@ class WikiDataGraphDataset(Dataset):
             node_labels=node_labels,
         )
 
-    def _dummy_graph(self) -> GraphData:
+    def _dummy_graph(self) -> RieDFMGraphData:
         """Generate a dummy graph for development/testing."""
         N = min(8, self.max_nodes)
         x = self.manifold.sample_uniform((N,), torch.device("cpu"))
@@ -136,4 +134,4 @@ class WikiDataGraphDataset(Dataset):
             i, j = torch.randint(0, N, (2,))
             if i != j:
                 edge_types[i, j] = torch.randint(1, min(self.num_edge_types, 10), (1,)).item()
-        return GraphData(x=x, edge_types=edge_types, num_nodes=N)
+        return RieDFMGraphData(x=x, edge_types=edge_types, num_nodes=N)

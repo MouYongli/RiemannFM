@@ -9,13 +9,13 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from riedfm.flow.continuous_flow import ContinuousFlowMatcher
-from riedfm.flow.discrete_flow import DiscreteFlowMatcher
-from riedfm.flow.noise import ManifoldNoiseSampler, SparseEdgeNoiseSampler
-from riedfm.manifolds.product import ProductManifold
+from riedfm.flow.continuous_flow import RieDFMContinuousFlow
+from riedfm.flow.discrete_flow import RieDFMDiscreteFlow
+from riedfm.flow.noise import RieDFMManifoldNoise, RieDFMSparseEdgeNoise
+from riedfm.manifolds.product import RieDFMProductManifold
 
 
-class JointFlowMatcher(nn.Module):
+class RieDFMJointFlow(nn.Module):
     """Joint continuous-discrete flow matching for graph generation.
 
     Coordinates sampling of time t, noise generation, interpolation,
@@ -24,7 +24,7 @@ class JointFlowMatcher(nn.Module):
 
     def __init__(
         self,
-        manifold: ProductManifold,
+        manifold: RieDFMProductManifold,
         num_edge_types: int,
         avg_edge_density: float = 0.05,
         time_distribution: str = "uniform",
@@ -37,10 +37,10 @@ class JointFlowMatcher(nn.Module):
             time_distribution: How to sample t - "uniform" or "logit_normal".
         """
         super().__init__()
-        self.continuous_flow = ContinuousFlowMatcher(manifold)
-        self.discrete_flow = DiscreteFlowMatcher(num_edge_types)
-        self.node_noise = ManifoldNoiseSampler(manifold)
-        self.edge_noise = SparseEdgeNoiseSampler(
+        self.continuous_flow = RieDFMContinuousFlow(manifold)
+        self.discrete_flow = RieDFMDiscreteFlow(num_edge_types)
+        self.node_noise = RieDFMManifoldNoise(manifold)
+        self.edge_noise = RieDFMSparseEdgeNoise(
             num_edge_types=num_edge_types - 1,  # K non-zero types
             avg_density=avg_edge_density,
         )
@@ -117,7 +117,7 @@ class JointFlowMatcher(nn.Module):
         network_fn,
         num_nodes: int,
         num_steps: int = 100,
-        device: torch.device = torch.device("cpu"),
+        device: torch.device | None = None,
         condition: Tensor | None = None,
     ) -> tuple[Tensor, Tensor]:
         """Generate a graph by integrating the learned flow.
@@ -132,6 +132,8 @@ class JointFlowMatcher(nn.Module):
         Returns:
             (x_1, e_1): Generated node coordinates and edge types.
         """
+        if device is None:
+            device = torch.device("cpu")
         dt = 1.0 / num_steps
 
         # Initialize from noise

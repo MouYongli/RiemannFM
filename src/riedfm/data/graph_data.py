@@ -14,7 +14,7 @@ from torch import Tensor
 
 
 @dataclass
-class GraphData:
+class RieDFMGraphData:
     """A single knowledge (sub)graph sample.
 
     Attributes:
@@ -42,15 +42,15 @@ class GraphData:
     @property
     def num_edges(self) -> int:
         """Number of non-zero edges."""
-        return (self.edge_types > 0).sum().item()
+        return int((self.edge_types > 0).sum().item())
 
     @property
     def device(self) -> torch.device:
         return self.x.device
 
-    def to(self, device: torch.device) -> "GraphData":
+    def to(self, device: torch.device) -> "RieDFMGraphData":
         """Move all tensors to device."""
-        return GraphData(
+        return RieDFMGraphData(
             x=self.x.to(device),
             edge_types=self.edge_types.to(device),
             num_nodes=self.num_nodes,

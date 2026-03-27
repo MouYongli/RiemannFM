@@ -1,8 +1,8 @@
 """RieDFM-G graph generation / inference script.
 
 Usage:
-    python scripts/generate.py checkpoint=path/to/checkpoint.pt
-    python scripts/generate.py checkpoint=path/to/checkpoint.pt --num_nodes=32 --num_steps=200
+    python -m riedfm.cli.generate --checkpoint path/to/checkpoint.pt
+    python -m riedfm.cli.generate --checkpoint path/to/checkpoint.pt --num_nodes 32 --num_steps 200
 """
 
 import argparse
@@ -33,10 +33,10 @@ def main():
     logger.info(f"Loaded checkpoint from {args.checkpoint}")
 
     # Build model from checkpoint config
-    from riedfm.manifolds.product import ProductManifold
+    from riedfm.manifolds.product import RieDFMProductManifold
 
     manifold_cfg = config.get("manifold", {})
-    manifold = ProductManifold(
+    manifold = RieDFMProductManifold(
         dim_hyperbolic=manifold_cfg.get("dim_hyperbolic", 32),
         dim_spherical=manifold_cfg.get("dim_spherical", 32),
         dim_euclidean=manifold_cfg.get("dim_euclidean", 32),
@@ -70,7 +70,9 @@ def main():
 
         x_real, e_real = remove_virtual_nodes(x, e, manifold)
         results.append({"x": x_real.cpu(), "edge_types": e_real.cpu()})
-        logger.info(f"Generated graph {i+1}/{args.num_graphs}: {x_real.shape[0]} nodes, {(e_real>0).sum().item()} edges")
+        logger.info(
+            f"Generated graph {i + 1}/{args.num_graphs}: {x_real.shape[0]} nodes, {(e_real > 0).sum().item()} edges"
+        )
 
     # Save
     torch.save(results, args.output)

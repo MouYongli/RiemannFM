@@ -23,7 +23,8 @@ class EuclideanManifold(Manifold):
         return y - x
 
     def dist(self, x: Tensor, y: Tensor) -> Tensor:
-        return (x - y).norm(dim=-1)
+        result: Tensor = (x - y).norm(dim=-1)
+        return result
 
     def proj_tangent(self, x: Tensor, v: Tensor) -> Tensor:
         # In Euclidean space, any vector is tangent everywhere

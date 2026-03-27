@@ -9,7 +9,7 @@ import torch.nn as nn
 from torch import Tensor
 
 
-class FrozenTextEncoder(nn.Module):
+class RieDFMTextEncoder(nn.Module):
     """Frozen multilingual text encoder with a learnable projection.
 
     Wraps a HuggingFace transformer model (e.g., xlm-roberta-large or
@@ -33,19 +33,19 @@ class FrozenTextEncoder(nn.Module):
         self.pooling = pooling
 
         # Lazy loading to avoid importing transformers at module level
-        self._encoder = None
-        self._text_dim = None
+        self._encoder: nn.Module | None = None
+        self._text_dim: int | None = None
         self._model_dim = model_dim
 
         # Projection will be initialized on first forward pass
-        self.projection = None
+        self.projection: nn.Linear | None = None
 
     def _load_encoder(self, device: torch.device):
         """Lazy-load the text encoder on first use."""
         if self._encoder is not None:
             return
 
-        from transformers import AutoModel, AutoTokenizer
+        from transformers import AutoModel
 
         self._encoder = AutoModel.from_pretrained(self.model_name)
         self._encoder = self._encoder.to(device)
@@ -55,7 +55,7 @@ class FrozenTextEncoder(nn.Module):
         for param in self._encoder.parameters():
             param.requires_grad = False
 
-        self._text_dim = self._encoder.config.hidden_size
+        self._text_dim = int(self._encoder.config.hidden_size)  # type: ignore[arg-type, union-attr]
 
         # Initialize projection layer
         self.projection = nn.Linear(self._text_dim, self._model_dim).to(device)
@@ -68,7 +68,7 @@ class FrozenTextEncoder(nn.Module):
             from transformers import AutoConfig
 
             config = AutoConfig.from_pretrained(self.model_name)
-            return config.hidden_size
+            return int(config.hidden_size)
         return self._text_dim
 
     @torch.no_grad()
@@ -83,8 +83,9 @@ class FrozenTextEncoder(nn.Module):
             Token-level embeddings, shape (B, T, text_dim).
         """
         self._load_encoder(input_ids.device)
+        assert self._encoder is not None
         outputs = self._encoder(input_ids=input_ids, attention_mask=attention_mask)
-        return outputs.last_hidden_state
+        return Tensor(outputs.last_hidden_state)
 
     def forward(
         self,
@@ -104,16 +105,17 @@ class FrozenTextEncoder(nn.Module):
             Projected text embeddings.
         """
         raw = self.encode_raw(input_ids, attention_mask)  # (B, T, text_dim)
+        assert self.projection is not None
         projected = self.projection(raw)  # (B, T, model_dim)
 
         if return_tokens:
-            return projected
+            return Tensor(projected)
 
         # Pool
         if self.pooling == "cls":
-            return projected[:, 0]
+            return Tensor(projected[:, 0])
         elif self.pooling == "mean":
             mask_expanded = attention_mask.unsqueeze(-1).float()
-            return (projected * mask_expanded).sum(dim=1) / mask_expanded.sum(dim=1).clamp(min=1)
+            return Tensor((projected * mask_expanded).sum(dim=1) / mask_expanded.sum(dim=1).clamp(min=1))
         else:
             raise ValueError(f"Unknown pooling: {self.pooling}")

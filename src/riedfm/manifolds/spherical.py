@@ -6,13 +6,11 @@ The d-dimensional sphere S^d is embedded in R^{d+1} as:
 For unit sphere (kappa=1): S^d = {x : ||x|| = 1}.
 """
 
-import math
-
 import torch
 from torch import Tensor
 
 from riedfm.manifolds.base import Manifold
-from riedfm.utils.manifold_utils import EPS, project_to_sphere, safe_arccos, safe_sqrt
+from riedfm.utils.manifold_utils import EPS, project_to_sphere, safe_arccos
 
 
 class SphericalManifold(Manifold):
@@ -31,7 +29,7 @@ class SphericalManifold(Manifold):
 
     @property
     def sqrt_c(self) -> float:
-        return self.curvature**0.5
+        return float(self.curvature**0.5)
 
     def exp_map(self, x: Tensor, v: Tensor) -> Tensor:
         """Exponential map on the sphere.
@@ -52,7 +50,8 @@ class SphericalManifold(Manifold):
         direction = y - xy_inner * x
         direction_norm = direction.norm(dim=-1, keepdim=True).clamp(min=EPS)
         theta = safe_arccos(xy_inner) / self.sqrt_c
-        return theta * direction / direction_norm
+        result: Tensor = theta * direction / direction_norm
+        return result
 
     def dist(self, x: Tensor, y: Tensor) -> Tensor:
         """Geodesic (great-circle) distance on the sphere.

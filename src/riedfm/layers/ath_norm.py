@@ -15,7 +15,7 @@ import torch.nn as nn
 from torch import Tensor
 
 
-class TimestepEmbedding(nn.Module):
+class RieDFMTimestepEmbedding(nn.Module):
     """Sinusoidal + MLP embedding for scalar timestep t in [0, 1].
 
     Uses sinusoidal positional encoding followed by a 2-layer MLP,
@@ -46,15 +46,16 @@ class TimestepEmbedding(nn.Module):
         # Ensure t has at least 1 dimension
         if t.dim() == 0:
             t = t.unsqueeze(0)
-        args = t.unsqueeze(-1) * self.freqs
+        freqs: Tensor = self.freqs  # type: ignore[assignment]
+        args = t.unsqueeze(-1) * freqs
         embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
         # Handle odd embed_dim
         if self.embed_dim % 2 == 1:
             embedding = torch.cat([embedding, torch.zeros_like(embedding[..., :1])], dim=-1)
-        return self.mlp(embedding)
+        return Tensor(self.mlp(embedding))
 
 
-class ATHNorm(nn.Module):
+class RieDFMATHNorm(nn.Module):
     """Adaptive Time-Hierarchy Normalization.
 
     Extends AdaLN (Adaptive Layer Normalization) by conditioning on both
@@ -84,8 +85,10 @@ class ATHNorm(nn.Module):
             nn.Linear(hidden_dim * 4, hidden_dim * 2),  # gamma and beta
         )
         # Initialize to identity (gamma=1, beta=0)
-        nn.init.zeros_(self.adaLN_mlp[-1].weight)
-        nn.init.zeros_(self.adaLN_mlp[-1].bias)
+        last_layer = self.adaLN_mlp[-1]
+        assert isinstance(last_layer, nn.Linear)
+        nn.init.zeros_(last_layer.weight)
+        nn.init.zeros_(last_layer.bias)
 
     def forward(
         self,
@@ -122,4 +125,4 @@ class ATHNorm(nn.Module):
         gamma, beta = params.chunk(2, dim=-1)
         gamma = 1.0 + gamma  # Center around 1
 
-        return gamma * self.norm(h) + beta
+        return Tensor(gamma * self.norm(h) + beta)

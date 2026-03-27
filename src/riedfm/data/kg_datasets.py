@@ -6,14 +6,12 @@ knowledge graph completion benchmarks.
 
 from pathlib import Path
 
-import torch
 from torch.utils.data import Dataset
 
-from riedfm.data.graph_data import GraphData
-from riedfm.manifolds.product import ProductManifold
+from riedfm.manifolds.product import RieDFMProductManifold
 
 
-class KGBenchmarkDataset(Dataset):
+class RieDFMKGDataset(Dataset):
     """Generic KG benchmark dataset.
 
     Loads triples from standard format files and creates subgraph samples.
@@ -29,7 +27,7 @@ class KGBenchmarkDataset(Dataset):
     def __init__(
         self,
         data_dir: str,
-        manifold: ProductManifold,
+        manifold: RieDFMProductManifold,
         split: str = "test",
         max_nodes: int = 256,
     ):

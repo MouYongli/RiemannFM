@@ -9,14 +9,14 @@ from pathlib import Path
 import torch
 from torch.utils.data import Dataset
 
-from riedfm.data.graph_data import GraphData
-from riedfm.manifolds.product import ProductManifold
+from riedfm.data.graph_data import RieDFMGraphData
+from riedfm.manifolds.product import RieDFMProductManifold
 
 
-class MolecularGraphDataset(Dataset):
+class RieDFMMolecularDataset(Dataset):
     """Molecular graph dataset wrapper.
 
-    Wraps PyG molecular datasets (ZINC, QM9) into our GraphData format.
+    Wraps PyG molecular datasets (ZINC, QM9) into our RieDFMGraphData format.
     Molecular graphs have different node/edge types than KGs, so this
     adapter maps them to our product manifold representation.
 
@@ -31,7 +31,7 @@ class MolecularGraphDataset(Dataset):
         self,
         dataset_name: str = "zinc",
         data_dir: str = "data/molecular",
-        manifold: ProductManifold | None = None,
+        manifold: RieDFMProductManifold | None = None,
         split: str = "train",
     ):
         self.dataset_name = dataset_name
@@ -62,31 +62,29 @@ class MolecularGraphDataset(Dataset):
 
     def __len__(self) -> int:
         self._load_pyg_dataset()
+        assert self._pyg_dataset is not None
         return len(self._pyg_dataset)
 
-    def __getitem__(self, idx: int) -> GraphData:
-        """Convert a PyG molecular graph to GraphData."""
+    def __getitem__(self, idx: int) -> RieDFMGraphData:
+        """Convert a PyG molecular graph to RieDFMGraphData."""
         self._load_pyg_dataset()
+        assert self._pyg_dataset is not None
         data = self._pyg_dataset[idx]
         N = data.num_nodes
 
         # Initialize coordinates on product manifold
-        if self.manifold is not None:
-            x = self.manifold.sample_uniform((N,), torch.device("cpu"))
-        else:
-            x = torch.randn(N, 48)  # Fallback
+        x = (
+            self.manifold.sample_uniform((N,), torch.device("cpu")) if self.manifold is not None else torch.randn(N, 48)
+        )  # Fallback
 
         # Build edge type matrix from edge_index and edge_attr
         edge_types = torch.zeros(N, N, dtype=torch.long)
         if data.edge_index is not None:
             src, dst = data.edge_index
             if data.edge_attr is not None:
-                if data.edge_attr.dim() > 1:
-                    etypes = data.edge_attr.argmax(dim=-1) + 1
-                else:
-                    etypes = data.edge_attr.long() + 1
+                etypes = data.edge_attr.argmax(dim=-1) + 1 if data.edge_attr.dim() > 1 else data.edge_attr.long() + 1
             else:
                 etypes = torch.ones(src.shape[0], dtype=torch.long)
             edge_types[src, dst] = etypes
 
-        return GraphData(x=x, edge_types=edge_types, num_nodes=N)
+        return RieDFMGraphData(x=x, edge_types=edge_types, num_nodes=N)

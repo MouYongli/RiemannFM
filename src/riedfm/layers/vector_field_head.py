@@ -1,18 +1,18 @@
 """Output heads for flow matching: vector field prediction + edge type prediction.
 
-ContinuousVectorFieldHead: predicts tangent vectors on the product manifold.
-DiscreteEdgeTypeHead: predicts edge type probabilities.
+RieDFMContinuousVFHead: predicts tangent vectors on the product manifold.
+RieDFMDiscreteEdgeHead: predicts edge type probabilities.
 """
 
 import torch
 import torch.nn as nn
 from torch import Tensor
 
-from riedfm.manifolds.product import ProductManifold
+from riedfm.manifolds.product import RieDFMProductManifold
 from riedfm.utils.manifold_utils import lorentz_inner
 
 
-class ContinuousVectorFieldHead(nn.Module):
+class RieDFMContinuousVFHead(nn.Module):
     """Predicts tangent vectors (velocity field) on the product manifold.
 
     Takes node hidden states and produces a vector in the tangent space at
@@ -26,7 +26,7 @@ class ContinuousVectorFieldHead(nn.Module):
         manifold: Product manifold for tangent space projections.
     """
 
-    def __init__(self, hidden_dim: int, manifold: ProductManifold):
+    def __init__(self, hidden_dim: int, manifold: RieDFMProductManifold):
         super().__init__()
         self.manifold = manifold
         self.mlp = nn.Sequential(
@@ -48,7 +48,7 @@ class ContinuousVectorFieldHead(nn.Module):
 
         # Split into sub-manifold components
         v_h, v_s, v_e = self.manifold.split(v_raw)
-        x_h, x_s, x_e = self.manifold.split(x)
+        x_h, x_s, _x_e = self.manifold.split(x)
 
         # Project hyperbolic component: v_h += <v_h, x_h>_L * x_h
         # This ensures <v_h, x_h>_L = 0 (tangent to hyperboloid)
@@ -64,7 +64,7 @@ class ContinuousVectorFieldHead(nn.Module):
         return self.manifold.combine(v_h, v_s, v_e)
 
 
-class DiscreteEdgeTypeHead(nn.Module):
+class RieDFMDiscreteEdgeHead(nn.Module):
     """Predicts edge type probabilities for discrete flow matching.
 
     Takes edge hidden states and produces logits over K+1 edge types
@@ -91,10 +91,11 @@ class DiscreteEdgeTypeHead(nn.Module):
         Returns:
             Edge type logits, same spatial shape + (num_edge_types,).
         """
-        return self.mlp(h_e)
+        result: Tensor = self.mlp(h_e)
+        return result
 
 
-class CardinalityHead(nn.Module):
+class RieDFMCardinalityHead(nn.Module):
     """Predicts the number of tail entities for one-to-many relations.
 
     Given a head entity embedding and relation embedding, predicts
@@ -123,4 +124,5 @@ class CardinalityHead(nn.Module):
         Returns:
             Cardinality logits, shape (B, max_cardinality).
         """
-        return self.mlp(torch.cat([h_head, r_embed], dim=-1))
+        result: Tensor = self.mlp(torch.cat([h_head, r_embed], dim=-1))
+        return result

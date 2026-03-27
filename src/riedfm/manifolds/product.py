@@ -13,13 +13,12 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from riedfm.manifolds.base import Manifold
 from riedfm.manifolds.euclidean import EuclideanManifold
 from riedfm.manifolds.hyperbolic import LorentzManifold
 from riedfm.manifolds.spherical import SphericalManifold
 
 
-class ProductManifold(nn.Module):
+class RieDFMProductManifold(nn.Module):
     """Product manifold M = H^{d_h} x S^{d_s} x R^{d_e} with learnable curvatures.
 
     Points in this space are represented as concatenated vectors:
@@ -68,12 +67,12 @@ class ProductManifold(nn.Module):
     @property
     def curvature_h(self) -> float:
         """Current hyperbolic curvature (always negative)."""
-        return -self.log_abs_curv_h.exp().item()
+        return float(-self.log_abs_curv_h.exp().item())
 
     @property
     def curvature_s(self) -> float:
         """Current spherical curvature (always positive)."""
-        return self.log_curv_s.exp().item()
+        return float(self.log_curv_s.exp().item())
 
     def _get_manifolds(self) -> tuple[LorentzManifold, SphericalManifold, EuclideanManifold]:
         """Create sub-manifold instances with current curvatures."""
@@ -167,9 +166,9 @@ class ProductManifold(nn.Module):
     def sample_uniform(self, batch_shape: tuple[int, ...], device: torch.device) -> Tensor:
         """Sample uniformly from the product manifold."""
         mH, mS, mE = self._get_manifolds()
-        x_h = mH.sample_uniform(batch_shape + (self.ambient_h,), device)
-        x_s = mS.sample_uniform(batch_shape + (self.ambient_s,), device)
-        x_e = mE.sample_uniform(batch_shape + (self.ambient_e,), device)
+        x_h = mH.sample_uniform((*batch_shape, self.ambient_h), device)
+        x_s = mS.sample_uniform((*batch_shape, self.ambient_s), device)
+        x_e = mE.sample_uniform((*batch_shape, self.ambient_e), device)
         return self.combine(x_h, x_s, x_e)
 
     def origin(self, device: torch.device) -> Tensor:
@@ -181,9 +180,7 @@ class ProductManifold(nn.Module):
             mE.origin(self.ambient_e, device),
         )
 
-    def compute_kernels(
-        self, x: Tensor, y: Tensor
-    ) -> tuple[Tensor, Tensor, Tensor]:
+    def compute_kernels(self, x: Tensor, y: Tensor) -> tuple[Tensor, Tensor, Tensor]:
         """Compute sub-manifold kernel values for geodesic kernel attention.
 
         Returns:
@@ -192,7 +189,7 @@ class ProductManifold(nn.Module):
             - Spherical kernel: <x,y> (cosine similarity)
             - Euclidean kernel: -||x-y||^2 (negative squared distance)
         """
-        mH, mS, mE = self._get_manifolds()
+        mH, _mS, _mE = self._get_manifolds()
         x_h, x_s, x_e = self.split(x)
         y_h, y_s, y_e = self.split(y)
 

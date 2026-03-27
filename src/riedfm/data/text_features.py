@@ -4,14 +4,14 @@ Preprocesses WikiData entity labels and descriptions into text embeddings
 using a frozen text encoder. Results are cached to disk for efficiency.
 """
 
-import json
 from pathlib import Path
 
 import torch
+import torch.nn as nn
 from torch import Tensor
 
 
-class TextFeatureExtractor:
+class RieDFMTextFeatureExtractor:
     """Extracts and caches text embeddings for KG entities and relations.
 
     Args:
@@ -32,8 +32,8 @@ class TextFeatureExtractor:
         self.cache_dir = Path(cache_dir)
         self.max_length = max_length
         self.batch_size = batch_size
-        self._tokenizer = None
-        self._model = None
+        self._tokenizer: object | None = None
+        self._model: nn.Module | None = None
 
     def _load_model(self):
         if self._model is not None:
@@ -65,14 +65,17 @@ class TextFeatureExtractor:
         if entity_ids is not None:
             cache_path = self.cache_dir / f"embeddings_{hash(tuple(entity_ids)) % 1000000}.pt"
             if cache_path.exists():
-                return torch.load(cache_path, map_location="cpu", weights_only=True)
+                cached: Tensor = torch.load(cache_path, map_location="cpu", weights_only=True)
+                return cached
 
         self._load_model()
+        assert self._model is not None
+        assert self._tokenizer is not None
 
         all_embeds = []
         for i in range(0, len(texts), self.batch_size):
             batch_texts = texts[i : i + self.batch_size]
-            inputs = self._tokenizer(
+            inputs = self._tokenizer(  # type: ignore[operator]
                 batch_texts,
                 max_length=self.max_length,
                 padding=True,
@@ -82,7 +85,7 @@ class TextFeatureExtractor:
             if torch.cuda.is_available():
                 inputs = {k: v.cuda() for k, v in inputs.items()}
 
-            outputs = self._model(**inputs)
+            outputs = self._model(**inputs)  # type: ignore[operator]
             # Mean pooling
             mask = inputs["attention_mask"].unsqueeze(-1).float()
             embeds = (outputs.last_hidden_state * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1)
@@ -111,9 +114,10 @@ class TextFeatureExtractor:
         """
         if self._tokenizer is None:
             from transformers import AutoTokenizer
+
             self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
 
-        inputs = self._tokenizer(
+        inputs = self._tokenizer(  # type: ignore[operator]
             texts,
             max_length=self.max_length,
             padding=True,

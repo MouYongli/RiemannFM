@@ -8,12 +8,11 @@ Verifies geometric properties:
 - Product manifold dimension splitting
 """
 
-import pytest
 import torch
 
 from riedfm.manifolds.euclidean import EuclideanManifold
 from riedfm.manifolds.hyperbolic import LorentzManifold
-from riedfm.manifolds.product import ProductManifold
+from riedfm.manifolds.product import RieDFMProductManifold
 from riedfm.manifolds.spherical import SphericalManifold
 
 DEVICE = torch.device("cpu")
@@ -153,7 +152,7 @@ class TestSphericalManifold:
 
 class TestProductManifold:
     def setup_method(self):
-        self.m = ProductManifold(dim_hyperbolic=4, dim_spherical=4, dim_euclidean=4)
+        self.m = RieDFMProductManifold(dim_hyperbolic=4, dim_spherical=4, dim_euclidean=4)
         # total_dim = 5 (Lorentz) + 4 (sphere) + 4 (Euclidean) = 13
 
     def test_total_dim(self):

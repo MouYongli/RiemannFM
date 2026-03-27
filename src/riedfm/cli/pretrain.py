@@ -1,13 +1,12 @@
 """RieDFM-G pretraining script.
 
 Usage:
-    python scripts/pretrain.py
-    python scripts/pretrain.py model=red_former_large data=wikidata_5m
-    python scripts/pretrain.py training.batch_size=128 training.lr=2e-4
+    python -m riedfm.cli.pretrain
+    python -m riedfm.cli.pretrain model=red_former_large data=wikidata_5m
+    python -m riedfm.cli.pretrain training.batch_size=128 training.lr=2e-4
 """
 
 import logging
-import os
 import random
 
 import hydra
@@ -28,7 +27,7 @@ def set_seed(seed: int):
         torch.cuda.manual_seed_all(seed)
 
 
-@hydra.main(version_base=None, config_path="../src/riedfm/configs", config_name="config")
+@hydra.main(version_base=None, config_path="../configs", config_name="config")
 def main(cfg: DictConfig):
     logger.info(f"Configuration:\n{OmegaConf.to_yaml(cfg)}")
     set_seed(cfg.seed)
@@ -37,9 +36,9 @@ def main(cfg: DictConfig):
     logger.info(f"Using device: {device}")
 
     # Build manifold
-    from riedfm.manifolds.product import ProductManifold
+    from riedfm.manifolds.product import RieDFMProductManifold
 
-    manifold = ProductManifold(
+    manifold = RieDFMProductManifold(
         dim_hyperbolic=cfg.manifold.dim_hyperbolic,
         dim_spherical=cfg.manifold.dim_spherical,
         dim_euclidean=cfg.manifold.dim_euclidean,
@@ -79,9 +78,9 @@ def main(cfg: DictConfig):
     )
 
     # Build loss
-    from riedfm.losses.combined_loss import CombinedLoss
+    from riedfm.losses.combined_loss import RieDFMCombinedLoss
 
-    criterion = CombinedLoss(
+    criterion = RieDFMCombinedLoss(
         manifold=manifold,
         num_edge_types=cfg.data.num_edge_types,
         text_dim=cfg.model.text_dim,
@@ -91,16 +90,16 @@ def main(cfg: DictConfig):
     ).to(device)
 
     # Build dataset
-    from riedfm.data.collator import GraphCollator
-    from riedfm.data.wikidata_dataset import WikiDataGraphDataset
+    from riedfm.data.collator import RieDFMGraphCollator
+    from riedfm.data.wikidata_dataset import RieDFMWikiDataDataset
 
-    dataset = WikiDataGraphDataset(
+    dataset = RieDFMWikiDataDataset(
         data_dir=cfg.data.data_dir,
         manifold=manifold,
         max_nodes=cfg.data.max_nodes,
         num_edge_types=cfg.data.num_edge_types,
     )
-    collator = GraphCollator(manifold=manifold, max_nodes=cfg.data.max_nodes)
+    collator = RieDFMGraphCollator(manifold=manifold, max_nodes=cfg.data.max_nodes)
     dataloader = DataLoader(
         dataset,
         batch_size=cfg.training.batch_size,
@@ -112,7 +111,7 @@ def main(cfg: DictConfig):
     # Setup logging
     from riedfm.utils.logging import log_manifold_stats, log_metrics, setup_wandb
 
-    wandb_run = setup_wandb(OmegaConf.to_container(cfg, resolve=True))
+    wandb_run = setup_wandb(OmegaConf.to_container(cfg, resolve=True))  # noqa: F841
 
     # Training loop
     global_step = 0
@@ -121,7 +120,7 @@ def main(cfg: DictConfig):
         epoch_losses = {"loss": 0.0, "loss_continuous": 0.0, "loss_discrete": 0.0}
         num_batches = 0
 
-        pbar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{cfg.training.epochs}")
+        pbar = tqdm(dataloader, desc=f"Epoch {epoch + 1}/{cfg.training.epochs}")
         for batch_idx, batch in enumerate(pbar):
             # Move batch to device
             x = batch["x"].to(device)
@@ -169,7 +168,7 @@ def main(cfg: DictConfig):
 
         # Epoch summary
         avg_loss = epoch_losses["loss"] / max(num_batches, 1)
-        logger.info(f"Epoch {epoch+1}: avg_loss={avg_loss:.4f}")
+        logger.info(f"Epoch {epoch + 1}: avg_loss={avg_loss:.4f}")
 
         # Save checkpoint
         if (epoch + 1) % 10 == 0:
@@ -180,7 +179,7 @@ def main(cfg: DictConfig):
                 optimizer=optimizer,
                 epoch=epoch + 1,
                 step=global_step,
-                path=f"{cfg.output_dir}/checkpoint_epoch{epoch+1}.pt",
+                path=f"{cfg.output_dir}/checkpoint_epoch{epoch + 1}.pt",
                 config=OmegaConf.to_container(cfg, resolve=True),
             )
 

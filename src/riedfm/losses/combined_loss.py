@@ -3,12 +3,12 @@
 import torch.nn as nn
 from torch import Tensor
 
-from riedfm.losses.contrastive_loss import ContrastiveAlignmentLoss
-from riedfm.losses.flow_matching_loss import FlowMatchingLoss
-from riedfm.manifolds.product import ProductManifold
+from riedfm.losses.contrastive_loss import RieDFMContrastiveLoss
+from riedfm.losses.flow_matching_loss import RieDFMFlowMatchingLoss
+from riedfm.manifolds.product import RieDFMProductManifold
 
 
-class CombinedLoss(nn.Module):
+class RieDFMCombinedLoss(nn.Module):
     """Weighted combination of flow matching and contrastive alignment losses.
 
     L = L_cont + lambda * L_disc + mu * L_align
@@ -24,7 +24,7 @@ class CombinedLoss(nn.Module):
 
     def __init__(
         self,
-        manifold: ProductManifold,
+        manifold: RieDFMProductManifold,
         num_edge_types: int,
         text_dim: int = 1024,
         lambda_disc: float = 1.0,
@@ -35,12 +35,12 @@ class CombinedLoss(nn.Module):
         self.lambda_disc = lambda_disc
         self.mu_align = mu_align
 
-        self.flow_loss = FlowMatchingLoss(
+        self.flow_loss = RieDFMFlowMatchingLoss(
             manifold=manifold,
             num_edge_types=num_edge_types,
             lambda_disc=lambda_disc,
         )
-        self.align_loss = ContrastiveAlignmentLoss(
+        self.align_loss = RieDFMContrastiveLoss(
             manifold=manifold,
             text_dim=text_dim,
             temperature=temperature,
@@ -71,4 +71,4 @@ class CombinedLoss(nn.Module):
         else:
             losses["loss_align"] = outputs["v_pred"].new_tensor(0.0)
 
-        return losses
+        return dict(losses)

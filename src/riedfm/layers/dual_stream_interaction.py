@@ -14,7 +14,7 @@ import torch.nn.functional as F
 from torch import Tensor
 
 
-class DualStreamInteraction(nn.Module):
+class RieDFMDualStreamInteraction(nn.Module):
     """Bidirectional cross-interaction between node and edge streams.
 
     Edge -> Node:

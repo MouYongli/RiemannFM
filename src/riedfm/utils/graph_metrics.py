@@ -58,8 +58,8 @@ def edge_type_accuracy(
         mask = true_types > 0
         if mask.sum() == 0:
             return 0.0
-        return (pred_types[mask] == true_types[mask]).float().mean().item()
+        return float((pred_types[mask] == true_types[mask]).float().mean().item())
     else:
         N = pred_types.shape[0]
         mask = ~torch.eye(N, dtype=torch.bool, device=pred_types.device)
-        return (pred_types[mask] == true_types[mask]).float().mean().item()
+        return float((pred_types[mask] == true_types[mask]).float().mean().item())

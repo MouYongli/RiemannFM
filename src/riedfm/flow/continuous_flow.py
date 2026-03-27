@@ -4,15 +4,14 @@ Defines the conditional flow path x_t = geodesic(x_0, x_1, t) and the
 target vector field u_t(x_t | x_1) = log_{x_t}(x_1) / (1 - t).
 """
 
-import torch
 import torch.nn as nn
 from torch import Tensor
 
-from riedfm.manifolds.product import ProductManifold
+from riedfm.manifolds.product import RieDFMProductManifold
 from riedfm.utils.manifold_utils import EPS
 
 
-class ContinuousFlowMatcher(nn.Module):
+class RieDFMContinuousFlow(nn.Module):
     """Continuous flow matching for node coordinates on a product manifold.
 
     The conditional flow path follows geodesics:
@@ -24,7 +23,7 @@ class ContinuousFlowMatcher(nn.Module):
     A neural network v_theta learns to predict u_t from (x_t, t, context).
     """
 
-    def __init__(self, manifold: ProductManifold):
+    def __init__(self, manifold: RieDFMProductManifold):
         super().__init__()
         self.manifold = manifold
 
@@ -56,7 +55,7 @@ class ContinuousFlowMatcher(nn.Module):
         """
         log_vec = self.manifold.log_map(x_t, x_1)
         # Compute 1/(1-t) with clamping for numerical stability near t=1
-        if isinstance(t, (int, float)):
+        if isinstance(t, int | float):
             inv_remaining = 1.0 / max(1.0 - t, EPS)
             return log_vec * inv_remaining
         while t.dim() < log_vec.dim():

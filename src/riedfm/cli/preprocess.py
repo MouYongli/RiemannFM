@@ -1,11 +1,11 @@
 """WikiData preprocessing script.
 
 Downloads and preprocesses WikiData into the format expected by
-WikiDataGraphDataset. This is a placeholder — full implementation
+RieDFMWikiDataDataset. This is a placeholder -- full implementation
 requires the WikiData JSON dump processing pipeline.
 
 Usage:
-    python scripts/prepare_data.py --output_dir data/wikidata_5m
+    python -m riedfm.cli.preprocess --output_dir data/wikidata_5m
 """
 
 import argparse
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Prepare WikiData for RieDFM-G")
+    parser = argparse.ArgumentParser(description="Preprocess WikiData for RieDFM-G")
     parser.add_argument("--output_dir", type=str, default="data/wikidata_5m")
     parser.add_argument("--max_entities", type=int, default=5_000_000)
     parser.add_argument("--dump_path", type=str, default=None, help="Path to WikiData JSON dump")

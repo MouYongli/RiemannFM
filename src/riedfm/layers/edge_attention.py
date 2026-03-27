@@ -13,7 +13,7 @@ import torch.nn.functional as F
 from torch import Tensor
 
 
-class EdgeStreamAttention(nn.Module):
+class RieDFMEdgeAttention(nn.Module):
     """Factorized edge self-attention on the conceptual line graph.
 
     Instead of full pairwise attention between all N^2 edges (which would be O(N^4)),
@@ -89,4 +89,5 @@ class EdgeStreamAttention(nn.Module):
 
         # Combine
         out = self.out_proj(out_src + out_tgt)
-        return self.norm(residual + out)
+        result: Tensor = self.norm(residual + out)
+        return result

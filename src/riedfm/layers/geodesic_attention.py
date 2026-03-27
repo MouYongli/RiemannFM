@@ -10,19 +10,17 @@ Value aggregation uses tangent space aggregation:
     o_i = Exp_{x_i}(sum_j alpha_ij * Log_{x_i}(v_j))
 """
 
-import math
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
 from torch import Tensor
 
-from riedfm.layers.manifold_rope import ManifoldRoPE
-from riedfm.manifolds.product import ProductManifold
+from riedfm.layers.manifold_rope import RieDFMManifoldRoPE
+from riedfm.manifolds.product import RieDFMProductManifold
 
 
-class GeodesicKernelAttention(nn.Module):
+class RieDFMGeodesicAttention(nn.Module):
     """Multi-head attention with geodesic kernel bias and manifold-aware aggregation.
 
     Args:
@@ -65,14 +63,14 @@ class GeodesicKernelAttention(nn.Module):
 
         # M-RoPE
         if use_mrope:
-            self.mrope = ManifoldRoPE(self.head_dim)
+            self.mrope = RieDFMManifoldRoPE(self.head_dim)
 
         self.attn_dropout = nn.Dropout(dropout)
 
     def forward(
         self,
         h: Tensor,
-        manifold: ProductManifold,
+        manifold: RieDFMProductManifold,
         positions: Tensor,
         mask: Tensor | None = None,
     ) -> Tensor:
@@ -128,4 +126,5 @@ class GeodesicKernelAttention(nn.Module):
         out = torch.einsum("nmh,mhd->nhd", attn_weights, v)
         out = rearrange(out, "n h d -> n (h d)")
 
-        return self.out_proj(out)
+        result: Tensor = self.out_proj(out)
+        return result

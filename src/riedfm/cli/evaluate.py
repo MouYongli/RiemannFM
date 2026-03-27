@@ -1,7 +1,7 @@
 """RieDFM-G evaluation script.
 
 Usage:
-    python scripts/evaluate.py checkpoint=path/to/checkpoint.pt data=fb15k237
+    python -m riedfm.cli.evaluate checkpoint=path/to/checkpoint.pt data=fb15k237
 """
 
 import logging
@@ -13,16 +13,16 @@ from omegaconf import DictConfig, OmegaConf
 logger = logging.getLogger(__name__)
 
 
-@hydra.main(version_base=None, config_path="../src/riedfm/configs", config_name="config")
+@hydra.main(version_base=None, config_path="../configs", config_name="config")
 def main(cfg: DictConfig):
     logger.info(f"Evaluation configuration:\n{OmegaConf.to_yaml(cfg)}")
 
     device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
 
     # Build manifold and model
-    from riedfm.manifolds.product import ProductManifold
+    from riedfm.manifolds.product import RieDFMProductManifold
 
-    manifold = ProductManifold(
+    manifold = RieDFMProductManifold(
         dim_hyperbolic=cfg.manifold.dim_hyperbolic,
         dim_spherical=cfg.manifold.dim_spherical,
         dim_euclidean=cfg.manifold.dim_euclidean,
@@ -64,10 +64,10 @@ def main(cfg: DictConfig):
             generated_graphs.append((x.cpu(), e.cpu()))
 
             if (i + 1) % 100 == 0:
-                logger.info(f"Generated {i+1}/{cfg.eval.num_generation_samples} graphs")
+                logger.info(f"Generated {i + 1}/{cfg.eval.num_generation_samples} graphs")
 
     # Compute metrics
-    from riedfm.utils.metrics import compute_vun, degree_mmd
+    from riedfm.utils.metrics import compute_vun
 
     adj_matrices = [e.numpy() for _, e in generated_graphs]
     vun = compute_vun(adj_matrices, adj_matrices[:10])  # Placeholder ref graphs

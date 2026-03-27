@@ -4,10 +4,10 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from riedfm.manifolds.product import ProductManifold
+from riedfm.manifolds.product import RieDFMProductManifold
 
 
-class ManifoldNoiseSampler(nn.Module):
+class RieDFMManifoldNoise(nn.Module):
     """Sample noise points uniformly on the product manifold.
 
     For continuous node coordinates, the base distribution is:
@@ -16,7 +16,7 @@ class ManifoldNoiseSampler(nn.Module):
     - Euclidean: standard Gaussian
     """
 
-    def __init__(self, manifold: ProductManifold):
+    def __init__(self, manifold: RieDFMProductManifold):
         super().__init__()
         self.manifold = manifold
 
@@ -46,7 +46,7 @@ class ManifoldNoiseSampler(nn.Module):
         return self.manifold.sample_uniform((total,), device)
 
 
-class SparseEdgeNoiseSampler(nn.Module):
+class RieDFMSparseEdgeNoise(nn.Module):
     """Sparse-aware noise prior for discrete edge types.
 
     Instead of uniform noise over all K+1 edge types (which produces
@@ -85,7 +85,8 @@ class SparseEdgeNoiseSampler(nn.Module):
         Returns:
             Edge type matrix, shape (N, N), values in {0, 1, ..., K}.
         """
-        probs = self.probs.to(device)
+        probs: Tensor = self.probs  # type: ignore[assignment]
+        probs = probs.to(device)
         # Sample from categorical for each edge slot
         flat = torch.multinomial(probs.expand(num_nodes * num_nodes, -1), 1).squeeze(-1)
         E = flat.reshape(num_nodes, num_nodes)

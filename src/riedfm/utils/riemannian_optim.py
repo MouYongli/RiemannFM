@@ -50,7 +50,7 @@ def build_optimizer(
         try:
             from geoopt.optim import RiemannianAdam
 
-            return RiemannianAdam(param_groups)
+            return RiemannianAdam(param_groups)  # type: ignore[no-any-return]
         except ImportError:
             pass
 
@@ -74,4 +74,4 @@ def clip_riemannian_grad(
     Returns:
         The total gradient norm before clipping.
     """
-    return torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
+    return float(torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm))

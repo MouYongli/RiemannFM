@@ -5,10 +5,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from riedfm.manifolds.product import ProductManifold
+from riedfm.manifolds.product import RieDFMProductManifold
 
 
-class FlowMatchingLoss(nn.Module):
+class RieDFMFlowMatchingLoss(nn.Module):
     """Combined continuous + discrete flow matching loss.
 
     L = L_cont + lambda * L_disc
@@ -24,7 +24,7 @@ class FlowMatchingLoss(nn.Module):
 
     def __init__(
         self,
-        manifold: ProductManifold,
+        manifold: RieDFMProductManifold,
         num_edge_types: int,
         lambda_disc: float = 1.0,
     ):

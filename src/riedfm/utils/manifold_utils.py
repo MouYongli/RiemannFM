@@ -83,4 +83,5 @@ def project_to_sphere(x: Tensor) -> Tensor:
     Returns:
         Point on the unit sphere, shape (..., d).
     """
-    return x / x.norm(dim=-1, keepdim=True).clamp(min=EPS)
+    result: Tensor = x / x.norm(dim=-1, keepdim=True).clamp(min=EPS)
+    return result

@@ -29,7 +29,7 @@ def setup_wandb(cfg: dict) -> Any:
 
         run = wandb.init(
             project=cfg.get("project_name", "riedfm-g"),
-            name=cfg.get("run_name", None),
+            name=cfg.get("run_name"),
             config=dict(cfg),
             reinit=True,
         )

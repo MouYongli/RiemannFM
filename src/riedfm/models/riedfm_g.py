@@ -9,18 +9,18 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from riedfm.flow.joint_flow import JointFlowMatcher
-from riedfm.manifolds.product import ProductManifold
-from riedfm.models.red_former import REDFormer
+from riedfm.flow.joint_flow import RieDFMJointFlow
+from riedfm.manifolds.product import RieDFMProductManifold
+from riedfm.models.red_former import RieDFMREDFormer
 
 
 class RieDFMG(nn.Module):
     """RieDFM-G: Riemannian Discrete Flow Matching on Graphs.
 
     Top-level model that combines:
-    - ProductManifold for geometry
-    - JointFlowMatcher for noise/interpolation/sampling
-    - REDFormer as the denoising backbone
+    - RieDFMProductManifold for geometry
+    - RieDFMJointFlow for noise/interpolation/sampling
+    - RieDFMREDFormer as the denoising backbone
 
     Args:
         manifold: Product manifold configuration.
@@ -37,7 +37,7 @@ class RieDFMG(nn.Module):
 
     def __init__(
         self,
-        manifold: ProductManifold,
+        manifold: RieDFMProductManifold,
         num_layers: int = 12,
         node_dim: int = 768,
         edge_dim: int = 256,
@@ -52,14 +52,14 @@ class RieDFMG(nn.Module):
         self.manifold = manifold
 
         # Flow matching
-        self.flow_matcher = JointFlowMatcher(
+        self.flow_matcher = RieDFMJointFlow(
             manifold=manifold,
             num_edge_types=num_edge_types,
             avg_edge_density=avg_edge_density,
         )
 
         # Backbone
-        self.backbone = REDFormer(
+        self.backbone = RieDFMREDFormer(
             manifold=manifold,
             num_layers=num_layers,
             node_dim=node_dim,
@@ -131,7 +131,7 @@ class RieDFMG(nn.Module):
         self,
         num_nodes: int,
         num_steps: int = 100,
-        device: torch.device = torch.device("cpu"),
+        device: torch.device | None = None,
         text_embeds: Tensor | None = None,
         text_mask: Tensor | None = None,
     ) -> tuple[Tensor, Tensor]:
@@ -147,6 +147,8 @@ class RieDFMG(nn.Module):
         Returns:
             (x_1, e_1): Generated node coordinates and edge type matrix.
         """
+        if device is None:
+            device = torch.device("cpu")
 
         def network_fn(x_t, e_t, t, condition):
             return self.backbone(
@@ -157,10 +159,11 @@ class RieDFMG(nn.Module):
                 text_mask=text_mask,
             )
 
-        return self.flow_matcher.sample(
+        x_gen, e_gen = self.flow_matcher.sample(
             network_fn=network_fn,
             num_nodes=num_nodes,
             num_steps=num_steps,
             device=device,
             condition=text_embeds,
         )
+        return (x_gen, e_gen)

@@ -10,10 +10,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from riedfm.manifolds.product import ProductManifold
+from riedfm.manifolds.product import RieDFMProductManifold
 
 
-class ContrastiveAlignmentLoss(nn.Module):
+class RieDFMContrastiveLoss(nn.Module):
     """InfoNCE contrastive loss for graph-text alignment.
 
     L_align = -1/B * sum_i log( exp(sim(f(x_1^i), c_i) / tau) / sum_j exp(sim(f(x_1^j), c_j) / tau) )
@@ -28,7 +28,7 @@ class ContrastiveAlignmentLoss(nn.Module):
 
     def __init__(
         self,
-        manifold: ProductManifold,
+        manifold: RieDFMProductManifold,
         graph_dim: int | None = None,
         text_dim: int = 1024,
         proj_dim: int = 256,

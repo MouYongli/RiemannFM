@@ -8,13 +8,13 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from riedfm.layers.ath_norm import TimestepEmbedding
-from riedfm.layers.vector_field_head import ContinuousVectorFieldHead, DiscreteEdgeTypeHead
-from riedfm.manifolds.product import ProductManifold
-from riedfm.models.red_former_block import REDFormerBlock
+from riedfm.layers.ath_norm import RieDFMTimestepEmbedding
+from riedfm.layers.vector_field_head import RieDFMContinuousVFHead, RieDFMDiscreteEdgeHead
+from riedfm.manifolds.product import RieDFMProductManifold
+from riedfm.models.red_former_block import RieDFMREDFormerBlock
 
 
-class REDFormer(nn.Module):
+class RieDFMREDFormer(nn.Module):
     """Riemannian Equivariant Dual-Stream Transformer.
 
     Takes noisy node coordinates and edge types, plus timestep and optional
@@ -36,7 +36,7 @@ class REDFormer(nn.Module):
 
     def __init__(
         self,
-        manifold: ProductManifold,
+        manifold: RieDFMProductManifold,
         num_layers: int = 12,
         node_dim: int = 768,
         edge_dim: int = 256,
@@ -56,7 +56,7 @@ class REDFormer(nn.Module):
 
         # Time embedding
         time_embed_dim = node_dim // 3  # Compact time embedding
-        self.time_embed = TimestepEmbedding(time_embed_dim)
+        self.time_embed = RieDFMTimestepEmbedding(time_embed_dim)
 
         # Input projections
         # Node: project manifold coordinates to hidden dim
@@ -70,7 +70,7 @@ class REDFormer(nn.Module):
             # Include text cross-attention every `text_cross_attn_every` layers
             layer_text_dim = text_dim if (i % text_cross_attn_every == 0) else 0
             self.blocks.append(
-                REDFormerBlock(
+                RieDFMREDFormerBlock(
                     node_dim=node_dim,
                     edge_dim=edge_dim,
                     num_heads=num_heads,
@@ -83,8 +83,8 @@ class REDFormer(nn.Module):
             )
 
         # Output heads
-        self.vector_field_head = ContinuousVectorFieldHead(node_dim, manifold)
-        self.edge_type_head = DiscreteEdgeTypeHead(edge_dim, num_edge_types)
+        self.vector_field_head = RieDFMContinuousVFHead(node_dim, manifold)
+        self.edge_type_head = RieDFMDiscreteEdgeHead(edge_dim, num_edge_types)
 
         # Final layer norms
         self.final_node_norm = nn.LayerNorm(node_dim)

@@ -1,8 +1,8 @@
 """RieDFM-G fine-tuning script for downstream tasks.
 
 Usage:
-    python scripts/finetune.py data=fb15k237 training=finetune
-    python scripts/finetune.py data=wn18rr training=finetune training.lr=1e-5
+    python -m riedfm.cli.finetune data=fb15k237 training=finetune
+    python -m riedfm.cli.finetune data=wn18rr training=finetune training.lr=1e-5
 """
 
 import logging
@@ -14,16 +14,16 @@ from omegaconf import DictConfig, OmegaConf
 logger = logging.getLogger(__name__)
 
 
-@hydra.main(version_base=None, config_path="../src/riedfm/configs", config_name="config")
+@hydra.main(version_base=None, config_path="../configs", config_name="config")
 def main(cfg: DictConfig):
     logger.info(f"Fine-tuning configuration:\n{OmegaConf.to_yaml(cfg)}")
 
     device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
 
     # Build manifold
-    from riedfm.manifolds.product import ProductManifold
+    from riedfm.manifolds.product import RieDFMProductManifold
 
-    manifold = ProductManifold(
+    manifold = RieDFMProductManifold(
         dim_hyperbolic=cfg.manifold.dim_hyperbolic,
         dim_spherical=cfg.manifold.dim_spherical,
         dim_euclidean=cfg.manifold.dim_euclidean,
@@ -58,7 +58,7 @@ def main(cfg: DictConfig):
     # Optionally freeze backbone layers
     freeze_layers = cfg.training.get("freeze_backbone_layers", 0)
     if freeze_layers > 0:
-        for i, block in enumerate(model.backbone.blocks[:freeze_layers]):
+        for _i, block in enumerate(model.backbone.blocks[:freeze_layers]):
             for param in block.parameters():
                 param.requires_grad = False
         logger.info(f"Froze first {freeze_layers} backbone layers")
@@ -66,7 +66,7 @@ def main(cfg: DictConfig):
     # Build optimizer and loss (same structure as pretrain)
     from riedfm.utils.riemannian_optim import build_optimizer
 
-    optimizer = build_optimizer(
+    build_optimizer(
         model,
         lr=cfg.training.lr,
         curvature_lr=cfg.training.curvature_lr,

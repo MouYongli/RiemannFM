@@ -17,7 +17,6 @@ from torch import Tensor
 from riedfm.manifolds.base import Manifold
 from riedfm.utils.manifold_utils import (
     EPS,
-    clamp_norm,
     lorentz_inner,
     project_to_lorentz,
     safe_arccosh,
@@ -34,7 +33,7 @@ class LorentzManifold(Manifold):
 
     Attributes:
         curvature: Negative curvature parameter (default -1.0). Can be made learnable
-                   by wrapping in nn.Parameter at the ProductManifold level.
+                   by wrapping in nn.Parameter at the RieDFMProductManifold level.
     """
 
     def __init__(self, curvature: float = -1.0):
@@ -49,7 +48,7 @@ class LorentzManifold(Manifold):
     @property
     def sqrt_abs_c(self) -> float:
         """Square root of absolute curvature, used as scaling factor."""
-        return self.abs_c**0.5
+        return float(self.abs_c**0.5)
 
     def exp_map(self, x: Tensor, v: Tensor) -> Tensor:
         """Exponential map on the Lorentz hyperboloid.
@@ -97,11 +96,9 @@ class LorentzManifold(Manifold):
         is computed to satisfy the hyperboloid constraint.
         """
         # shape[-1] is the ambient dimension d+1, so spatial dim is shape[-1]-1
-        spatial_shape = shape[:-1] + (shape[-1] - 1,)
+        spatial_shape = (*shape[:-1], shape[-1] - 1)
         spatial = torch.randn(spatial_shape, device=device)
-        return project_to_lorentz(
-            torch.cat([torch.zeros(*shape[:-1], 1, device=device), spatial], dim=-1)
-        )
+        return project_to_lorentz(torch.cat([torch.zeros(*shape[:-1], 1, device=device), spatial], dim=-1))
 
     def origin(self, dim: int, device: torch.device) -> Tensor:
         """Origin of the hyperboloid: (1, 0, 0, ..., 0) in Lorentz coordinates."""

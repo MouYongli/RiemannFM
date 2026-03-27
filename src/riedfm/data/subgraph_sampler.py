@@ -10,11 +10,8 @@ Implements the sampling strategies described in the paper:
 import random
 from collections import defaultdict
 
-import torch
-from torch import Tensor
 
-
-class SubgraphSampler:
+class RieDFMSubgraphSampler:
     """Hierarchical subgraph sampler for knowledge graphs.
 
     Given a full KG represented as a list of triples (h, r, t),
@@ -71,7 +68,7 @@ class SubgraphSampler:
         visited = {seed}
         frontier = [seed]
 
-        for hop in range(self.max_hops):
+        for _hop in range(self.max_hops):
             if len(visited) >= self.max_nodes:
                 break
             next_frontier = []
@@ -92,7 +89,7 @@ class SubgraphSampler:
                 else:
                     selected = neighbors[: self.max_nodes - len(visited)]
 
-                for neighbor, rel in selected:
+                for neighbor, _rel in selected:
                     if neighbor not in visited and len(visited) < self.max_nodes:
                         visited.add(neighbor)
                         next_frontier.append(neighbor)
@@ -127,7 +124,7 @@ class SubgraphSampler:
             (node_ids, subgraph_triples) for the fan-out subgraph.
         """
         tails = [n for n, r in self.adj[head] if r == relation]
-        nodes = [head] + tails[: self.max_nodes - 1]
+        nodes = [head, *tails[: self.max_nodes - 1]]
         node_to_local = {n: i for i, n in enumerate(nodes)}
 
         triples = [(0, relation, node_to_local[t]) for t in tails if t in node_to_local]

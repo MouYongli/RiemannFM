@@ -12,15 +12,15 @@ Plus feed-forward networks for both streams.
 import torch.nn as nn
 from torch import Tensor
 
-from riedfm.layers.ath_norm import ATHNorm
-from riedfm.layers.dual_stream_interaction import DualStreamInteraction
-from riedfm.layers.edge_attention import EdgeStreamAttention
-from riedfm.layers.geodesic_attention import GeodesicKernelAttention
-from riedfm.layers.text_cross_attention import TextCrossAttention
-from riedfm.manifolds.product import ProductManifold
+from riedfm.layers.ath_norm import RieDFMATHNorm
+from riedfm.layers.dual_stream_interaction import RieDFMDualStreamInteraction
+from riedfm.layers.edge_attention import RieDFMEdgeAttention
+from riedfm.layers.geodesic_attention import RieDFMGeodesicAttention
+from riedfm.layers.text_cross_attention import RieDFMTextCrossAttention
+from riedfm.manifolds.product import RieDFMProductManifold
 
 
-class REDFormerBlock(nn.Module):
+class RieDFMREDFormerBlock(nn.Module):
     """Single RED-Former block with dual-stream processing.
 
     Args:
@@ -50,8 +50,8 @@ class REDFormerBlock(nn.Module):
         super().__init__()
 
         # Stage 1: Node self-attention with geodesic kernel
-        self.node_attn_norm = ATHNorm(node_dim, time_embed_dim)
-        self.node_attn = GeodesicKernelAttention(
+        self.node_attn_norm = RieDFMATHNorm(node_dim, time_embed_dim)
+        self.node_attn = RieDFMGeodesicAttention(
             hidden_dim=node_dim,
             num_heads=num_heads,
             dropout=dropout,
@@ -59,14 +59,14 @@ class REDFormerBlock(nn.Module):
         )
 
         # Stage 2: Edge self-attention
-        self.edge_attn = EdgeStreamAttention(
+        self.edge_attn = RieDFMEdgeAttention(
             edge_dim=edge_dim,
             num_heads=edge_heads,
             dropout=dropout,
         )
 
         # Stage 3: Node-edge cross-interaction
-        self.cross_interaction = DualStreamInteraction(
+        self.cross_interaction = RieDFMDualStreamInteraction(
             node_dim=node_dim,
             edge_dim=edge_dim,
             dropout=dropout,
@@ -75,8 +75,8 @@ class REDFormerBlock(nn.Module):
         # Stage 4: Text cross-attention (optional)
         self.has_text_attn = text_dim > 0
         if self.has_text_attn:
-            self.text_attn_norm = ATHNorm(node_dim, time_embed_dim)
-            self.text_attn = TextCrossAttention(
+            self.text_attn_norm = RieDFMATHNorm(node_dim, time_embed_dim)
+            self.text_attn = RieDFMTextCrossAttention(
                 node_dim=node_dim,
                 text_dim=text_dim,
                 num_heads=num_heads,
@@ -84,7 +84,7 @@ class REDFormerBlock(nn.Module):
             )
 
         # Feed-forward networks
-        self.node_ff_norm = ATHNorm(node_dim, time_embed_dim)
+        self.node_ff_norm = RieDFMATHNorm(node_dim, time_embed_dim)
         self.node_ff = nn.Sequential(
             nn.Linear(node_dim, node_dim * ff_mult),
             nn.GELU(),
@@ -106,7 +106,7 @@ class REDFormerBlock(nn.Module):
         self,
         h_v: Tensor,
         h_e: Tensor,
-        manifold: ProductManifold,
+        manifold: RieDFMProductManifold,
         positions: Tensor,
         t_embed: Tensor,
         depth: Tensor | None = None,

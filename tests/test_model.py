@@ -3,7 +3,7 @@
 import pytest
 import torch
 
-from riedfm.manifolds.product import ProductManifold
+from riedfm.manifolds.product import RieDFMProductManifold
 
 DEVICE = torch.device("cpu")
 
@@ -11,15 +11,15 @@ DEVICE = torch.device("cpu")
 @pytest.fixture
 def small_manifold():
     """Small manifold for fast testing."""
-    return ProductManifold(dim_hyperbolic=4, dim_spherical=4, dim_euclidean=4)
+    return RieDFMProductManifold(dim_hyperbolic=4, dim_spherical=4, dim_euclidean=4)
 
 
 class TestREDFormerBlock:
     def test_forward_shape(self, small_manifold):
-        from riedfm.layers.ath_norm import TimestepEmbedding
-        from riedfm.models.red_former_block import REDFormerBlock
+        from riedfm.layers.ath_norm import RieDFMTimestepEmbedding
+        from riedfm.models.red_former_block import RieDFMREDFormerBlock
 
-        block = REDFormerBlock(
+        block = RieDFMREDFormerBlock(
             node_dim=64,
             edge_dim=32,
             num_heads=4,
@@ -29,7 +29,7 @@ class TestREDFormerBlock:
             dropout=0.0,
             use_mrope=False,
         )
-        t_embed_fn = TimestepEmbedding(32)
+        t_embed_fn = RieDFMTimestepEmbedding(32)
 
         N = 6
         h_v = torch.randn(N, 64)
@@ -44,9 +44,9 @@ class TestREDFormerBlock:
 
 class TestREDFormer:
     def test_forward_shape(self, small_manifold):
-        from riedfm.models.red_former import REDFormer
+        from riedfm.models.red_former import RieDFMREDFormer
 
-        model = REDFormer(
+        model = RieDFMREDFormer(
             manifold=small_manifold,
             num_layers=2,
             node_dim=64,
@@ -68,9 +68,9 @@ class TestREDFormer:
         assert p_pred.shape == (N, N, 11)
 
     def test_gradient_flow(self, small_manifold):
-        from riedfm.models.red_former import REDFormer
+        from riedfm.models.red_former import RieDFMREDFormer
 
-        model = REDFormer(
+        model = RieDFMREDFormer(
             manifold=small_manifold,
             num_layers=2,
             node_dim=64,
