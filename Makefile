@@ -1,6 +1,5 @@
 .PHONY: help install install-dev lint format test test-cov typecheck precommit pretrain finetune evaluate generate preprocess clean
 
-PYTHON ?= python
 SRC = src/riedfm
 TESTS = tests
 
@@ -9,48 +8,48 @@ help: ## Show this help
 
 # ─── Setup ────────────────────────────────────────────────────────────
 install: ## Install package
-	pip install -e .
+	uv sync
 
 install-dev: ## Install with dev dependencies
-	pip install -e ".[dev]"
-	pre-commit install
+	uv sync --group dev
+	uv run pre-commit install
 
 # ─── Code Quality ─────────────────────────────────────────────────────
 lint: ## Run ruff linter
-	ruff check $(SRC) $(TESTS)
+	uv run ruff check $(SRC) $(TESTS)
 
 format: ## Run ruff formatter
-	ruff format $(SRC) $(TESTS)
-	ruff check --fix $(SRC) $(TESTS)
+	uv run ruff format $(SRC) $(TESTS)
+	uv run ruff check --fix $(SRC) $(TESTS)
 
 typecheck: ## Run mypy type checker
-	mypy $(SRC)
+	uv run mypy $(SRC)
 
 precommit: ## Run all pre-commit hooks
-	pre-commit run --all-files
+	uv run pre-commit run --all-files
 
 # ─── Tests ────────────────────────────────────────────────────────────
 test: ## Run tests
-	pytest $(TESTS) -v
+	uv run pytest $(TESTS) -v
 
 test-cov: ## Run tests with coverage
-	pytest $(TESTS) -v --cov=$(SRC) --cov-report=term-missing --cov-report=html
+	uv run pytest $(TESTS) -v --cov=$(SRC) --cov-report=term-missing --cov-report=html
 
 # ─── Training ─────────────────────────────────────────────────────────
 pretrain: ## Run pretraining
-	$(PYTHON) -m riedfm.cli.pretrain $(ARGS)
+	uv run python -m riedfm.cli.pretrain $(ARGS)
 
 finetune: ## Run fine-tuning
-	$(PYTHON) -m riedfm.cli.finetune $(ARGS)
+	uv run python -m riedfm.cli.finetune $(ARGS)
 
 evaluate: ## Run evaluation
-	$(PYTHON) -m riedfm.cli.evaluate $(ARGS)
+	uv run python -m riedfm.cli.evaluate $(ARGS)
 
 generate: ## Run graph generation
-	$(PYTHON) -m riedfm.cli.generate $(ARGS)
+	uv run python -m riedfm.cli.generate $(ARGS)
 
 preprocess: ## Run data preprocessing
-	$(PYTHON) -m riedfm.cli.preprocess $(ARGS)
+	uv run python -m riedfm.cli.preprocess $(ARGS)
 
 # ─── Cleanup ──────────────────────────────────────────────────────────
 clean: ## Remove build artifacts
