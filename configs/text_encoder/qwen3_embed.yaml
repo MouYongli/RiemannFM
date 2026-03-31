@@ -1,0 +1,5 @@
+model_name: Alibaba-NLP/Qwen3-Embedding-8B
+output_dim: 4096
+freeze: true
+pooling: last_token
+max_length: 512

@@ -1,0 +1,15 @@
+# @package _global_
+defaults:
+  - /data: wikidata_5m
+  - /training: pretrain
+  - /task: kgc_lp
+  - _self_
+
+seed: 42
+run_name: ablation_loss_${now:%Y%m%d_%H%M%S}
+
+hydra:
+  mode: MULTIRUN
+  sweeper:
+    params:
+      flow: joint,continuous_only,discrete_only

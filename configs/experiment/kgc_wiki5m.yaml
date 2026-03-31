@@ -1,0 +1,9 @@
+# @package _global_
+defaults:
+  - /data: wikidata_5m
+  - /training: finetune
+  - /task: kgc_lp
+  - _self_
+
+seed: 42
+run_name: kgc_wiki5m_${now:%Y%m%d_%H%M%S}

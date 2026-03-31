@@ -1,0 +1,7 @@
+# All components enabled (default)
+use_mrope: true
+use_geodesic_kernel: true
+use_ath_norm: true
+use_edge_self_update: true
+use_dual_stream_cross: true
+use_text_condition: true

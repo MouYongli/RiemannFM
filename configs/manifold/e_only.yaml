@@ -1,0 +1,6 @@
+dim_hyperbolic: 0
+dim_spherical: 0
+dim_euclidean: 96
+init_curvature_h: -1.0
+init_curvature_s: 1.0
+learn_curvature: false

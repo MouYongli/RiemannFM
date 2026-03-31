@@ -1,0 +1,30 @@
+sampler: tpe
+n_trials: 30
+direction: minimize
+objective: val_loss
+
+search_space:
+  training.lr:
+    type: categorical
+    choices: [1.0e-4, 3.0e-4, 5.0e-4]
+  training.lambda_disc:
+    type: categorical
+    choices: [0.1, 0.5, 1.0, 2.0]
+  training.mu_align:
+    type: categorical
+    choices: [0.01, 0.1, 0.5]
+  data.max_nodes:
+    type: categorical
+    choices: [32, 64, 128]
+  model.num_layers:
+    type: categorical
+    choices: [4, 6, 8]
+  model.node_dim:
+    type: categorical
+    choices: [128, 256, 512]
+  model.num_heads:
+    type: categorical
+    choices: [4, 8]
+  training.temperature:
+    type: categorical
+    choices: [0.05, 0.1, 0.2]

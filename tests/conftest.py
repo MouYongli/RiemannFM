@@ -1,9 +1,9 @@
-"""Shared pytest fixtures for RieDFM-G tests."""
+"""Shared pytest fixtures for RiemannFM tests."""
 
 import pytest
 import torch
 
-from riedfm.manifolds.product import RieDFMProductManifold
+from riemannfm.manifolds.product import RiemannFMProductManifold
 
 ATOL = 1e-4
 RTOL = 1e-4
@@ -24,7 +24,7 @@ def device():
 @pytest.fixture
 def product_manifold():
     """Small product manifold H^5 x S^4 x E^4 for fast testing."""
-    return RieDFMProductManifold(dim_hyperbolic=4, dim_spherical=4, dim_euclidean=4)
+    return RiemannFMProductManifold(dim_hyperbolic=4, dim_spherical=4, dim_euclidean=4)
 
 
 @pytest.fixture

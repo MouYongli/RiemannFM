@@ -1,0 +1,5 @@
+model_name: xlm-roberta-large
+output_dim: 1024
+freeze: true
+pooling: mean
+max_length: 256

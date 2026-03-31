@@ -2,13 +2,13 @@
 
 import torch
 
-from riedfm.manifolds.product import RieDFMProductManifold
+from riemannfm.manifolds.product import RiemannFMProductManifold
 
 DEVICE = torch.device("cpu")
 
 
-def _make_small_manifold() -> RieDFMProductManifold:
-    return RieDFMProductManifold(dim_hyperbolic=4, dim_spherical=4, dim_euclidean=4)
+def _make_small_manifold() -> RiemannFMProductManifold:
+    return RiemannFMProductManifold(dim_hyperbolic=4, dim_spherical=4, dim_euclidean=4)
 
 
 def _make_triples() -> list[tuple[int, int, int]]:
@@ -25,9 +25,9 @@ def _make_triples() -> list[tuple[int, int, int]]:
 
 class TestSubgraphSampler:
     def test_sample_returns_three_tuple(self):
-        from riedfm.data.subgraph_sampler import RieDFMSubgraphSampler
+        from riemannfm.data.subgraph_sampler import RiemannFMSubgraphSampler
 
-        sampler = RieDFMSubgraphSampler(_make_triples(), max_nodes=10, max_hops=2)
+        sampler = RiemannFMSubgraphSampler(_make_triples(), max_nodes=10, max_hops=2)
         result = sampler.sample()
         assert len(result) == 3
         node_ids, triples, depth_map = result
@@ -36,9 +36,9 @@ class TestSubgraphSampler:
         assert isinstance(depth_map, dict)
 
     def test_sample_from_seed(self):
-        from riedfm.data.subgraph_sampler import RieDFMSubgraphSampler
+        from riemannfm.data.subgraph_sampler import RiemannFMSubgraphSampler
 
-        sampler = RieDFMSubgraphSampler(_make_triples(), max_nodes=10, max_hops=2)
+        sampler = RiemannFMSubgraphSampler(_make_triples(), max_nodes=10, max_hops=2)
         node_ids, _triples, depth_map = sampler.sample_from_seed(0)
         # Seed node should always be included
         assert 0 in node_ids
@@ -47,18 +47,18 @@ class TestSubgraphSampler:
         assert depth_map[seed_local_idx] == 0
 
     def test_depth_map_monotonic(self):
-        from riedfm.data.subgraph_sampler import RieDFMSubgraphSampler
+        from riemannfm.data.subgraph_sampler import RiemannFMSubgraphSampler
 
-        sampler = RieDFMSubgraphSampler(_make_triples(), max_nodes=10, max_hops=3)
+        sampler = RiemannFMSubgraphSampler(_make_triples(), max_nodes=10, max_hops=3)
         _node_ids, _triples, depth_map = sampler.sample_from_seed(0)
         # All depths should be non-negative
         for d in depth_map.values():
             assert d >= 0
 
     def test_sample_fanout_returns_three_tuple(self):
-        from riedfm.data.subgraph_sampler import RieDFMSubgraphSampler
+        from riemannfm.data.subgraph_sampler import RiemannFMSubgraphSampler
 
-        sampler = RieDFMSubgraphSampler(_make_triples(), max_nodes=10)
+        sampler = RiemannFMSubgraphSampler(_make_triples(), max_nodes=10)
         result = sampler.sample_fanout(0, 0)
         assert len(result) == 3
 
@@ -66,10 +66,10 @@ class TestSubgraphSampler:
 class TestKGDataset:
     def test_triple_mode(self):
         """Test that triple mode returns dict with correct keys."""
-        from riedfm.data.kg_datasets import RieDFMKGDataset
+        from riemannfm.data.kg_datasets import RiemannFMKGDataset
 
         # Use a non-existent dir - should return empty dataset
-        ds = RieDFMKGDataset(
+        ds = RiemannFMKGDataset(
             data_dir="/tmp/nonexistent_kg_data",
             mode="triple",
             auto_download=False,
@@ -79,9 +79,9 @@ class TestKGDataset:
 
     def test_filter_masks(self):
         """Test filter mask construction."""
-        from riedfm.data.kg_datasets import RieDFMKGDataset
+        from riemannfm.data.kg_datasets import RiemannFMKGDataset
 
-        ds = RieDFMKGDataset(
+        ds = RiemannFMKGDataset(
             data_dir="/tmp/nonexistent_kg_data",
             mode="triple",
             auto_download=False,
@@ -105,10 +105,10 @@ class TestKGDataset:
 
 class TestLinkPredictionHead:
     def test_score_shape(self):
-        from riedfm.models.downstream.link_prediction import RieDFMLinkPredictionHead
+        from riemannfm.tasks.kgc_lp import RiemannFMLinkPredictionHead
 
         manifold = _make_small_manifold()
-        head = RieDFMLinkPredictionHead(manifold, num_entities=100, num_relations=10)
+        head = RiemannFMLinkPredictionHead(manifold, num_entities=100, num_relations=10)
 
         h = torch.tensor([0, 1, 2])
         r = torch.tensor([0, 1, 2])
@@ -118,10 +118,10 @@ class TestLinkPredictionHead:
         assert scores.shape == (3,)
 
     def test_score_all_tails_shape(self):
-        from riedfm.models.downstream.link_prediction import RieDFMLinkPredictionHead
+        from riemannfm.tasks.kgc_lp import RiemannFMLinkPredictionHead
 
         manifold = _make_small_manifold()
-        head = RieDFMLinkPredictionHead(manifold, num_entities=50, num_relations=5)
+        head = RiemannFMLinkPredictionHead(manifold, num_entities=50, num_relations=5)
 
         h = torch.tensor([0, 1])
         r = torch.tensor([0, 1])
@@ -130,10 +130,10 @@ class TestLinkPredictionHead:
         assert scores.shape == (2, 50)
 
     def test_score_all_heads_shape(self):
-        from riedfm.models.downstream.link_prediction import RieDFMLinkPredictionHead
+        from riemannfm.tasks.kgc_lp import RiemannFMLinkPredictionHead
 
         manifold = _make_small_manifold()
-        head = RieDFMLinkPredictionHead(manifold, num_entities=50, num_relations=5)
+        head = RiemannFMLinkPredictionHead(manifold, num_entities=50, num_relations=5)
 
         t = torch.tensor([3, 4])
         r = torch.tensor([0, 1])
@@ -142,10 +142,10 @@ class TestLinkPredictionHead:
         assert scores.shape == (2, 50)
 
     def test_gradient_flow(self):
-        from riedfm.models.downstream.link_prediction import RieDFMLinkPredictionHead
+        from riemannfm.tasks.kgc_lp import RiemannFMLinkPredictionHead
 
         manifold = _make_small_manifold()
-        head = RieDFMLinkPredictionHead(manifold, num_entities=20, num_relations=3)
+        head = RiemannFMLinkPredictionHead(manifold, num_entities=20, num_relations=3)
 
         h = torch.tensor([0, 1])
         r = torch.tensor([0, 1])
@@ -160,7 +160,7 @@ class TestLinkPredictionHead:
 
 class TestFilteredRanking:
     def test_compute_filtered_rank(self):
-        from riedfm.utils.metrics import compute_filtered_rank
+        from riemannfm.utils.metrics import compute_filtered_rank
 
         scores = torch.tensor([0.5, 0.8, 0.3, 0.9, 0.1])
         # True entity is index 1 (score=0.8). Only index 3 (0.9) scores higher.
@@ -172,7 +172,7 @@ class TestFilteredRanking:
         assert rank_filtered == 1  # Now rank 1
 
     def test_perfect_rank(self):
-        from riedfm.utils.metrics import compute_filtered_rank
+        from riemannfm.utils.metrics import compute_filtered_rank
 
         scores = torch.tensor([1.0, 0.5, 0.3])
         rank = compute_filtered_rank(scores, true_idx=0, filter_ids=None)
@@ -181,7 +181,7 @@ class TestFilteredRanking:
 
 class TestCosineScheduler:
     def test_warmup_phase(self):
-        from riedfm.utils.scheduler import build_cosine_scheduler
+        from riemannfm.optim.scheduler import build_cosine_scheduler
 
         optimizer = torch.optim.SGD([torch.randn(1, requires_grad=True)], lr=1.0)
         scheduler = build_cosine_scheduler(optimizer, warmup_steps=100, total_steps=1000)
@@ -197,7 +197,7 @@ class TestCosineScheduler:
         assert 0.4 < lr_mid < 0.6
 
     def test_decay_phase(self):
-        from riedfm.utils.scheduler import build_cosine_scheduler
+        from riemannfm.optim.scheduler import build_cosine_scheduler
 
         optimizer = torch.optim.SGD([torch.randn(1, requires_grad=True)], lr=1.0)
         scheduler = build_cosine_scheduler(optimizer, warmup_steps=10, total_steps=100)

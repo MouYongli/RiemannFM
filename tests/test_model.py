@@ -3,7 +3,7 @@
 import pytest
 import torch
 
-from riedfm.manifolds.product import RieDFMProductManifold
+from riemannfm.manifolds.product import RiemannFMProductManifold
 
 DEVICE = torch.device("cpu")
 
@@ -11,15 +11,15 @@ DEVICE = torch.device("cpu")
 @pytest.fixture
 def small_manifold():
     """Small manifold for fast testing."""
-    return RieDFMProductManifold(dim_hyperbolic=4, dim_spherical=4, dim_euclidean=4)
+    return RiemannFMProductManifold(dim_hyperbolic=4, dim_spherical=4, dim_euclidean=4)
 
 
 class TestREDFormerBlock:
     def test_forward_shape(self, small_manifold):
-        from riedfm.layers.ath_norm import RieDFMTimestepEmbedding
-        from riedfm.models.red_former_block import RieDFMREDFormerBlock
+        from riemannfm.models.normalization import RiemannFMTimestepEmbedding
+        from riemannfm.models.rieformer_block import RiemannFMRieFormerBlock
 
-        block = RieDFMREDFormerBlock(
+        block = RiemannFMRieFormerBlock(
             node_dim=64,
             edge_dim=32,
             num_heads=4,
@@ -29,7 +29,7 @@ class TestREDFormerBlock:
             dropout=0.0,
             use_mrope=False,
         )
-        t_embed_fn = RieDFMTimestepEmbedding(32)
+        t_embed_fn = RiemannFMTimestepEmbedding(32)
 
         N = 6
         h_v = torch.randn(N, 64)
@@ -44,9 +44,9 @@ class TestREDFormerBlock:
 
 class TestREDFormer:
     def test_forward_shape(self, small_manifold):
-        from riedfm.models.red_former import RieDFMREDFormer
+        from riemannfm.models.rieformer import RiemannFMRieFormer
 
-        model = RieDFMREDFormer(
+        model = RiemannFMRieFormer(
             manifold=small_manifold,
             num_layers=2,
             node_dim=64,
@@ -68,9 +68,9 @@ class TestREDFormer:
         assert p_pred.shape == (N, N, 11)
 
     def test_gradient_flow(self, small_manifold):
-        from riedfm.models.red_former import RieDFMREDFormer
+        from riemannfm.models.rieformer import RiemannFMRieFormer
 
-        model = RieDFMREDFormer(
+        model = RiemannFMRieFormer(
             manifold=small_manifold,
             num_layers=2,
             node_dim=64,
@@ -98,11 +98,11 @@ class TestREDFormer:
                 assert param.grad is not None, f"No gradient for {name}"
 
 
-class TestRieDFMG:
+class TestRiemannFM:
     def test_forward_shape(self, small_manifold):
-        from riedfm.models.riedfm_g import RieDFMG
+        from riemannfm.models.riemannfm import RiemannFM
 
-        model = RieDFMG(
+        model = RiemannFM(
             manifold=small_manifold,
             num_layers=2,
             node_dim=64,
@@ -125,9 +125,9 @@ class TestRieDFMG:
         assert outputs["p_pred"].shape == (N, N, 11)
 
     def test_generate_shape(self, small_manifold):
-        from riedfm.models.riedfm_g import RieDFMG
+        from riemannfm.models.riemannfm import RiemannFM
 
-        model = RieDFMG(
+        model = RiemannFM(
             manifold=small_manifold,
             num_layers=2,
             node_dim=64,

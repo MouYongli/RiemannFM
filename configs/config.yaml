@@ -1,0 +1,18 @@
+defaults:
+  - model: rieformer_base
+  - manifold: product_h_s_e
+  - flow: joint
+  - text_encoder: sbert
+  - data: wikidata_5m
+  - training: pretrain
+  - task: kgc_lp
+  - ablation: full
+  - eval: default
+  - _self_
+
+seed: 42
+project_name: riemannfm
+run_name: ${now:%Y%m%d_%H%M%S}
+output_dir: outputs/${run_name}
+device: cuda
+num_gpus: 1

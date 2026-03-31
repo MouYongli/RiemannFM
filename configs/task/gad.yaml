@@ -1,0 +1,9 @@
+task_name: gad
+zero_shot: true
+num_time_steps: 10
+num_noise_samples: 10
+anomaly_rates: [0.02, 0.05, 0.10]
+anomaly_types:
+  - relation_replace
+  - tail_replace
+  - synthetic_node

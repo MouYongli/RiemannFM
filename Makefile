@@ -1,6 +1,6 @@
 .PHONY: help install install-dev lint format test test-cov typecheck precommit pretrain finetune evaluate generate preprocess clean
 
-SRC = src/riedfm
+SRC = src/riemannfm
 TESTS = tests
 
 help: ## Show this help
@@ -37,19 +37,19 @@ test-cov: ## Run tests with coverage
 
 # ─── Training ─────────────────────────────────────────────────────────
 pretrain: ## Run pretraining
-	uv run python -m riedfm.cli.pretrain $(ARGS)
+	uv run python -m riemannfm.cli.pretrain $(ARGS)
 
 finetune: ## Run fine-tuning
-	uv run python -m riedfm.cli.finetune $(ARGS)
+	uv run python -m riemannfm.cli.finetune $(ARGS)
 
 evaluate: ## Run evaluation
-	uv run python -m riedfm.cli.evaluate $(ARGS)
+	uv run python -m riemannfm.cli.evaluate $(ARGS)
 
 generate: ## Run graph generation
-	uv run python -m riedfm.cli.generate $(ARGS)
+	uv run python -m riemannfm.cli.generate $(ARGS)
 
 preprocess: ## Run data preprocessing
-	uv run python -m riedfm.cli.preprocess $(ARGS)
+	uv run python -m riemannfm.cli.preprocess $(ARGS)
 
 # ─── Cleanup ──────────────────────────────────────────────────────────
 clean: ## Remove build artifacts

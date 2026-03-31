@@ -1,0 +1,15 @@
+# @package _global_
+defaults:
+  - /data: wikidata_5m
+  - /training: pretrain
+  - /task: kgc_lp
+  - _self_
+
+seed: 42
+run_name: ablation_manifold_${now:%Y%m%d_%H%M%S}
+
+hydra:
+  mode: MULTIRUN
+  sweeper:
+    params:
+      manifold: h_only,s_only,e_only,h_e,s_e,product_h_s_e,fixed_curvature

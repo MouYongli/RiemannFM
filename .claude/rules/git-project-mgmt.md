@@ -20,7 +20,7 @@ These rules apply to ALL files. Enforce the team's git conventions automatically
 
 - Format: `<type>(<scope>): <imperative subject>`
 - Type: same list as branch types
-- Scope must be one of: manifolds, flow, models, layers, data, losses, utils, cli, configs
+- Scope must be one of: manifolds, flow, models, tasks, data, losses, optim, utils, cli, configs
 - Subject: English, imperative mood ("add" not "added"), lowercase start, no period, ≤72 chars
 - Footer: use `Refs #N` on intermediate commits; use `Closes #N` only on the final commit before PR
 - Body (optional): explain WHY, not WHAT

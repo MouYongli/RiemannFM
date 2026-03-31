@@ -1,8 +1,0 @@
-dataset: wikidata
-data_dir: data/wikidata_5m
-num_edge_types: 1201
-max_nodes: 256
-max_hops: 3
-text_encoder: xlm-roberta-large
-max_text_length: 128
-num_workers: 8

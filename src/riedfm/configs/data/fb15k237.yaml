@@ -1,5 +1,0 @@
-dataset: kg_benchmark
-data_dir: data/fb15k-237
-num_edge_types: 238
-max_nodes: 256
-num_workers: 4

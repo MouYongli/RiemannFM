@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-RieDFM-G (Riemannian Discrete Flow Matching on Graphs) is a deep graph generative foundation model that performs joint continuous-discrete flow matching on product Riemannian manifolds (H × S × E) for knowledge graph generation and downstream tasks.
+RiemannFM (Geometry- and Text-Aware Flow Matching on Product Manifolds) is a deep graph generative foundation model that performs joint continuous-discrete flow matching on product Riemannian manifolds (H × S × E) for knowledge graph generation and downstream tasks (KGC, T2G, GAD).
 
 ## Tech Stack
 
@@ -10,7 +10,8 @@ RieDFM-G (Riemannian Discrete Flow Matching on Graphs) is a deep graph generativ
 - Riemannian optimization: geoopt
 - ODE solving: torchdiffeq
 - Config: Hydra / OmegaConf
-- Text encoding: transformers (frozen Sentence-BERT)
+- Text encoding: transformers (Qwen3-Embedding / Sentence-BERT / XLM-RoBERTa)
+- Hyperparameter search: Optuna (via hydra-optuna-sweeper)
 - Experiment tracking: Weights & Biases (wandb)
 - Testing: pytest
 - Linting: ruff
@@ -20,58 +21,45 @@ RieDFM-G (Riemannian Discrete Flow Matching on Graphs) is a deep graph generativ
 ## Directory Structure
 
 ```text
-src/riedfm/
-├── manifolds/          # Riemannian manifold implementations
-│   ├── base.py         #   abstract Manifold (exp/log maps, geodesic distance)
-│   ├── euclidean.py, hyperbolic.py, spherical.py
-│   └── product.py      #   product manifold H × S × E
-├── flow/               # Flow matching logic
-│   ├── continuous_flow.py   # continuous interpolation via exp map
-│   ├── discrete_flow.py     # CTMC-based discrete flow for edge types
-│   ├── joint_flow.py        # joint continuous-discrete flow
-│   └── ode_solver.py        # ODE solving for generation
-├── models/             # Neural network models
-│   ├── riedfm_g.py          # top-level model (manifold + flow + backbone)
-│   ├── red_former.py        # RED-Former backbone (Riemannian Equivariant Dual-Stream Transformer)
-│   ├── red_former_block.py  # single transformer block
-│   ├── text_encoder.py      # text embedding encoder
-│   └── downstream/          # task-specific heads (link prediction, etc.)
-├── layers/             # Custom layers
-│   ├── geodesic_attention.py    # manifold-aware attention
-│   ├── manifold_rope.py         # manifold RoPE
-│   ├── edge_attention.py        # edge-focused attention
-│   ├── text_cross_attention.py  # text-guided cross-attention
-│   ├── ath_norm.py              # Adaptive Time-Hierarchy Normalization
-│   ├── dual_stream_interaction.py
-│   └── vector_field_head.py     # velocity and edge prediction heads
-├── data/               # Data loading and preprocessing
-│   ├── kg_datasets.py       # KG benchmarks (FB15k-237, WN18RR, CoDEx)
-│   ├── wikidata_dataset.py  # WikiData subgraph extraction
-│   ├── molecular_datasets.py
-│   ├── subgraph_sampler.py  # BFS-based subgraph sampling
-│   ├── text_features.py     # text feature extraction
-│   └── collator.py          # batch collation
-├── losses/             # Loss functions
-│   ├── flow_matching_loss.py    # vector field regression
-│   ├── contrastive_loss.py      # graph-text contrastive
-│   └── combined_loss.py         # multi-task combination
-├── utils/              # Utilities
-│   ├── distributed.py       # DDP setup
-│   ├── checkpoint.py        # model checkpointing
-│   ├── riemannian_optim.py  # Riemannian-aware optimization
-│   ├── scheduler.py         # LR scheduling
-│   ├── metrics.py, graph_metrics.py
-│   └── manifold_utils.py    # geometric utilities
-├── cli/                # CLI entry points
-│   ├── pretrain.py, finetune.py, evaluate.py, generate.py, preprocess.py
-└── configs/            # Hydra YAML config groups
-    ├── config.yaml              # root config with defaults
-    ├── model/                   # red_former_{small,base,large}
-    ├── manifold/                # product_h_s_e
-    ├── flow/                    # default
-    ├── data/                    # wikidata_5m, fb15k237, wn18rr, zinc
-    ├── training/                # pretrain, finetune
-    └── eval/                    # default
+configs/                    # Hydra config groups (project root, not in src/)
+├── config.yaml             #   root defaults + global params
+├── model/                  #   rieformer_{small,base,large}
+├── manifold/               #   product_h_s_e + 6 ablation variants
+├── flow/                   #   joint, continuous_only, discrete_only
+├── text_encoder/           #   sbert, qwen3_embed, xlm_roberta, none
+├── data/                   #   wikidata_5m, fb15k237, wn18rr, codex_l, yago3_10, wiki27k
+├── training/               #   pretrain, finetune
+├── task/                   #   kgc_lp, kgc_rp, t2g, gad
+├── ablation/               #   full + 7 architecture ablation flags
+├── sweep/                  #   Optuna search spaces (pretrain, kgc, t2g, gad)
+├── experiment/             #   Full experiment recipes (Hydra overrides)
+└── eval/                   #   default
+
+src/riemannfm/
+├── manifolds/              # LAYER 0: Riemannian geometry
+│   ├── base.py, lorentz.py, spherical.py, euclidean.py
+│   ├── product.py          #   RiemannFMProductManifold (H×S×E, learnable κ)
+│   └── utils.py            #   safe_arccosh, lorentz_inner, clamp_norm
+├── flow/                   # LAYER 1: Flow matching
+│   ├── continuous_flow.py, discrete_flow.py, joint_flow.py
+│   ├── noise.py, solver.py, schedulers.py
+├── models/                 # LAYER 2: Neural networks (includes attention, normalization)
+│   ├── attention/          #   geodesic.py, edge.py, text_cross.py
+│   ├── normalization.py    #   ATH-Norm
+│   ├── positional.py       #   Manifold RoPE + timestep embedding
+│   ├── dual_stream.py, heads.py
+│   ├── rieformer_block.py  #   single RieFormer block
+│   ├── rieformer.py        #   RieFormer backbone
+│   ├── riemannfm.py        #   top-level model
+│   └── text_encoder.py     #   multi-backend (SBERT/Qwen3/XLM-R)
+├── tasks/                  # LAYER 3: Downstream tasks
+│   ├── kgc_lp.py           #   link prediction (same-domain + cross-domain)
+│   ├── kgc_rp.py, t2g.py, gad.py
+├── data/                   #   datasets/, transforms/, collator.py, graph_data.py
+├── losses/                 #   flow_matching, contrastive, combined
+├── optim/                  #   riemannian.py, scheduler.py
+├── utils/                  #   distributed, checkpoint, logging, seed, metrics/
+└── cli/                    #   pretrain, finetune, evaluate, generate, preprocess
 ```
 
 ## Identity Rules (HIGHEST PRIORITY)
@@ -144,7 +132,7 @@ feat, fix, docs, style, refactor, test, chore, ci, perf, revert, experiment
 
 ### Allowed Scopes
 
-manifolds, flow, models, layers, data, losses, utils, cli, configs
+manifolds, flow, models, tasks, data, losses, optim, utils, cli, configs
 
 ### Merge Strategy
 
@@ -184,7 +172,7 @@ Squash merge to main. One feature = one clean commit.
 
 ## Code Conventions
 
-- Class naming: project classes use `RieDFM` prefix (`RieDFMProductManifold`, `RieDFMJointFlow`, `RieDFMREDFormer`, `RieDFMG`)
+- Class naming: project classes use `RiemannFM` prefix (`RiemannFMProductManifold`, `RiemannFMJointFlow`, `RiemannFMRieFormer`, `RiemannFM`)
 - Math single-letter variable names are allowed (ruff N806/N812 suppressed): `N` for batch size, `B` for batch, `D` for dimension, `K` for components, `F = nn.functional`, `M` for manifold dimension
 - Type hints on all function signatures; use `X | Y` union syntax, `list[T]`, `dict[K, V]` (PEP 604/585)
 - Docstrings: Google style with Args/Returns/Raises; document tensor shapes (e.g. `shape (..., dim)`)
@@ -206,7 +194,7 @@ All commands go through the Makefile:
 | `make install-dev` | Install with dev deps + pre-commit   |
 | `make lint`        | Run ruff linter                      |
 | `make format`      | Run ruff formatter + auto-fix        |
-| `make typecheck`   | Run mypy on `src/riedfm`             |
+| `make typecheck`   | Run mypy on `src/riemannfm`          |
 | `make test`        | Run pytest verbosely                 |
 | `make test-cov`    | Run pytest with coverage report      |
 | `make precommit`   | Run all pre-commit hooks             |

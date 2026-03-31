@@ -10,10 +10,10 @@ Verifies geometric properties:
 
 import torch
 
-from riedfm.manifolds.euclidean import EuclideanManifold
-from riedfm.manifolds.hyperbolic import LorentzManifold
-from riedfm.manifolds.product import RieDFMProductManifold
-from riedfm.manifolds.spherical import SphericalManifold
+from riemannfm.manifolds.euclidean import EuclideanManifold
+from riemannfm.manifolds.lorentz import LorentzManifold
+from riemannfm.manifolds.product import RiemannFMProductManifold
+from riemannfm.manifolds.spherical import SphericalManifold
 
 DEVICE = torch.device("cpu")
 ATOL = 1e-4
@@ -69,7 +69,7 @@ class TestLorentzManifold:
 
     def test_point_on_hyperboloid(self):
         """Points should satisfy <x, x>_L = -1."""
-        from riedfm.utils.manifold_utils import lorentz_inner
+        from riemannfm.manifolds.utils import lorentz_inner
 
         x = self._random_point()
         inner = lorentz_inner(x, x)
@@ -152,7 +152,7 @@ class TestSphericalManifold:
 
 class TestProductManifold:
     def setup_method(self):
-        self.m = RieDFMProductManifold(dim_hyperbolic=4, dim_spherical=4, dim_euclidean=4)
+        self.m = RiemannFMProductManifold(dim_hyperbolic=4, dim_spherical=4, dim_euclidean=4)
         # total_dim = 5 (Lorentz) + 4 (sphere) + 4 (Euclidean) = 13
 
     def test_total_dim(self):

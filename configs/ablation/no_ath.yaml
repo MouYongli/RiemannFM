@@ -1,0 +1,6 @@
+use_mrope: true
+use_geodesic_kernel: true
+use_ath_norm: false
+use_edge_self_update: true
+use_dual_stream_cross: true
+use_text_condition: true

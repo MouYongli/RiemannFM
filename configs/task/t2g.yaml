@@ -1,0 +1,10 @@
+task_name: t2g
+mask_all: true
+text_condition: true
+lambda_t2g: 1.0
+mu_t2g: 0.1
+finetune_steps: 30000
+eval_every: 5000
+patience: 5
+num_inference_steps: 100
+matching_threshold: 0.85
