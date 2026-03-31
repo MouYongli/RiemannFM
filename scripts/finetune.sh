@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# RiemannFM fine-tuning launcher
-set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
+activate_env
+ensure_dirs
+log_header "Fine-tune" "$*"
 
-if command -v uv &>/dev/null; then
-    uv run python -m riemannfm.cli.finetune "$@"
-else
-    python -m riemannfm.cli.finetune "$@"
-fi
+run_distributed riemannfm.cli.finetune "$@"

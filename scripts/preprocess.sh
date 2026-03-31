@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# RiemannFM data preprocessing launcher
-set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
+activate_env
+ensure_dirs
+log_header "Preprocess" "$*"
 
-if command -v uv &>/dev/null; then
-    uv run python -m riemannfm.cli.preprocess "$@"
-else
-    python -m riemannfm.cli.preprocess "$@"
-fi
+run_module riemannfm.cli.preprocess "$@"

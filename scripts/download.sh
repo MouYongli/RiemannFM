@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# RiemannFM dataset download and preprocessing launcher
-set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
+activate_env
+ensure_dirs
+log_header "Download & Preprocess" "$*"
 
-if command -v uv &>/dev/null; then
-    uv run python -m riemannfm.cli.download "$@"
-else
-    python -m riemannfm.cli.download "$@"
-fi
+run_module riemannfm.cli.download "$@"

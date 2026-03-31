@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# RiemannFM pretraining launcher
-set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
+activate_env
+ensure_dirs
+log_header "Pretrain" "$*"
 
-if command -v uv &>/dev/null; then
-    uv run python -m riemannfm.cli.pretrain "$@"
-else
-    python -m riemannfm.cli.pretrain "$@"
-fi
+run_distributed riemannfm.cli.pretrain "$@"
