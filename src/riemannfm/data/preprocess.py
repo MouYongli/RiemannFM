@@ -6,9 +6,14 @@ processed/ outputs (int tensors, embedding vectors).
 Two stages:
 1. Build entity2id / relation2id mappings, convert triples to int tensors
 2. Precompute text embeddings for entities and relations
+
+Additionally provides `build_mini_wikidata_5m` for creating a small
+engineering validation subset from the full WikiData5M download.
 """
 
 import logging
+import random
+from collections import defaultdict
 from pathlib import Path
 
 import torch
@@ -220,6 +225,174 @@ def _load_texts(path: Path) -> list[str]:
             elif len(parts) == 1 and parts[0]:
                 texts.append(parts[0])
     return texts
+
+
+# ─── Mini dataset builder ───────────────────────────────────────────────────
+
+
+def build_mini_wikidata_5m(
+    source_dir: str = "data/wikidata_5m",
+    output_dir: str = "data/wikidata_5m_mini",
+    max_entities: int = 1000,
+    target_triples: int = 5000,
+    seed: int = 42,
+    force: bool = False,
+) -> Path:
+    """Build a small engineering validation subset from full WikiData5M.
+
+    Uses relation-aware sampling to ensure diverse relation coverage:
+    1. Sample triples from every relation type for coverage
+    2. Fill entity budget with additional triples
+    3. Densify by adding triples within the sampled entity set
+    4. Split into train/val/test (80/10/10)
+
+    Args:
+        source_dir: Path to full WikiData5M dataset (with raw/ subdirectory).
+        output_dir: Path for the mini dataset output.
+        max_entities: Target number of entities (~1K).
+        target_triples: Target number of triples (~5K).
+        seed: Random seed for deterministic sampling.
+        force: Rebuild even if output already exists.
+
+    Returns:
+        Path to the mini dataset raw/ directory.
+    """
+    from riemannfm.data.validate import validate_raw
+
+    source_raw = Path(source_dir) / "raw"
+    output_raw = Path(output_dir) / "raw"
+
+    if (output_raw / "train_triples.txt").exists() and not force:
+        logger.info(f"Mini dataset already exists at {output_raw}, skipping. Use force=True to rebuild.")
+        return output_raw
+
+    if not source_raw.exists():
+        raise FileNotFoundError(
+            f"Source data not found at {source_raw}. "
+            "Run `make download ARGS=\"data=wikidata_5m\"` first."
+        )
+
+    random.seed(seed)
+    output_raw.mkdir(parents=True, exist_ok=True)
+
+    # ── Load all triples from all splits ────────────────────────────────────
+    all_triples: list[tuple[str, str, str]] = []
+    for split in ("train", "val", "test"):
+        path = _find_split_file(source_raw, split)
+        if path is None:
+            continue
+        with open(path) as f:
+            for line in f:
+                parts = line.strip().split("\t")
+                if len(parts) == 3:
+                    all_triples.append((parts[0], parts[1], parts[2]))
+
+    logger.info(f"Loaded {len(all_triples):,} total triples from {source_raw}")
+
+    # ── Phase 1: Relation coverage ──────────────────────────────────────────
+    rel_to_triples: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
+    for h, r, t in all_triples:
+        rel_to_triples[r].append((h, r, t))
+
+    num_relations = len(rel_to_triples)
+    per_rel = max(3, target_triples // num_relations)
+    logger.info(f"  {num_relations} relation types, sampling {per_rel} triples per relation")
+
+    selected: list[tuple[str, str, str]] = []
+    selected_set: set[tuple[str, str, str]] = set()
+    entities: set[str] = set()
+
+    for rel, triples in rel_to_triples.items():
+        k = min(per_rel, len(triples))
+        sampled = random.sample(triples, k)
+        for triple in sampled:
+            if triple not in selected_set:
+                selected.append(triple)
+                selected_set.add(triple)
+                entities.add(triple[0])
+                entities.add(triple[2])
+
+    logger.info(f"  Phase 1 (relation coverage): {len(selected):,} triples, {len(entities):,} entities")
+
+    # ── Phase 2: Fill entity budget ─────────────────────────────────────────
+    if len(entities) < max_entities:
+        remaining = [t for t in all_triples if t not in selected_set]
+        random.shuffle(remaining)
+        for triple in remaining:
+            if len(entities) >= max_entities:
+                break
+            if triple not in selected_set:
+                selected.append(triple)
+                selected_set.add(triple)
+                entities.add(triple[0])
+                entities.add(triple[2])
+
+        logger.info(f"  Phase 2 (entity budget): {len(selected):,} triples, {len(entities):,} entities")
+
+    # ── Phase 3: Densify ────────────────────────────────────────────────────
+    densified = 0
+    for h, r, t in all_triples:
+        if (h, r, t) not in selected_set and h in entities and t in entities:
+            selected.append((h, r, t))
+            selected_set.add((h, r, t))
+            densified += 1
+
+    logger.info(f"  Phase 3 (densify): +{densified:,} triples → {len(selected):,} total")
+
+    # ── Split into train/val/test (80/10/10) ────────────────────────────────
+    random.shuffle(selected)
+    n = len(selected)
+    n_val = max(1, n // 10)
+    n_test = max(1, n // 10)
+    n_train = n - n_val - n_test
+
+    splits = {
+        "train": selected[:n_train],
+        "val": selected[n_train : n_train + n_val],
+        "test": selected[n_train + n_val :],
+    }
+
+    for split_name, triples in splits.items():
+        out_path = output_raw / f"{split_name}_triples.txt"
+        with open(out_path, "w") as f:
+            for h, r, t in triples:
+                f.write(f"{h}\t{r}\t{t}\n")
+        logger.info(f"  {split_name}: {len(triples):,} triples → {out_path.name}")
+
+    # ── Filter text files ───────────────────────────────────────────────────
+    relations = {r for _, r, _ in selected}
+
+    entity_texts_src = source_raw / "entity_texts.tsv"
+    if entity_texts_src.exists():
+        entity_texts_dst = output_raw / "entity_texts.tsv"
+        _filter_text_file(entity_texts_src, entity_texts_dst, entities)
+        logger.info(f"  Filtered entity_texts.tsv: {len(entities):,} entities")
+
+    relation_texts_src = source_raw / "relation_texts.tsv"
+    if relation_texts_src.exists():
+        relation_texts_dst = output_raw / "relation_texts.tsv"
+        _filter_text_file(relation_texts_src, relation_texts_dst, relations)
+        logger.info(f"  Filtered relation_texts.tsv: {len(relations):,} relations")
+
+    # ── Validate ────────────────────────────────────────────────────────────
+    logger.info("Validating mini dataset...")
+    if not validate_raw(output_dir, slug="wikidata_5m_mini"):
+        logger.warning("Mini dataset validation had warnings — check logs above.")
+
+    logger.info(
+        f"Mini dataset built: {len(entities):,} entities, "
+        f"{len(relations):,} relations, {len(selected):,} triples → {output_raw}"
+    )
+    return output_raw
+
+
+def _filter_text_file(src: Path, dst: Path, keep_ids: set[str]) -> None:
+    """Filter a TSV text file to only include IDs in keep_ids."""
+    with open(src) as fin, open(dst, "w") as fout:
+        for line in fin:
+            parts = line.split("\t", 1)
+            if parts and parts[0] in keep_ids:
+                fout.write(line)
 
 
 # ─── Full pipeline ───────────────────────────────────────────────────────────
