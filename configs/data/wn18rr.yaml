@@ -1,0 +1,9 @@
+slug: wn18rr
+dataset: kg_benchmark
+data_dir: data/wn18rr
+num_edge_types: 12
+max_nodes: 256
+num_workers: 4
+text_source: wordnet_defs
+text_encoder: ${text_encoder.model_name}
+dim_text_emb: ${text_encoder.output_dim}

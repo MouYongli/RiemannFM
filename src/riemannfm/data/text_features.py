@@ -51,21 +51,30 @@ class RiemannFMTextFeatureExtractor:
         self,
         texts: list[str],
         entity_ids: list[str] | None = None,
+        output_path: Path | None = None,
     ) -> Tensor:
         """Extract text embeddings for a list of texts.
 
         Args:
             texts: List of text strings (label + description).
-            entity_ids: Optional entity IDs for cache lookup.
+            entity_ids: Optional entity IDs for hash-based cache lookup.
+            output_path: Explicit path for saving/loading embeddings.
+                When provided, takes precedence over hash-based cache.
 
         Returns:
             Embeddings tensor, shape (len(texts), hidden_dim).
         """
-        # Check cache
-        if entity_ids is not None:
+        # Check explicit output path first
+        if output_path is not None and output_path.exists():
+            cached: Tensor = torch.load(output_path, map_location="cpu", weights_only=True)
+            return cached
+
+        # Fallback to hash-based cache
+        cache_path: Path | None = None
+        if output_path is None and entity_ids is not None:
             cache_path = self.cache_dir / f"embeddings_{hash(tuple(entity_ids)) % 1000000}.pt"
             if cache_path.exists():
-                cached: Tensor = torch.load(cache_path, map_location="cpu", weights_only=True)
+                cached = torch.load(cache_path, map_location="cpu", weights_only=True)
                 return cached
 
         self._load_model()
@@ -93,8 +102,11 @@ class RiemannFMTextFeatureExtractor:
 
         result = torch.cat(all_embeds, dim=0)
 
-        # Save to cache
-        if entity_ids is not None:
+        # Save to explicit path or hash-based cache
+        if output_path is not None:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            torch.save(result, output_path)
+        elif entity_ids is not None and cache_path is not None:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
             torch.save(result, cache_path)
 

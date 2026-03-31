@@ -8,6 +8,7 @@ defaults:
   - task: kgc_lp
   - ablation: full
   - eval: default
+  - download: default
   - _self_
 
 seed: 42

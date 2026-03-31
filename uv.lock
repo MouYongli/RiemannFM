@@ -1266,6 +1266,21 @@ wheels = [
 ]
 
 [[package]]
+name = "nltk"
+version = "3.9.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "click" },
+    { name = "joblib" },
+    { name = "regex" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/74/a1/b3b4adf15585a5bc4c357adde150c01ebeeb642173ded4d871e89468767c/nltk-3.9.4.tar.gz", hash = "sha256:ed03bc098a40481310320808b2db712d95d13ca65b27372f8a403949c8b523d0", size = 2946864, upload-time = "2026-03-24T06:13:40.641Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9d/91/04e965f8e717ba0ab4bdca5c112deeab11c9e750d94c4d4602f050295d39/nltk-3.9.4-py3-none-any.whl", hash = "sha256:f2fa301c3a12718ce4a0e9305c5675299da5ad9e26068218b69d692fda84828f", size = 1552087, upload-time = "2026-03-24T06:13:38.47Z" },
+]
+
+[[package]]
 name = "nodeenv"
 version = "1.10.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2166,6 +2181,7 @@ dependencies = [
     { name = "hydra-core" },
     { name = "hydra-optuna-sweeper" },
     { name = "networkx" },
+    { name = "nltk" },
     { name = "omegaconf" },
     { name = "optuna" },
     { name = "pandas" },
@@ -2197,6 +2213,7 @@ requires-dist = [
     { name = "hydra-core", specifier = ">=1.3.2" },
     { name = "hydra-optuna-sweeper", specifier = ">=1.2.0" },
     { name = "networkx", specifier = ">=3.4" },
+    { name = "nltk", specifier = ">=3.9.0" },
     { name = "omegaconf", specifier = ">=2.3.0" },
     { name = "optuna" },
     { name = "pandas", specifier = ">=2.2.0" },

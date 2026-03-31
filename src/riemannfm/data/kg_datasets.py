@@ -19,6 +19,7 @@ from urllib.request import urlretrieve
 import torch
 from torch.utils.data import Dataset
 
+from riemannfm.data.download import embedding_filename, encoder_slug
 from riemannfm.data.graph_data import RiemannFMGraphData
 from riemannfm.data.subgraph_sampler import RiemannFMSubgraphSampler
 from riemannfm.manifolds.product import RiemannFMProductManifold
@@ -54,6 +55,8 @@ class RiemannFMKGDataset(Dataset):
         max_nodes: int = 64,
         max_hops: int = 2,
         auto_download: bool = True,
+        text_encoder: str | None = None,
+        dim_text_emb: int = 0,
     ):
         self.data_dir = Path(data_dir)
         self.manifold = manifold
@@ -61,6 +64,8 @@ class RiemannFMKGDataset(Dataset):
         self.mode = mode
         self.max_nodes = max_nodes
         self.max_hops = max_hops
+        self.text_encoder = text_encoder
+        self.dim_text_emb = dim_text_emb
 
         self.triples: list[tuple[int, int, int]] = []
         self.all_triples: list[tuple[int, int, int]] = []
@@ -71,6 +76,7 @@ class RiemannFMKGDataset(Dataset):
         self.num_entities = 0
         self.num_relations = 0
         self.sampler: RiemannFMSubgraphSampler | None = None
+        self.text_embeddings: torch.Tensor | None = None
 
         # True triples per (h, r) and (r, t) for filtered ranking
         self._hr2t: dict[tuple[int, int], set[int]] = defaultdict(set)
@@ -157,6 +163,16 @@ class RiemannFMKGDataset(Dataset):
                 max_hops=self.max_hops,
             )
 
+        # Load precomputed text embeddings if available
+        if self.text_encoder and self.dim_text_emb > 0:
+            key = encoder_slug(self.text_encoder)
+            emb_path = self.data_dir / "text_embeddings" / embedding_filename(key, self.dim_text_emb)
+            if emb_path.exists():
+                self.text_embeddings = torch.load(emb_path, map_location="cpu", weights_only=True)
+                logger.info(f"Loaded text embeddings ({self.text_embeddings.shape}) from {emb_path}")
+            else:
+                logger.debug(f"Text embeddings not found at {emb_path}")
+
     def _load_triples(self, split: str) -> list[tuple[int, int, int]]:
         """Load triples from a split file."""
         triples_file = self.data_dir / f"{split}.txt"
@@ -225,4 +241,13 @@ class RiemannFMKGDataset(Dataset):
         for local_idx, hop_dist in depth_map.items():
             depth[local_idx] = hop_dist
 
-        return RiemannFMGraphData(x=x, edge_types=edge_types, num_nodes=N, depth=depth)
+        # Attach text embeddings if available
+        text_input_ids = None
+        if self.text_embeddings is not None:
+            node_embs = self.text_embeddings[node_ids]  # (N, dim_text_emb)
+            text_input_ids = node_embs
+
+        return RiemannFMGraphData(
+            x=x, edge_types=edge_types, num_nodes=N, depth=depth,
+            text_input_ids=text_input_ids,
+        )

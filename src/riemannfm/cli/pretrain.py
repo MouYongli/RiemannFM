@@ -1,11 +1,11 @@
 """RiemannFM pretraining script.
 
 Single-GPU:
-    python -m riedfm.cli.pretrain
-    python -m riedfm.cli.pretrain model=red_former_large data=wikidata_5m
+    python -m riemannfm.cli.pretrain
+    python -m riemannfm.cli.pretrain model=rieformer_large data=wikidata_5m
 
 Multi-GPU (DDP via torchrun):
-    torchrun --nproc_per_node=4 -m riedfm.cli.pretrain training.batch_size=64
+    torchrun --nproc_per_node=4 -m riemannfm.cli.pretrain training.batch_size=64
 """
 
 import logging
@@ -112,6 +112,17 @@ def main(cfg: DictConfig):
         temperature=cfg.training.get("temperature", 0.07),
     ).to(device)
 
+    # ─── Verify data exists ────────────────────────────────────────────
+    from riemannfm.data.download import verify_data_ready
+
+    text_enc = cfg.data.get("text_encoder", None)
+    dim_emb = cfg.data.get("dim_text_emb", 0)
+    if not verify_data_ready(cfg.data.data_dir, text_enc, dim_emb):
+        raise FileNotFoundError(
+            f"Dataset not found at {cfg.data.data_dir}. "
+            "Run `make download ARGS='data=<name>'` first."
+        )
+
     # ─── Dataset ──────────────────────────────────────────────────────
     from riemannfm.data.collator import RiemannFMGraphCollator
     from riemannfm.data.wikidata_dataset import RiemannFMWikiDataDataset
@@ -121,6 +132,8 @@ def main(cfg: DictConfig):
         manifold=manifold,
         max_nodes=cfg.data.max_nodes,
         num_edge_types=cfg.data.num_edge_types,
+        text_encoder=text_enc,
+        dim_text_emb=dim_emb,
     )
 
     sampler: DistributedSampler | None = DistributedSampler(dataset, shuffle=True) if is_distributed() else None

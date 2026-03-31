@@ -10,6 +10,7 @@ from pathlib import Path
 import torch
 from torch.utils.data import Dataset
 
+from riemannfm.data.download import embedding_filename, encoder_slug
 from riemannfm.data.graph_data import RiemannFMGraphData
 from riemannfm.data.subgraph_sampler import RiemannFMSubgraphSampler
 from riemannfm.manifolds.product import RiemannFMProductManifold
@@ -30,6 +31,8 @@ class RiemannFMWikiDataDataset(Dataset):
         max_hops: Maximum BFS hops for sampling.
         num_edge_types: Number of relation types.
         split: Dataset split ("train", "val", "test").
+        text_encoder: Text encoder model name or slug for loading embeddings.
+        dim_text_emb: Dimension of text embeddings.
     """
 
     def __init__(
@@ -40,12 +43,16 @@ class RiemannFMWikiDataDataset(Dataset):
         max_hops: int = 3,
         num_edge_types: int = 1200,
         split: str = "train",
+        text_encoder: str | None = None,
+        dim_text_emb: int = 0,
     ):
         self.data_dir = Path(data_dir)
         self.manifold = manifold
         self.max_nodes = max_nodes
         self.num_edge_types = num_edge_types
         self.split = split
+        self.text_encoder = text_encoder
+        self.dim_text_emb = dim_text_emb
 
         # Load data (lazy — files may not exist yet during development)
         self.triples: list[tuple[int, int, int]] = []
@@ -59,7 +66,6 @@ class RiemannFMWikiDataDataset(Dataset):
         """Load preprocessed data files if they exist."""
         triples_path = self.data_dir / f"{self.split}_triples.txt"
         entities_path = self.data_dir / "entities.json"
-        embeddings_path = self.data_dir / f"{self.split}_embeddings.pt"
 
         if triples_path.exists():
             self.triples = []
@@ -77,8 +83,12 @@ class RiemannFMWikiDataDataset(Dataset):
             with open(entities_path) as f:
                 self.entity_info = {int(k): v for k, v in json.load(f).items()}
 
-        if embeddings_path.exists():
-            self.embeddings = torch.load(embeddings_path, map_location="cpu", weights_only=True)
+        # Load precomputed text embeddings using encoder/dim naming convention
+        if self.text_encoder and self.dim_text_emb > 0:
+            key = encoder_slug(self.text_encoder)
+            emb_path = self.data_dir / "text_embeddings" / embedding_filename(key, self.dim_text_emb)
+            if emb_path.exists():
+                self.embeddings = torch.load(emb_path, map_location="cpu", weights_only=True)
 
     def __len__(self) -> int:
         # For on-the-fly sampling, return a large number (epoch-based training)

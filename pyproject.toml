@@ -27,6 +27,7 @@ dependencies = [
     "pandas>=2.2.0",
     "tqdm>=4.67.0",
     "rich>=13.9.0",
+    "nltk>=3.9.0",
 ]
 
 [dependency-groups]
@@ -44,6 +45,7 @@ riemannfm-finetune = "riemannfm.cli.finetune:main"
 riemannfm-evaluate = "riemannfm.cli.evaluate:main"
 riemannfm-generate = "riemannfm.cli.generate:main"
 riemannfm-preprocess = "riemannfm.cli.preprocess:main"
+riemannfm-download = "riemannfm.cli.download:main"
 
 [build-system]
 requires = ["hatchling"]
