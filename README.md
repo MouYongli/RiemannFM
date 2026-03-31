@@ -43,22 +43,48 @@ pip install -e ".[dev]"   # editable install with dev tools
 
 > Makefile and shell scripts auto-detect `uv`. With conda, activate the environment first — all `make` commands then work without changes.
 
+## Data
+
+### Download WikiData5M
+
+```bash
+uv run python -m riemannfm.cli.download data=wikidata_5m
+```
+
+Downloads raw triples and entity/relation texts to `data/wikidata_5m/raw/`.
+
+### Build mini validation dataset
+
+A small subset (~7.8K entities, 822 relations, ~22K triples) for fast engineering validation:
+
+```bash
+uv run python -m riemannfm.cli.preprocess data=wikidata_5m preprocess.build_mini=true
+```
+
+### Preprocess (ID mapping + text embeddings)
+
+```bash
+uv run python -m riemannfm.cli.preprocess data=wikidata_5m_mini embedding=sbert
+```
+
+See [docs/data.md](docs/data.md) for full documentation (all datasets, embedding options, `.env` configuration).
+
 ## Quick Start
 
 All training commands use Hydra for configuration:
 
 ```bash
 # Pretraining on WikiData5M
-make pretrain ARGS="data=wikidata_5m model=rieformer_base training=pretrain"
+uv run python -m riemannfm.cli.pretrain data=wikidata_5m model=rieformer_base training=pretrain
 
 # Fine-tuning on FB15k-237
-make finetune ARGS="data=fb15k237 training=finetune"
+uv run python -m riemannfm.cli.finetune data=fb15k237 training=finetune
 
 # Evaluation
-make evaluate ARGS="data=fb15k237 eval=default"
+uv run python -m riemannfm.cli.evaluate data=fb15k237 eval=default
 
 # Graph generation
-make generate ARGS="data=fb15k237"
+uv run python -m riemannfm.cli.generate data=fb15k237
 ```
 
 ## Architecture

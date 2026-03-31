@@ -1,7 +1,7 @@
 embedding_provider: ollama
-model_name: qwen3-embedding
-api_base: http://localhost:11434
-output_dim: 4096
+model_name: ${oc.env:OLLAMA_EMBEDDING_MODEL_NAME,qwen3-embedding}
+api_base: ${oc.env:OLLAMA_BASE_URL,http://localhost:11434}
+output_dim: ${oc.env:OLLAMA_EMBEDDING_DIM,4096}
 freeze: true
 pooling: last_token
 max_length: 512
