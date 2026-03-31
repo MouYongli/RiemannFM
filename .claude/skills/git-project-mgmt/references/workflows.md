@@ -1,6 +1,6 @@
 # Git Workflows Reference
 
-All command sequences for the RieDFM-G GitHub workflow.
+All command sequences for the RiemannFM GitHub workflow.
 
 ## Table of Contents
 
@@ -22,8 +22,8 @@ All command sequences for the RieDFM-G GitHub workflow.
 First-time setup for a new team member:
 
 ```bash
-gh repo clone MouYongli/RieDFM-G
-cd RieDFM-G
+gh repo clone MouYongli/RiemannFM
+cd RiemannFM
 git config user.name "Your Name"
 git config user.email "your@email.com"
 
@@ -290,7 +290,7 @@ gh pr review 42 --request-changes --body "Issues to address:
 gh pr review 42 --comment --body "Suggestion: consider clamping arcosh input for numerical stability"
 ```
 
-### Review checklist for RieDFM-G code
+### Review checklist for RiemannFM code
 
 When reviewing, check:
 
@@ -433,10 +433,10 @@ gh pr list --state all --limit 10 --json number,title,state,author \
 
 ```bash
 # Find issues about a topic
-gh search issues "NaN loss" --repo MouYongli/RieDFM-G
+gh search issues "NaN loss" --repo MouYongli/RiemannFM
 
 # Find code
-gh search code "gradient_accumulation" --repo MouYongli/RieDFM-G
+gh search code "gradient_accumulation" --repo MouYongli/RiemannFM
 ```
 
 ---

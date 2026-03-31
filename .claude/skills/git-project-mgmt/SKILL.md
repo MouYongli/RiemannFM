@@ -9,9 +9,9 @@ description: >
   team's git workflow conventions.
 ---
 
-# Git Project Management for RieDFM-G
+# Git Project Management for RiemannFM
 
-This skill manages the full GitHub workflow for the RieDFM-G project.
+This skill manages the full GitHub workflow for the RiemannFM project.
 Always follow the conventions defined in the project's CLAUDE.md.
 
 ## Prerequisites
@@ -40,7 +40,7 @@ git config user.name && git config user.email
 
 `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`, `ci`, `perf`, `revert`, `experiment`
 
-### Scopes (RieDFM-G)
+### Scopes (RiemannFM)
 
 `manifolds`, `flow`, `models`, `layers`, `data`, `losses`, `utils`, `cli`, `configs`
 
