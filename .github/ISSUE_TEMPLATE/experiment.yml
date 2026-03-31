@@ -1,0 +1,60 @@
+name: ML Experiment
+description: Propose or track an ML experiment
+labels: ["type:experiment", "priority:medium"]
+body:
+  - type: textarea
+    id: hypothesis
+    attributes:
+      label: Hypothesis
+      description: What do you expect to observe and why?
+    validations:
+      required: true
+  - type: textarea
+    id: protocol
+    attributes:
+      label: Experimental Protocol
+      description: Dataset, model config, hyperparameters, seeds, hardware
+      value: |
+        - Dataset:
+        - Model:
+        - Seeds: 42, 123, 456
+        - Hardware:
+        - Key hyperparameters:
+          -
+    validations:
+      required: true
+  - type: textarea
+    id: metrics
+    attributes:
+      label: Metrics & Success Criteria
+      description: What metrics will you measure? What constitutes success?
+    validations:
+      required: true
+  - type: dropdown
+    id: experiment_type
+    attributes:
+      label: Experiment Type
+      options:
+        - ablation
+        - baseline
+        - benchmark
+        - dataset
+    validations:
+      required: true
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Module Scope
+      description: Which module(s) does this affect?
+      multiple: true
+      options:
+        - manifolds
+        - flow
+        - models
+        - layers
+        - data
+        - losses
+        - utils
+        - configs
+    validations:
+      required: false
