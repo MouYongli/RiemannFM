@@ -31,7 +31,7 @@ def set_seed(seed: int, rank: int = 0):
         torch.cuda.manual_seed_all(seed)
 
 
-@hydra.main(version_base=None, config_path="../configs", config_name="config")
+@hydra.main(version_base=None, config_path="../../../configs", config_name="config")
 def main(cfg: DictConfig):
     from riemannfm.utils.distributed import (
         cleanup_distributed,

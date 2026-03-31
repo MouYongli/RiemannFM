@@ -18,7 +18,7 @@ from omegaconf import DictConfig, OmegaConf
 logger = logging.getLogger(__name__)
 
 
-@hydra.main(version_base=None, config_path="../configs", config_name="config")
+@hydra.main(version_base=None, config_path="../../../configs", config_name="config")
 def main(cfg: DictConfig):
     logger.info(f"Evaluation configuration:\n{OmegaConf.to_yaml(cfg)}")
 

@@ -21,7 +21,7 @@ from riemannfm.data.download import ALL_DATASETS, run_pipeline
 logger = logging.getLogger(__name__)
 
 
-@hydra.main(version_base=None, config_path="../../configs", config_name="config")
+@hydra.main(version_base=None, config_path="../../../configs", config_name="config")
 def main(cfg: DictConfig):
     force = cfg.download.force
 

@@ -17,7 +17,7 @@ from tqdm import tqdm
 logger = logging.getLogger(__name__)
 
 
-@hydra.main(version_base=None, config_path="../configs", config_name="config")
+@hydra.main(version_base=None, config_path="../../../configs", config_name="config")
 def main(cfg: DictConfig):
     logger.info(f"Fine-tuning configuration:\n{OmegaConf.to_yaml(cfg)}")
 
