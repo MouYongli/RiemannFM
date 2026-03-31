@@ -9,6 +9,7 @@ Each stage is idempotent — skipped if output files already exist.
 Text embedding precomputation is handled separately by the preprocess CLI.
 """
 
+import gzip
 import json
 import logging
 import shutil
@@ -97,9 +98,9 @@ class DownloadMeta:
 
 _DOWNLOAD_REGISTRY: dict[str, DownloadMeta] = {
     "wikidata_5m": DownloadMeta(
-        download_url=None,
-        download_format="huggingface",
-        text_url=None,
+        download_url="https://www.dropbox.com/s/6sbhm0rwo4l73jq/wikidata5m_transductive.tar.gz?dl=1",
+        download_format="wikidata5m",
+        text_url="https://www.dropbox.com/s/7jp4ib8zo3i6m10/wikidata5m_text.txt.gz?dl=1",
     ),
     "fb15k_237": DownloadMeta(
         download_url="https://raw.githubusercontent.com/villmow/datasets_knowledge_embedding/master/FB15k-237.tar.gz",
@@ -191,8 +192,8 @@ def download_graph(
 
     if meta.download_format == "tar.gz":
         _download_tar_gz(slug, meta, raw_dir)
-    elif meta.download_format == "huggingface":
-        _download_huggingface(slug, raw_dir)
+    elif meta.download_format == "wikidata5m":
+        _download_wikidata5m(slug, meta, raw_dir)
     elif meta.download_format == "codex":
         _download_codex(slug, raw_dir)
     elif meta.download_format == "zip":
@@ -229,43 +230,38 @@ def _download_tar_gz(slug: str, meta: DownloadMeta, raw_dir: Path) -> None:
     logger.info(f"[{slug}] Graph files downloaded to {raw_dir}/")
 
 
-def _download_huggingface(slug: str, raw_dir: Path) -> None:
-    """Download WikiData5M from HuggingFace datasets library."""
-    try:
-        from datasets import load_dataset
+def _download_wikidata5m(slug: str, meta: DownloadMeta, raw_dir: Path) -> None:
+    """Download WikiData5M transductive split from Dropbox.
 
-        logger.info(f"[{slug}] Downloading WikiData5M from HuggingFace...")
-        ds = load_dataset("wikidata5m", trust_remote_code=True)
+    Downloads the tar.gz archive containing train.txt, valid.txt, test.txt
+    and renames them to the project-standard naming convention.
+    """
+    if meta.download_url is None:
+        logger.warning(f"[{slug}] No download URL configured.")
+        return
 
-        for split_name, hf_split in [("train", "train"), ("val", "validation"), ("test", "test")]:
-            if hf_split not in ds:
-                continue
-            split_data = ds[hf_split]
-            triples_path = raw_dir / f"{split_name}_triples.txt"
-            with open(triples_path, "w") as f:
-                for row in tqdm(split_data, desc=f"Writing {split_name} triples"):
-                    h, r, t = row["head"], row["relation"], row["tail"]
-                    f.write(f"{h}\t{r}\t{t}\n")
+    logger.info(f"[{slug}] Downloading WikiData5M transductive split...")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        archive_path = Path(tmpdir) / "wikidata5m_transductive.tar.gz"
+        urlretrieve(meta.download_url, str(archive_path))
+        with tarfile.open(archive_path, "r:gz") as tar:
+            tar.extractall(tmpdir)
 
-        if "entities" in ds:
-            entities = {}
-            for row in tqdm(ds["entities"], desc="Writing entities"):
-                entities[row["id"]] = {
-                    "label": row.get("label", ""),
-                    "description": row.get("description", ""),
-                }
-            with open(raw_dir / "entities.json", "w") as f:
-                json.dump(entities, f, ensure_ascii=False)
+        # Archive contains: wikidata5m_transductive_{train,valid,test}.txt
+        rename_map = {
+            "wikidata5m_transductive_train.txt": "train_triples.txt",
+            "wikidata5m_transductive_valid.txt": "val_triples.txt",
+            "wikidata5m_transductive_test.txt": "test_triples.txt",
+        }
+        for src_name, dst_name in rename_map.items():
+            candidates = list(Path(tmpdir).rglob(src_name))
+            if candidates:
+                shutil.copy2(candidates[0], raw_dir / dst_name)
+                logger.info(f"  {src_name} → {dst_name}")
+            else:
+                logger.warning(f"  {src_name} not found in archive")
 
-        logger.info(f"[{slug}] WikiData5M downloaded to {raw_dir}/")
-
-    except Exception as e:
-        logger.warning(
-            f"[{slug}] HuggingFace download failed: {e}\n"
-            f"Please manually download WikiData5M and place files in {raw_dir}/\n"
-            f"Expected files: train_triples.txt, val_triples.txt, test_triples.txt, entities.json\n"
-            f"Source: https://deepgraphlearning.github.io/project/wikidata5m"
-        )
+    logger.info(f"[{slug}] Graph files downloaded to {raw_dir}/")
 
 
 def _download_codex(slug: str, raw_dir: Path) -> None:
@@ -463,7 +459,11 @@ def _extract_texts_wikidata_description(
 
 
 def _extract_texts_wikipedia(raw_dir: Path, output_path: Path) -> None:
-    """Extract texts from WikiData5M entities (labels + descriptions)."""
+    """Extract texts from WikiData5M entities.
+
+    Prefers entities.json (if present from a prior download).
+    Otherwise downloads the official wikidata5m_text.txt.gz corpus.
+    """
     entities_path = raw_dir / "entities.json"
     if entities_path.exists():
         logger.info("[wikidata_5m] Extracting texts from entities.json...")
@@ -478,25 +478,30 @@ def _extract_texts_wikipedia(raw_dir: Path, output_path: Path) -> None:
                 fout.write(f"{entity_id}\t{text}\n")
 
         logger.info(f"[wikidata_5m] Wrote {len(entities)} entity texts to {output_path}")
-    else:
-        try:
-            from datasets import load_dataset
+        return
 
-            logger.info("[wikidata_5m] Loading entity texts from HuggingFace...")
-            ds = load_dataset("wikidata5m", split="entities", trust_remote_code=True)
-            with open(output_path, "w") as fout:
-                for row in tqdm(ds, desc="Writing entity texts"):
-                    eid = row["id"]
-                    label = row.get("label", "")
-                    desc = row.get("description", "")
-                    text = f"{label}: {desc}" if desc else label
-                    fout.write(f"{eid}\t{text}\n")
-            logger.info(f"[wikidata_5m] Entity texts written to {output_path}")
-        except Exception as e:
-            logger.warning(
-                f"[wikidata_5m] Could not extract texts: {e}\n"
-                f"Please manually create {output_path}"
-            )
+    meta = get_download_meta("wikidata_5m")
+    if meta.text_url is None:
+        logger.warning(f"[wikidata_5m] No text URL configured. Please create {output_path} manually.")
+        return
+
+    logger.info("[wikidata_5m] Downloading text corpus from Dropbox...")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        gz_path = Path(tmpdir) / "wikidata5m_text.txt.gz"
+        urlretrieve(meta.text_url, str(gz_path))
+
+        count = 0
+        with gzip.open(gz_path, "rt", encoding="utf-8") as fin, open(output_path, "w") as fout:
+            for line in tqdm(fin, desc="Extracting entity texts"):
+                parts = line.strip().split("\t", 1)
+                if len(parts) == 2:
+                    entity_id, text = parts
+                    # Use first sentence as description (full text is very long)
+                    first_sent = text.split(". ")[0].rstrip(".")
+                    fout.write(f"{entity_id}\t{first_sent}\n")
+                    count += 1
+
+        logger.info(f"[wikidata_5m] Wrote {count} entity texts to {output_path}")
 
 
 def _load_entity_mapping(raw_dir: Path) -> dict[str, int]:
