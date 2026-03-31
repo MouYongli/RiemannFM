@@ -5,7 +5,7 @@ RiemannFMWikiDataDataset. This is a placeholder -- full implementation
 requires the WikiData JSON dump processing pipeline.
 
 Usage:
-    python -m riedfm.cli.preprocess --output_dir data/wikidata_5m
+    python -m riemannfm.cli.preprocess --output_dir data/wikidata_5m
 """
 
 import argparse

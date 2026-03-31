@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# RieDFM-G pretraining launcher
+# RiemannFM pretraining launcher
 set -euo pipefail
 
-python -m riedfm.cli.pretrain "$@"
+if command -v uv &>/dev/null; then
+    uv run python -m riemannfm.cli.pretrain "$@"
+else
+    python -m riemannfm.cli.pretrain "$@"
+fi

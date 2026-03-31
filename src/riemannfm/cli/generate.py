@@ -1,8 +1,8 @@
 """RiemannFM graph generation / inference script.
 
 Usage:
-    python -m riedfm.cli.generate --checkpoint path/to/checkpoint.pt
-    python -m riedfm.cli.generate --checkpoint path/to/checkpoint.pt --num_nodes 32 --num_steps 200
+    python -m riemannfm.cli.generate --checkpoint path/to/checkpoint.pt
+    python -m riemannfm.cli.generate --checkpoint path/to/checkpoint.pt --num_nodes 32 --num_steps 200
 """
 
 import argparse

@@ -3,7 +3,7 @@
 import logging
 from typing import Any
 
-logger = logging.getLogger("riedfm")
+logger = logging.getLogger("riemannfm")
 
 
 def setup_logging(level: str = "INFO"):
@@ -28,7 +28,7 @@ def setup_wandb(cfg: dict) -> Any:
         import wandb
 
         run = wandb.init(
-            project=cfg.get("project_name", "riedfm-g"),
+            project=cfg.get("project_name", "riemannfm"),
             name=cfg.get("run_name"),
             config=dict(cfg),
             reinit=True,

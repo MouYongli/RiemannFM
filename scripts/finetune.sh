@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# RieDFM-G fine-tuning launcher
+# RiemannFM fine-tuning launcher
 set -euo pipefail
 
-python -m riedfm.cli.finetune "$@"
+if command -v uv &>/dev/null; then
+    uv run python -m riemannfm.cli.finetune "$@"
+else
+    python -m riemannfm.cli.finetune "$@"
+fi

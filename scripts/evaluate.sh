@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# RieDFM-G evaluation launcher
+# RiemannFM evaluation launcher
 set -euo pipefail
 
-python -m riedfm.cli.evaluate "$@"
+if command -v uv &>/dev/null; then
+    uv run python -m riemannfm.cli.evaluate "$@"
+else
+    python -m riemannfm.cli.evaluate "$@"
+fi

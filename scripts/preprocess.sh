@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# RieDFM-G data preprocessing launcher
+# RiemannFM data preprocessing launcher
 set -euo pipefail
 
-python -m riedfm.cli.preprocess "$@"
+if command -v uv &>/dev/null; then
+    uv run python -m riemannfm.cli.preprocess "$@"
+else
+    python -m riemannfm.cli.preprocess "$@"
+fi

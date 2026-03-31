@@ -1,10 +1,10 @@
 """RiemannFM evaluation script.
 
 Link prediction:
-    python -m riedfm.cli.evaluate checkpoint=outputs/best_model.pt data=fb15k237
+    python -m riemannfm.cli.evaluate checkpoint=outputs/best_model.pt data=fb15k237
 
 Graph generation:
-    python -m riedfm.cli.evaluate checkpoint=outputs/pretrain/checkpoint.pt eval.mode=generation
+    python -m riemannfm.cli.evaluate checkpoint=outputs/pretrain/checkpoint.pt eval.mode=generation
 """
 
 import json

@@ -1,9 +1,9 @@
 """RiemannFM fine-tuning script for link prediction on KG benchmarks.
 
 Usage:
-    python -m riedfm.cli.finetune data=fb15k237 training=finetune
-    python -m riedfm.cli.finetune data=wn18rr training=finetune training.lr=1e-5
-    python -m riedfm.cli.finetune data=fb15k237 pretrained_checkpoint=outputs/pretrain/checkpoint.pt
+    python -m riemannfm.cli.finetune data=fb15k237 training=finetune
+    python -m riemannfm.cli.finetune data=wn18rr training=finetune training.lr=1e-5
+    python -m riemannfm.cli.finetune data=fb15k237 pretrained_checkpoint=outputs/pretrain/checkpoint.pt
 """
 
 import logging
