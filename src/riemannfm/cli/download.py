@@ -1,14 +1,14 @@
-"""CLI for downloading and preprocessing KG datasets.
+"""CLI for downloading raw KG datasets.
 
-Downloads graph structure, extracts entity text descriptions, and
-precomputes text embeddings using Hydra configuration.
+Downloads graph structure and entity text descriptions into data/{dataset}/raw/.
+Text embedding precomputation is handled by the preprocess CLI.
 
 Single dataset:
-    python -m riemannfm.cli.download data=fb15k237 text_encoder=sbert
-    python -m riemannfm.cli.download data=wn18rr text_encoder=xlm_roberta
+    python -m riemannfm.cli.download data=fb15k237
+    python -m riemannfm.cli.download data=wn18rr
 
 All datasets:
-    python -m riemannfm.cli.download download.all=true text_encoder=sbert
+    python -m riemannfm.cli.download download.all=true
 """
 
 import logging
@@ -23,19 +23,11 @@ logger = logging.getLogger(__name__)
 
 @hydra.main(version_base=None, config_path="../../configs", config_name="config")
 def main(cfg: DictConfig):
-    logger.info(f"Download config:\n{OmegaConf.to_yaml(cfg.download)}")
-
-    text_encoder_name = cfg.text_encoder.model_name
-    dim_text_emb = cfg.text_encoder.output_dim
-    batch_size = cfg.download.batch_size
-    device = cfg.download.device
     force = cfg.download.force
 
     if cfg.download.all:
-        # Process all datasets: iterate over registry, resolve each data config
         logger.info("Downloading ALL datasets...")
         for slug in ALL_DATASETS:
-            # Load data config for this slug to get data_dir and text_source
             data_cfg = _load_data_config(slug)
             if data_cfg is None:
                 logger.warning(f"No data config found for slug={slug}, skipping.")
@@ -44,23 +36,14 @@ def main(cfg: DictConfig):
                 slug=slug,
                 data_dir=data_cfg["data_dir"],
                 text_source=data_cfg["text_source"],
-                text_encoder=text_encoder_name,
-                dim_text_emb=dim_text_emb,
-                batch_size=batch_size,
-                device=device,
                 force=force,
             )
     else:
-        # Single dataset from Hydra config
         slug = cfg.data.slug
         run_pipeline(
             slug=slug,
             data_dir=cfg.data.data_dir,
             text_source=cfg.data.text_source,
-            text_encoder=text_encoder_name,
-            dim_text_emb=dim_text_emb,
-            batch_size=batch_size,
-            device=device,
             force=force,
         )
 
@@ -81,11 +64,11 @@ def _load_data_config(slug: str) -> dict | None:
 
     for yaml_file in config_dir.glob("*.yaml"):
         try:
-            cfg = OmegaConf.load(yaml_file)
-            if cfg.get("slug") == slug:
+            data_cfg = OmegaConf.load(yaml_file)
+            if data_cfg.get("slug") == slug:
                 return {
-                    "data_dir": cfg.get("data_dir", f"data/{slug}"),
-                    "text_source": cfg.get("text_source", ""),
+                    "data_dir": data_cfg.get("data_dir", f"data/{slug}"),
+                    "text_source": data_cfg.get("text_source", ""),
                 }
         except Exception:
             continue

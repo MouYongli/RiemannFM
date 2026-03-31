@@ -19,10 +19,10 @@ from riemannfm.manifolds.product import RiemannFMProductManifold
 class RiemannFMWikiDataDataset(Dataset):
     """WikiData knowledge graph dataset with on-the-fly subgraph sampling.
 
-    Expects preprocessed data in the following format:
-    - entities.json: {entity_id: {"label": str, "description": str, "depth": int}}
-    - triples.txt: tab-separated (head_id, relation_id, tail_id) per line
-    - embeddings.pt: precomputed entity embeddings on the product manifold
+    Expects data in the following layout:
+    - raw/entities.json: {entity_id: {"label": str, "description": str, "depth": int}}
+    - raw/{split}_triples.txt: tab-separated (head_id, relation_id, tail_id)
+    - processed/text_embeddings/entity_emb_{encoder}_{dim}.pt: precomputed embeddings
 
     Args:
         data_dir: Path to preprocessed WikiData directory.
@@ -63,9 +63,10 @@ class RiemannFMWikiDataDataset(Dataset):
         self._load_data()
 
     def _load_data(self):
-        """Load preprocessed data files if they exist."""
-        triples_path = self.data_dir / f"{self.split}_triples.txt"
-        entities_path = self.data_dir / "entities.json"
+        """Load data files from raw/ and processed/ subdirectories."""
+        raw_dir = self.data_dir / "raw"
+        triples_path = raw_dir / f"{self.split}_triples.txt"
+        entities_path = raw_dir / "entities.json"
 
         if triples_path.exists():
             self.triples = []
@@ -83,10 +84,10 @@ class RiemannFMWikiDataDataset(Dataset):
             with open(entities_path) as f:
                 self.entity_info = {int(k): v for k, v in json.load(f).items()}
 
-        # Load precomputed text embeddings using encoder/dim naming convention
+        # Load precomputed text embeddings from processed/
         if self.text_encoder and self.dim_text_emb > 0:
             key = encoder_slug(self.text_encoder)
-            emb_path = self.data_dir / "text_embeddings" / embedding_filename(key, self.dim_text_emb)
+            emb_path = self.data_dir / "processed" / "text_embeddings" / embedding_filename(key, self.dim_text_emb)
             if emb_path.exists():
                 self.embeddings = torch.load(emb_path, map_location="cpu", weights_only=True)
 

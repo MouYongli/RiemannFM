@@ -115,13 +115,14 @@ def main(cfg: DictConfig):
     # ─── Verify data exists ────────────────────────────────────────────
     from riemannfm.data.download import verify_data_ready
 
-    text_enc = cfg.data.get("text_encoder", None)
-    dim_emb = cfg.data.get("dim_text_emb", 0)
-    if not verify_data_ready(cfg.data.data_dir, text_enc, dim_emb):
+    if not verify_data_ready(cfg.data.data_dir):
         raise FileNotFoundError(
-            f"Dataset not found at {cfg.data.data_dir}. "
+            f"Dataset not found at {cfg.data.data_dir}/raw/. "
             "Run `make download ARGS='data=<name>'` first."
         )
+
+    text_enc = cfg.data.get("text_encoder", None)
+    dim_emb = cfg.data.get("dim_text_emb", 0)
 
     # ─── Dataset ──────────────────────────────────────────────────────
     from riemannfm.data.collator import RiemannFMGraphCollator

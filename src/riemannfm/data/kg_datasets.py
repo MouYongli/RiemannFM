@@ -88,7 +88,8 @@ class RiemannFMKGDataset(Dataset):
 
     def _download_if_missing(self):
         """Download dataset files if not present."""
-        train_file = self.data_dir / "train.txt"
+        raw_dir = self.data_dir / "raw"
+        train_file = raw_dir / "train.txt"
         if train_file.exists():
             return
 
@@ -97,8 +98,8 @@ class RiemannFMKGDataset(Dataset):
         if url is None:
             return
 
-        logger.info(f"Downloading {dataset_name} to {self.data_dir}...")
-        self.data_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Downloading {dataset_name} to {raw_dir}...")
+        raw_dir.mkdir(parents=True, exist_ok=True)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             archive_path = Path(tmpdir) / "dataset.tar.gz"
@@ -106,20 +107,20 @@ class RiemannFMKGDataset(Dataset):
             with tarfile.open(archive_path, "r:gz") as tar:
                 tar.extractall(tmpdir)
 
-            # Find and move the extracted files
             for extracted_dir in Path(tmpdir).iterdir():
                 if extracted_dir.is_dir() and extracted_dir.name != "__MACOSX":
                     for f in extracted_dir.iterdir():
                         if f.is_file():
-                            shutil.copy2(f, self.data_dir / f.name)
+                            shutil.copy2(f, raw_dir / f.name)
                     break
 
         logger.info(f"Downloaded {dataset_name} successfully.")
 
     def _load_data(self):
-        """Load entity/relation mappings and triples."""
+        """Load entity/relation mappings and triples from raw/ subdirectory."""
+        raw_dir = self.data_dir / "raw"
         # Load entity mapping
-        entity_file = self.data_dir / "entities.dict"
+        entity_file = raw_dir / "entities.dict"
         if entity_file.exists():
             with open(entity_file) as f:
                 for line in f:
@@ -131,7 +132,7 @@ class RiemannFMKGDataset(Dataset):
             self.num_entities = len(self.entity2id)
 
         # Load relation mapping
-        relation_file = self.data_dir / "relations.dict"
+        relation_file = raw_dir / "relations.dict"
         if relation_file.exists():
             with open(relation_file) as f:
                 for line in f:
@@ -163,10 +164,10 @@ class RiemannFMKGDataset(Dataset):
                 max_hops=self.max_hops,
             )
 
-        # Load precomputed text embeddings if available
+        # Load precomputed text embeddings from processed/ if available
         if self.text_encoder and self.dim_text_emb > 0:
             key = encoder_slug(self.text_encoder)
-            emb_path = self.data_dir / "text_embeddings" / embedding_filename(key, self.dim_text_emb)
+            emb_path = self.data_dir / "processed" / "text_embeddings" / embedding_filename(key, self.dim_text_emb)
             if emb_path.exists():
                 self.text_embeddings = torch.load(emb_path, map_location="cpu", weights_only=True)
                 logger.info(f"Loaded text embeddings ({self.text_embeddings.shape}) from {emb_path}")
@@ -174,8 +175,8 @@ class RiemannFMKGDataset(Dataset):
                 logger.debug(f"Text embeddings not found at {emb_path}")
 
     def _load_triples(self, split: str) -> list[tuple[int, int, int]]:
-        """Load triples from a split file."""
-        triples_file = self.data_dir / f"{split}.txt"
+        """Load triples from a split file in raw/ subdirectory."""
+        triples_file = self.data_dir / "raw" / f"{split}.txt"
         triples = []
         if triples_file.exists():
             with open(triples_file) as f:
