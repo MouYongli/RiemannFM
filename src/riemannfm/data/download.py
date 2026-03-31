@@ -94,6 +94,7 @@ class DownloadMeta:
     download_url: str | None
     download_format: str
     text_url: str | None
+    alias_url: str | None = None
 
 
 _DOWNLOAD_REGISTRY: dict[str, DownloadMeta] = {
@@ -101,6 +102,7 @@ _DOWNLOAD_REGISTRY: dict[str, DownloadMeta] = {
         download_url="https://www.dropbox.com/s/6sbhm0rwo4l73jq/wikidata5m_transductive.tar.gz?dl=1",
         download_format="wikidata5m",
         text_url="https://www.dropbox.com/s/7jp4ib8zo3i6m10/wikidata5m_text.txt.gz?dl=1",
+        alias_url="https://www.dropbox.com/s/lnbhc8yuhit4wm5/wikidata5m_alias.tar.gz?dl=1",
     ),
     "fb15k_237": DownloadMeta(
         download_url="https://raw.githubusercontent.com/villmow/datasets_knowledge_embedding/master/FB15k-237.tar.gz",
@@ -182,10 +184,7 @@ def download_graph(
     raw_dir = Path(data_dir) / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
 
-    has_triples = (
-        (raw_dir / "train.txt").exists()
-        or (raw_dir / "train_triples.txt").exists()
-    )
+    has_triples = (raw_dir / "train.txt").exists() or (raw_dir / "train_triples.txt").exists()
     if has_triples and not force:
         logger.info(f"[{slug}] Graph files already exist in raw/, skipping download.")
         return raw_dir
@@ -207,10 +206,7 @@ def download_graph(
 def _download_tar_gz(slug: str, meta: DownloadMeta, raw_dir: Path) -> None:
     """Download and extract a tar.gz archive."""
     if meta.download_url is None:
-        logger.warning(
-            f"[{slug}] No download URL configured. "
-            f"Please manually place graph files in {raw_dir}/"
-        )
+        logger.warning(f"[{slug}] No download URL configured. Please manually place graph files in {raw_dir}/")
         return
 
     logger.info(f"[{slug}] Downloading from {meta.download_url}...")
@@ -287,10 +283,7 @@ def _download_codex(slug: str, raw_dir: Path) -> None:
 def _download_zip(slug: str, meta: DownloadMeta, raw_dir: Path) -> None:
     """Download and extract a zip archive."""
     if meta.download_url is None:
-        logger.warning(
-            f"[{slug}] No download URL configured. "
-            f"Please manually place graph files in {raw_dir}/"
-        )
+        logger.warning(f"[{slug}] No download URL configured. Please manually place graph files in {raw_dir}/")
         return
 
     logger.info(f"[{slug}] Downloading from {meta.download_url}...")
@@ -390,15 +383,10 @@ def _extract_texts_wordnet(raw_dir: Path, output_path: Path) -> None:
     logger.info(f"[wn18rr] Wrote {len(entity2id)} entity texts to {output_path}")
 
 
-def _extract_texts_wikipedia_mapping(
-    raw_dir: Path, output_path: Path, text_url: str | None
-) -> None:
+def _extract_texts_wikipedia_mapping(raw_dir: Path, output_path: Path, text_url: str | None) -> None:
     """Extract texts via entity-to-text mapping file (FB15k-237, YAGO3-10)."""
     if text_url is None:
-        logger.warning(
-            f"No text URL configured for {raw_dir.parent.name}. "
-            f"Please manually create {output_path}"
-        )
+        logger.warning(f"No text URL configured for {raw_dir.parent.name}. Please manually create {output_path}")
         return
 
     logger.info(f"[{raw_dir.parent.name}] Downloading entity texts from {text_url}...")
@@ -422,15 +410,10 @@ def _extract_texts_wikipedia_mapping(
         tmp_path.unlink(missing_ok=True)
 
 
-def _extract_texts_wikidata_description(
-    raw_dir: Path, output_path: Path, text_url: str | None
-) -> None:
+def _extract_texts_wikidata_description(raw_dir: Path, output_path: Path, text_url: str | None) -> None:
     """Extract texts from WikiData entity descriptions (CoDEx-L, Wiki27K)."""
     if text_url is None:
-        logger.warning(
-            f"No text URL configured for {raw_dir.parent.name}. "
-            f"Please manually create {output_path}"
-        )
+        logger.warning(f"No text URL configured for {raw_dir.parent.name}. Please manually create {output_path}")
         return
 
     logger.info(f"[{raw_dir.parent.name}] Downloading entity descriptions from {text_url}...")
@@ -496,9 +479,15 @@ def _extract_texts_wikipedia(raw_dir: Path, output_path: Path) -> None:
                 parts = line.strip().split("\t", 1)
                 if len(parts) == 2:
                     entity_id, text = parts
-                    # Use first sentence as description (full text is very long)
-                    first_sent = text.split(". ")[0].rstrip(".")
+                    first_sent = text.split(". ")[0].strip().rstrip(".")
+                    if not first_sent:
+                        # Text starts with "..." or is empty — use entity ID
+                        first_sent = entity_id
                     fout.write(f"{entity_id}\t{first_sent}\n")
+                    count += 1
+                elif len(parts) == 1 and parts[0]:
+                    # Entity with no Wikipedia text — use entity ID
+                    fout.write(f"{parts[0]}\t{parts[0]}\n")
                     count += 1
 
         logger.info(f"[wikidata_5m] Wrote {count} entity texts to {output_path}")
@@ -518,6 +507,168 @@ def _load_entity_mapping(raw_dir: Path) -> dict[str, int]:
     return entity2id
 
 
+# ─── Stage 3: Extract relation texts → raw/relation_texts.tsv ──────────────
+
+
+def extract_relation_texts(
+    slug: str,
+    data_dir: str,
+    force: bool = False,
+) -> Path:
+    """Stage 3: Extract or generate relation text descriptions.
+
+    Produces raw/relation_texts.tsv with columns: relation_id<TAB>text
+
+    Args:
+        slug: Dataset slug for registry lookup.
+        data_dir: Base dataset directory (raw/ is appended).
+        force: Re-extract even if file exists.
+
+    Returns:
+        Path to relation_texts.tsv.
+    """
+    raw_dir = Path(data_dir) / "raw"
+    output_path = raw_dir / "relation_texts.tsv"
+
+    if output_path.exists() and not force:
+        logger.info(f"[{slug}] relation_texts.tsv already exists, skipping.")
+        return output_path
+
+    raw_dir.mkdir(parents=True, exist_ok=True)
+
+    if slug == "wikidata_5m":
+        _extract_relation_texts_wikidata5m(raw_dir, output_path)
+    elif slug == "wn18rr":
+        _extract_relation_texts_from_triples(raw_dir, output_path, style="wordnet")
+    elif slug in ("fb15k_237", "yago3_10"):
+        _extract_relation_texts_from_triples(raw_dir, output_path, style="freebase")
+    elif slug == "codex_l":
+        _extract_relation_texts_codex(raw_dir, output_path)
+    else:
+        _extract_relation_texts_from_triples(raw_dir, output_path, style="generic")
+
+    return output_path
+
+
+def _extract_relation_texts_wikidata5m(raw_dir: Path, output_path: Path) -> None:
+    """Extract relation texts from WikiData5M alias archive.
+
+    Downloads wikidata5m_alias.tar.gz and parses wikidata5m_relation.txt
+    which has format: P-ID<TAB>alias1<TAB>alias2<TAB>...
+    Uses first alias as label, remaining as description.
+    """
+    meta = get_download_meta("wikidata_5m")
+    if meta.alias_url is None:
+        logger.warning("[wikidata_5m] No alias URL configured.")
+        return
+
+    logger.info("[wikidata_5m] Downloading alias archive for relation texts...")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        archive_path = Path(tmpdir) / "wikidata5m_alias.tar.gz"
+        urlretrieve(meta.alias_url, str(archive_path))
+        with tarfile.open(archive_path, "r:gz") as tar:
+            tar.extractall(tmpdir)
+
+        rel_files = list(Path(tmpdir).rglob("wikidata5m_relation.txt"))
+        if not rel_files:
+            logger.warning("[wikidata_5m] wikidata5m_relation.txt not found in alias archive.")
+            return
+
+        # Parse alias file
+        known: dict[str, str] = {}
+        with open(rel_files[0]) as fin:
+            for line in fin:
+                parts = line.strip().split("\t")
+                if len(parts) >= 2:
+                    rel_id = parts[0]
+                    label = parts[1]
+                    aliases = ", ".join(parts[2:]) if len(parts) > 2 else ""
+                    known[rel_id] = f"{label}: {aliases}" if aliases else label
+
+        # Collect all relations from triples to fill gaps
+        all_rels: set[str] = set()
+        for fname in ("train_triples.txt", "val_triples.txt", "test_triples.txt"):
+            fpath = raw_dir / fname
+            if fpath.exists():
+                with open(fpath) as f:
+                    for line in f:
+                        parts = line.strip().split("\t")
+                        if len(parts) == 3:
+                            all_rels.add(parts[1])
+
+        count = 0
+        with open(output_path, "w") as fout:
+            for rel_id in sorted(all_rels | known.keys()):
+                text = known.get(rel_id, rel_id)
+                fout.write(f"{rel_id}\t{text}\n")
+                count += 1
+
+    logger.info(f"[wikidata_5m] Wrote {count} relation texts to {output_path}")
+
+
+def _extract_relation_texts_from_triples(
+    raw_dir: Path, output_path: Path, style: str
+) -> None:
+    """Extract relation texts by collecting unique relations from triple files.
+
+    Converts relation IDs to human-readable text based on naming style:
+    - wordnet: '_hypernym' → 'hypernym'
+    - freebase: '/film/film/genre' → 'film film genre'
+    - generic: pass through as-is
+    """
+    relations: set[str] = set()
+    for fname in ("train.txt", "train_triples.txt"):
+        fpath = raw_dir / fname
+        if fpath.exists():
+            with open(fpath) as f:
+                for line in f:
+                    parts = line.strip().split("\t")
+                    if len(parts) >= 3:
+                        relations.add(parts[1])
+
+    if not relations:
+        logger.warning(f"No relations found in {raw_dir}")
+        return
+
+    count = 0
+    with open(output_path, "w") as fout:
+        for rel in sorted(relations):
+            if style == "wordnet":
+                text = rel.lstrip("_").replace("_", " ")
+            elif style == "freebase":
+                text = rel.strip("/").replace("/", " ").replace("_", " ")
+            else:
+                text = rel.replace("_", " ")
+            fout.write(f"{rel}\t{text}\n")
+            count += 1
+
+    logger.info(f"Wrote {count} relation texts to {output_path}")
+
+
+def _extract_relation_texts_codex(raw_dir: Path, output_path: Path) -> None:
+    """Extract relation texts for CoDEx-L from relations.dict.
+
+    CoDEx relations.dict has format: index<TAB>relation_label
+    """
+    rel_file = raw_dir / "relations.dict"
+    if not rel_file.exists():
+        logger.warning(f"[codex_l] {rel_file} not found, falling back to triple extraction.")
+        _extract_relation_texts_from_triples(raw_dir, output_path, style="generic")
+        return
+
+    count = 0
+    with open(rel_file) as fin, open(output_path, "w") as fout:
+        for line in fin:
+            parts = line.strip().split("\t")
+            if len(parts) == 2:
+                _, rel_name = parts
+                text = rel_name.replace("_", " ")
+                fout.write(f"{rel_name}\t{text}\n")
+                count += 1
+
+    logger.info(f"[codex_l] Wrote {count} relation texts to {output_path}")
+
+
 # ─── Pipeline orchestration ──────────────────────────────────────────────────
 
 
@@ -531,10 +682,7 @@ def verify_data_ready(data_dir: str) -> bool:
         True if raw graph files are present.
     """
     raw = Path(data_dir) / "raw"
-    return (
-        (raw / "train.txt").exists()
-        or (raw / "train_triples.txt").exists()
-    )
+    return (raw / "train.txt").exists() or (raw / "train_triples.txt").exists()
 
 
 def run_pipeline(
@@ -557,5 +705,11 @@ def run_pipeline(
 
     download_graph(slug, data_dir, force=force)
     extract_entity_texts(slug, data_dir, text_source, force=force)
+    extract_relation_texts(slug, data_dir, force=force)
+
+    from riemannfm.data.validate import validate_raw
+
+    if not validate_raw(data_dir, slug=slug):
+        raise RuntimeError(f"[{slug}] Validation failed — check logs above.")
 
     logger.info(f"[{slug}] Download complete.")
