@@ -97,7 +97,7 @@ class Manifold(ABC):
             Interpolated point, shape (..., dim).
         """
         v = self.log_map(x, y)
-        if isinstance(t, (int, float)):
+        if isinstance(t, int | float):
             return self.exp_map(x, t * v)
         # Ensure t is broadcastable with v
         while t.dim() < v.dim():
