@@ -249,6 +249,9 @@ class RiemannFMKGDataset(Dataset):
             text_input_ids = node_embs
 
         return RiemannFMGraphData(
-            x=x, edge_types=edge_types, num_nodes=N, depth=depth,
+            x=x,
+            edge_types=edge_types,
+            num_nodes=N,
+            depth=depth,
             text_input_ids=text_input_ids,
         )

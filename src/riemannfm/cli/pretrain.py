@@ -117,8 +117,7 @@ def main(cfg: DictConfig):
 
     if not verify_data_ready(cfg.data.data_dir):
         raise FileNotFoundError(
-            f"Dataset not found at {cfg.data.data_dir}/raw/. "
-            "Run `make download ARGS='data=<name>'` first."
+            f"Dataset not found at {cfg.data.data_dir}/raw/. Run `make download ARGS='data=<name>'` first."
         )
 
     text_enc = cfg.data.get("text_encoder", None)
