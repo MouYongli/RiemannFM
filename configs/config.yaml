@@ -2,13 +2,14 @@ defaults:
   - model: rieformer_base
   - manifold: product_h_s_e
   - flow: joint
-  - text_encoder: sbert
+  - embedding: qwen3
   - data: wikidata_5m
   - training: pretrain
   - task: kgc_lp
   - ablation: full
   - eval: default
   - download: default
+  - preprocess: default
   - _self_
 
 seed: 42

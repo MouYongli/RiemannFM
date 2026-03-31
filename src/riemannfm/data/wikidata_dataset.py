@@ -10,7 +10,7 @@ from pathlib import Path
 import torch
 from torch.utils.data import Dataset
 
-from riemannfm.data.download import embedding_filename, encoder_slug
+from riemannfm.data.embed import embedding_filename, encoder_slug
 from riemannfm.data.graph_data import RiemannFMGraphData
 from riemannfm.data.subgraph_sampler import RiemannFMSubgraphSampler
 from riemannfm.manifolds.product import RiemannFMProductManifold

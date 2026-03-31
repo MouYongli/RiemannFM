@@ -1,3 +1,4 @@
+embedding_provider: huggingface
 model_name: sentence-transformers/all-MiniLM-L6-v2
 output_dim: 384
 freeze: true

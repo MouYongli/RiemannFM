@@ -5,5 +5,5 @@ num_edge_types: 238
 max_nodes: 256
 num_workers: 4
 text_source: wikipedia_mapping
-text_encoder: ${text_encoder.model_name}
-dim_text_emb: ${text_encoder.output_dim}
+text_encoder: ${embedding.model_name}
+dim_text_emb: ${embedding.output_dim}

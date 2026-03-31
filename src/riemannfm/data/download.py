@@ -24,66 +24,6 @@ from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
-# ─── Encoder slug mapping ────────────────────────────────────────────────────
-
-_SLUG_MAP: dict[str, str] = {
-    "sentence-transformers/all-MiniLM-L6-v2": "sbert",
-    "xlm-roberta-large": "xlm_roberta",
-    "Alibaba-NLP/Qwen3-Embedding-8B": "qwen3_embed",
-}
-
-_SLUG_TO_MODEL: dict[str, str] = {v: k for k, v in _SLUG_MAP.items()}
-
-ENCODER_DIMS: dict[str, int] = {
-    "sbert": 384,
-    "xlm_roberta": 1024,
-    "qwen3_embed": 4096,
-}
-
-
-def encoder_slug(text_encoder: str) -> str:
-    """Derive a filesystem-safe short key from a model name or config key.
-
-    Args:
-        text_encoder: HuggingFace model name or short slug.
-
-    Returns:
-        Short key like "sbert", "xlm_roberta", "qwen3_embed".
-    """
-    if text_encoder in _SLUG_MAP:
-        return _SLUG_MAP[text_encoder]
-    if text_encoder in _SLUG_TO_MODEL:
-        return text_encoder
-    return text_encoder.split("/")[-1].replace("-", "_").lower()
-
-
-def encoder_model_name(text_encoder: str) -> str:
-    """Resolve a short slug or model name to the full HuggingFace model name.
-
-    Args:
-        text_encoder: Short slug or full model name.
-
-    Returns:
-        Full HuggingFace model name.
-    """
-    if text_encoder in _SLUG_TO_MODEL:
-        return _SLUG_TO_MODEL[text_encoder]
-    return text_encoder
-
-
-def embedding_filename(encoder_key: str, dim: int) -> str:
-    """Build the deterministic embedding filename.
-
-    Args:
-        encoder_key: Short encoder slug.
-        dim: Embedding dimension.
-
-    Returns:
-        Filename like "entity_emb_sbert_384.pt".
-    """
-    return f"entity_emb_{encoder_key}_{dim}.pt"
-
-
 # ─── Download-specific registry ──────────────────────────────────────────────
 
 

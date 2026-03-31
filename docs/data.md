@@ -106,23 +106,53 @@ python -m riemannfm.cli.download download.all=true
 
 ---
 
-## 4. Preprocess：预计算文本嵌入（后续实现）
+## 4. Preprocess：ID 映射 + 文本嵌入
 
-preprocess 读取 `raw/entity_texts.tsv`，用指定的 text_encoder 编码，保存到 `processed/text_embeddings/`。
+preprocess 做两件事：
+1. **ID 映射**：字符串 ID (Q-id/P-id) → 连续整数，生成 `entity2id.tsv`、`relation2id.tsv` 和 int tensor 三元组
+2. **文本嵌入**：用指定编码器对 `entity_texts.tsv` / `relation_texts.tsv` 编码
 
 ```bash
-# 预计算（需要 GPU）
-make preprocess ARGS="data=fb15k237 text_encoder=sbert"
-make preprocess ARGS="data=fb15k237 text_encoder=xlm_roberta"
+# HuggingFace 本地编码器
+make preprocess ARGS="data=wikidata_5m embedding=sbert"
+make preprocess ARGS="data=fb15k237 embedding=xlm_roberta"
+
+# Ollama API（需本地运行 Ollama 服务）
+make preprocess ARGS="data=wikidata_5m embedding=qwen3_embed"
+
+# 只做 ID 映射，不做文本嵌入
+make preprocess ARGS="data=wikidata_5m embedding=none"
+
+# 强制重新处理
+make preprocess ARGS="data=wikidata_5m embedding=sbert preprocess.force=true"
 ```
 
-不同编码器的嵌入文件命名为 `entity_emb_{encoder}_{dim}.pt`，互不干扰，支持 ablation。
+### Hydra 参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `data=` | `wikidata_5m` | 数据集 |
+| `embedding=` | `sbert` | 编码器（对应 `configs/embedding/*.yaml`） |
+| `preprocess.batch_size` | `256` | 编码 batch size |
+| `preprocess.device` | `cuda` | 编码设备 |
+| `preprocess.force` | `false` | 强制重新处理 |
+
+### Embedding provider
+
+| Provider | 说明 | 配置 |
+|----------|------|------|
+| `huggingface` | 本地 transformer 模型 | 需要 GPU，model_name 为 HuggingFace 路径 |
+| `ollama` | Ollama 的 OpenAI 兼容接口 | 需要运行 Ollama 服务，配置 api_base |
+| `openai` | OpenAI API | 需要 OPENAI_API_KEY 环境变量 |
+| `none` | 跳过文本嵌入 | 只做 ID 映射 |
+
+不同编码器的嵌入文件命名为 `{entity|relation}_emb_{encoder}_{dim}.pt`，互不干扰，支持 ablation。
 
 ---
 
 ## 5. Hydra 配置集成
 
-数据配置通过 Hydra 插值自动获取 `text_encoder` 和 `dim_text_emb`：
+数据配置通过 Hydra 插值自动获取 embedding 参数：
 
 ```yaml
 # configs/data/fb15k237.yaml
@@ -131,18 +161,18 @@ dataset: kg_benchmark
 data_dir: data/fb15k_237
 num_edge_types: 238
 text_source: wikipedia_mapping
-text_encoder: ${text_encoder.model_name}
-dim_text_emb: ${text_encoder.output_dim}
+text_encoder: ${embedding.model_name}
+dim_text_emb: ${embedding.output_dim}
 ```
 
-可用的文本编码器配置：
+可用的 embedding 配置（`configs/embedding/`）：
 
-| 配置文件 | 模型 | 输出维度 |
-|----------|------|----------|
-| `text_encoder/sbert.yaml` | `sentence-transformers/all-MiniLM-L6-v2` | 384 |
-| `text_encoder/xlm_roberta.yaml` | `xlm-roberta-large` | 1024 |
-| `text_encoder/qwen3_embed.yaml` | `Alibaba-NLP/Qwen3-Embedding-8B` | 4096 |
-| `text_encoder/none.yaml` | — | 0 |
+| 配置文件 | Provider | 模型 | 输出维度 |
+|----------|----------|------|----------|
+| `embedding/sbert.yaml` | huggingface | `sentence-transformers/all-MiniLM-L6-v2` | 384 |
+| `embedding/xlm_roberta.yaml` | huggingface | `xlm-roberta-large` | 1024 |
+| `embedding/qwen3_embed.yaml` | ollama | `qwen3-embedding` | 4096 |
+| `embedding/none.yaml` | none | — | 0 |
 
 ---
 
@@ -163,11 +193,15 @@ Run `make download ARGS='data=fb15k237'` first.
 # 1. 下载全部原始数据（一次性）
 make download ARGS="download.all=true"
 
-# 2. 预计算文本嵌入（按需，后续实现）
-make preprocess ARGS="data=fb15k237 text_encoder=sbert"
-make preprocess ARGS="data=fb15k237 text_encoder=xlm_roberta"
+# 2. 预处理：ID 映射 + 文本嵌入
+make preprocess ARGS="data=wikidata_5m embedding=sbert"
+make preprocess ARGS="data=fb15k237 embedding=sbert"
+
+# 追加不同编码器（ID 映射不会重复，只追加嵌入文件）
+make preprocess ARGS="data=wikidata_5m embedding=xlm_roberta"
+make preprocess ARGS="data=wikidata_5m embedding=qwen3_embed"
 
 # 3. 训练
-make pretrain ARGS="data=wikidata_5m text_encoder=sbert"
-make finetune ARGS="data=fb15k237 text_encoder=sbert"
+make pretrain ARGS="data=wikidata_5m embedding=sbert"
+make finetune ARGS="data=fb15k237 embedding=sbert"
 ```

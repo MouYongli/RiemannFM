@@ -1,0 +1,3 @@
+batch_size: 256
+device: cuda
+force: false
