@@ -1,4 +1,8 @@
 batch_size: 256
 device: cuda
 force: false
+
+# Mini dataset builder (relation-aware sampling)
 build_mini: false
+mini_max_entities: 1000
+mini_target_triples: 5000
