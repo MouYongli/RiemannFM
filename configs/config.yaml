@@ -12,13 +12,10 @@ defaults:
   - eval: default
   - download: default
   - preprocess: default
+  - logger: default
   - _self_
 
 seed: 42
 project_name: riemannfm
 run_name: ${now:%Y%m%d_%H%M%S}
 device: ${accelerator.accelerator}
-
-# Loggers: "+" separated names from configs/logger/*.yaml
-# Examples: "wandb+csv", "csv", "wandb", "null"
-loggers: wandb+csv
