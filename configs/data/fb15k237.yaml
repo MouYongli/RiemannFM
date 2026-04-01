@@ -6,4 +6,3 @@ max_nodes: 256
 num_workers: 4
 text_source: wikipedia_mapping
 text_encoder: ${embedding.model_name}
-dim_text_emb: 0

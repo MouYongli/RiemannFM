@@ -40,7 +40,6 @@ class RiemannFMDataModule(LightningDataModule):
         data.max_nodes:         N_max — max nodes per subgraph
         data.max_hops:          BFS expansion hops
         data.num_workers:       DataLoader workers
-        data.dim_text_emb:      d_c — text embedding dimension
         data.text_encoder:      encoder model name / slug
         training.batch_size:    batch size B
 
@@ -68,7 +67,6 @@ class RiemannFMDataModule(LightningDataModule):
             "max_nodes": data_cfg.max_nodes,
             "max_hops": data_cfg.get("max_hops", 2),
             "text_encoder": data_cfg.get("text_encoder", None),
-            "dim_text_emb": data_cfg.get("dim_text_emb", 0),
         }
 
         if stage in ("fit", None):
@@ -117,7 +115,7 @@ class RiemannFMDataModule(LightningDataModule):
         ds = self._train_dataset or self._val_dataset or self._test_dataset
         if ds is not None:
             return ds.dim_text_emb
-        return int(self.cfg.data.get("dim_text_emb", 0))
+        return 0
 
     def _make_collator(self) -> RiemannFMGraphCollator:
         return RiemannFMGraphCollator(

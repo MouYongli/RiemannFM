@@ -6,4 +6,3 @@ max_nodes: 256
 num_workers: 4
 text_source: wordnet_defs
 text_encoder: ${embedding.model_name}
-dim_text_emb: 0

@@ -45,7 +45,6 @@ class RiemannFMKGDataset(Dataset[RiemannFMGraphData]):
         max_nodes: Maximum nodes per subgraph N_max.
         max_hops: Maximum BFS hops from seed.
         text_encoder: Text encoder model name or slug for loading embeddings.
-        dim_text_emb: Dimension of text embeddings d_c.
         epoch_size: Virtual epoch size (number of samples per epoch).
             Since sampling is on-the-fly, this controls __len__.
     """
@@ -58,7 +57,6 @@ class RiemannFMKGDataset(Dataset[RiemannFMGraphData]):
         max_nodes: int = 64,
         max_hops: int = 2,
         text_encoder: str | None = None,
-        dim_text_emb: int = 0,
         epoch_size: int | None = None,
     ):
         self.data_dir = Path(data_dir)
@@ -67,7 +65,7 @@ class RiemannFMKGDataset(Dataset[RiemannFMGraphData]):
         self.max_nodes = max_nodes
         self.max_hops = max_hops
         self.text_encoder = text_encoder
-        self.dim_text_emb = int(dim_text_emb)
+        self.dim_text_emb = 0
 
         # Load data
         self.triples: Tensor = self._load_triples(split)
@@ -90,7 +88,7 @@ class RiemannFMKGDataset(Dataset[RiemannFMGraphData]):
         logger.info(
             f"RiemannFMKGDataset({split}): "
             f"{len(self.triples)} triples, K={num_edge_types}, N_max={max_nodes}, "
-            f"d_c={dim_text_emb}, epoch_size={self._epoch_size}"
+            f"d_c={self.dim_text_emb}, epoch_size={self._epoch_size}"
         )
 
     def _load_triples(self, split: str) -> Tensor:
@@ -107,8 +105,7 @@ class RiemannFMKGDataset(Dataset[RiemannFMGraphData]):
     def _load_text_embeddings(self) -> None:
         """Load precomputed text embeddings for entities and relations.
 
-        If the expected file (matching text_encoder + dim_text_emb) is not
-        found, falls back to auto-detecting any embedding file on disk.
+        Auto-detects any embedding file matching the text_encoder slug on disk.
         After loading, ``self.dim_text_emb`` is updated to the actual
         dimension of the loaded tensors.
         """
