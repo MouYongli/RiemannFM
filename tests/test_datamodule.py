@@ -8,6 +8,7 @@ Validates that the data pipeline produces batches matching the math spec:
 """
 
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 import torch
@@ -278,31 +279,23 @@ class TestPretrainDataset:
 
 @requires_mini_data
 class TestDataModule:
-    def _make_cfg(self):
-        from omegaconf import OmegaConf
-
-        return OmegaConf.create({
-            "data": {
-                "data_dir": str(MINI_DATA_DIR),
-                "num_edge_types": 822,
-                "max_nodes": 32,
-                "max_hops": 2,
-                "num_workers": 0,
-                "text_encoder": "nomic-embed-text",
-                "dim_text_emb": 768,
-                "val_epoch_size": 100,
-                "test_epoch_size": 100,
-            },
-            "training": {
-                "batch_size": 4,
-            },
-        })
+    _DM_KWARGS: ClassVar[dict[str, object]] = {
+        "data_dir": str(MINI_DATA_DIR),
+        "num_edge_types": 822,
+        "max_nodes": 32,
+        "max_hops": 2,
+        "num_workers": 0,
+        "text_encoder": "nomic-embed-text",
+        "dim_text_emb": 768,
+        "val_epoch_size": 100,
+        "test_epoch_size": 100,
+        "batch_size": 4,
+    }
 
     def test_setup_and_first_batch(self):
         from riemannfm.data.datamodule import RiemannFMDataModule
 
-        cfg = self._make_cfg()
-        dm = RiemannFMDataModule(cfg)
+        dm = RiemannFMDataModule(**self._DM_KWARGS)
         dm.setup("fit")
 
         # Get first training batch
@@ -319,8 +312,7 @@ class TestDataModule:
     def test_relation_text_property(self):
         from riemannfm.data.datamodule import RiemannFMDataModule
 
-        cfg = self._make_cfg()
-        dm = RiemannFMDataModule(cfg)
+        dm = RiemannFMDataModule(**self._DM_KWARGS)
         dm.setup("fit")
 
         C_R = dm.relation_text
@@ -329,8 +321,7 @@ class TestDataModule:
     def test_val_dataloader(self):
         from riemannfm.data.datamodule import RiemannFMDataModule
 
-        cfg = self._make_cfg()
-        dm = RiemannFMDataModule(cfg)
+        dm = RiemannFMDataModule(**self._DM_KWARGS)
         dm.setup("fit")
 
         val_loader = dm.val_dataloader()
