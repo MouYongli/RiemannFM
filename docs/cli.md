@@ -30,12 +30,15 @@ uv run python -m riemannfm.cli.preprocess data=wikidata_5m embedding=qwen3  # �
 # Smoke test (mini + nomic, 100 步, CSV 日志)
 uv run python -m riemannfm.cli.pretrain \
     data=wikidata_5m_mini embedding=nomic \
-    training.max_steps=100 training.batch_size=4 logger=csv
+    training.max_steps=100 training.batch_size=4 \
+    training.warmup_steps=10 training.val_check_interval=50 \
+    training.gradient_accumulation_steps=1 logger=csv
 
 # MVP (mini + nomic, 1000 步)
 uv run python -m riemannfm.cli.pretrain \
     data=wikidata_5m_mini embedding=nomic \
-    training.max_steps=1000 training.batch_size=8
+    training.max_steps=1000 training.batch_size=8 \
+    training.warmup_steps=100 training.val_check_interval=200
 
 # 超参搜索 (默认 qwen3)
 uv run python -m riemannfm.cli.pretrain +experiment=pretrain_search --multirun
