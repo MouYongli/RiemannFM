@@ -1,8 +1,8 @@
 """Multi-backend text embedding for KG entities and relations.
 
 Supports three embedding providers:
-- huggingface: Local transformer models (SBERT, XLM-RoBERTa, etc.)
-- ollama: Ollama server via OpenAI-compatible /v1/embeddings endpoint
+- huggingface: Local transformer models (SBERT)
+- ollama: Ollama server via OpenAI-compatible /v1/embeddings endpoint (Qwen3, Nomic)
 - openai: OpenAI API via /v1/embeddings endpoint
 
 Results are cached to disk. Embedding files are named
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 _SLUG_MAP: dict[str, str] = {
     "sentence-transformers/all-MiniLM-L6-v2": "sbert",
-    "xlm-roberta-large": "xlm_roberta",
+    "all-minilm:l6-v2": "sbert",
     "qwen3-embedding": "qwen3",
     "qwen3-embedding:8b": "qwen3",
     "nomic-embed-text": "nomic",
@@ -30,15 +30,13 @@ _SLUG_MAP: dict[str, str] = {
 
 _SLUG_TO_MODEL: dict[str, str] = {
     "sbert": "sentence-transformers/all-MiniLM-L6-v2",
-    "xlm_roberta": "xlm-roberta-large",
-    "qwen3": "qwen3-embedding",
+    "qwen3": "qwen3-embedding:8b",
     "nomic": "nomic-embed-text",
 }
 
 ENCODER_DIMS: dict[str, int] = {
     "sbert": 384,
-    "xlm_roberta": 1024,
-    "qwen3": 4096,
+    "qwen3": 768,
     "nomic": 768,
 }
 
@@ -50,7 +48,7 @@ def encoder_slug(text_encoder: str) -> str:
         text_encoder: Model name, HuggingFace path, or short slug.
 
     Returns:
-        Short key like "sbert", "xlm_roberta", "qwen3_embed".
+        Short key like "sbert", "nomic", "qwen3".
     """
     if text_encoder in _SLUG_MAP:
         return _SLUG_MAP[text_encoder]
