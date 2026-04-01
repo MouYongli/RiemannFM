@@ -1,1 +1,1 @@
-"""Placeholder."""
+"""Attention mechanisms for RiemannFM."""
