@@ -8,7 +8,7 @@ defaults:
   - training: pretrain
   - task: kgc_lp
   - ablation: full
-  - accelerator: auto
+  - accelerator: gpu
   - eval: default
   - download: default
   - preprocess: default

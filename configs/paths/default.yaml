@@ -13,3 +13,6 @@ output_dir: ${hydra:runtime.output_dir}
 
 # Working directory (where the command was launched).
 work_dir: ${hydra:runtime.cwd}
+
+# Log directory (loggers write here).
+log_dir: ${paths.output_dir}
