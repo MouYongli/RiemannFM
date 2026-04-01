@@ -20,15 +20,15 @@ uv run python -m riemannfm.cli.preprocess data=wikidata_5m preprocess.build_mini
 ## 3. 数据预处理 (文本嵌入)
 
 ```bash
-uv run python -m riemannfm.cli.preprocess data=wikidata_5m_mini embedding=sbert
-uv run python -m riemannfm.cli.preprocess data=wikidata_5m embedding=nomic  # 换编码器
+uv run python -m riemannfm.cli.preprocess data=wikidata_5m_mini embedding=nomic
+uv run python -m riemannfm.cli.preprocess data=wikidata_5m embedding=qwen3  # 换编码器
 ```
 
 ## 4. 预训练
 
 ```bash
 # Smoke test (100 步, CSV 日志)
-uv run python -m riemannfm.cli.pretrain training.max_steps=100 training.batch_size=4 logger=csv
+uv run python -m riemannfm.cli.pretrain data=wikidata_5m_mini training.max_steps=100 training.batch_size=4 logger=csv
 
 # MVP (1000 步)
 uv run python -m riemannfm.cli.pretrain training.max_steps=1000 training.batch_size=8
