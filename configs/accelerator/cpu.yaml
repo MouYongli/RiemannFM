@@ -1,3 +1,4 @@
+_target_: lightning.pytorch.Trainer
 accelerator: cpu
 devices: 1
 strategy: auto

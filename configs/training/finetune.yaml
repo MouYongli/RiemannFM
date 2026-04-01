@@ -1,3 +1,5 @@
+_target_: riemannfm.models.lightning_module.RiemannFMPretrainModule
+
 epochs: 50
 batch_size: 32
 gradient_accumulation_steps: 2
@@ -11,9 +13,10 @@ mixed_precision: bf16
 lambda_disc: 1.0
 mu_align: 0.0
 temperature: 0.07
+w_max: 10.0
 
-activation_checkpointing: false
 use_riemannian_optim: true
+limit_val_batches: 8
 freeze_backbone_layers: 0
 
 eval_every: 5

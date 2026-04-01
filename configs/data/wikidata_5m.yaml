@@ -1,3 +1,4 @@
+_target_: riemannfm.data.datamodule.RiemannFMDataModule
 slug: wikidata_5m
 dataset: wikidata
 data_dir: ${paths.data_dir}/wikidata_5m
@@ -6,6 +7,7 @@ num_edge_types: 822
 max_nodes: 256
 max_hops: 3
 num_workers: 8
+text_source: wikidata_description
 text_encoder: ${embedding.model_name}
 val_epoch_size: 5000
 test_epoch_size: 5000

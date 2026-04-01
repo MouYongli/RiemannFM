@@ -1,3 +1,4 @@
+_target_: riemannfm.models.riemannfm.RiemannFM
 num_layers: 6
 node_dim: 384
 edge_dim: 128
@@ -8,4 +9,3 @@ d_c: 256
 text_dim: 0
 text_cross_attn_every: 999
 dropout: 0.1
-use_mrope: false

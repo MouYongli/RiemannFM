@@ -1,10 +1,15 @@
+_target_: riemannfm.data.datamodule.RiemannFMDataModule
 slug: yago3_10
 dataset: kg_benchmark
 dataset_name: yago3-10
 data_dir: ${paths.data_dir}/yago3_10
+num_entities: 123182
 num_edge_types: 37
 max_nodes: 256
+max_hops: 2
 num_workers: 4
 cross_domain: true
 text_source: wikipedia_mapping
 text_encoder: ${embedding.model_name}
+val_epoch_size: 1000
+test_epoch_size: 1000

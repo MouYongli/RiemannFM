@@ -1,3 +1,4 @@
+_target_: lightning.pytorch.Trainer
 accelerator: auto
 devices: auto
 strategy: auto

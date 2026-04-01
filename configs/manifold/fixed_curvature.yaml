@@ -1,3 +1,4 @@
+_target_: riemannfm.manifolds.product.RiemannFMProductManifold
 dim_hyperbolic: 32
 dim_spherical: 32
 dim_euclidean: 32

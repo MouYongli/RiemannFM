@@ -1,6 +1,0 @@
-dataset: molecular
-dataset_name: zinc
-data_dir: ${paths.data_dir}/molecular
-num_edge_types: 4
-max_nodes: 64
-num_workers: 4

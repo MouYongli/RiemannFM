@@ -1,10 +1,15 @@
+_target_: riemannfm.data.datamodule.RiemannFMDataModule
 slug: codex_l
 dataset: kg_benchmark
 dataset_name: codex-l
 data_dir: ${paths.data_dir}/codex_l
+num_entities: 77951
 num_edge_types: 69
 max_nodes: 256
+max_hops: 2
 num_workers: 4
 cross_domain: true
 text_source: wikidata_description
 text_encoder: ${embedding.model_name}
+val_epoch_size: 1000
+test_epoch_size: 1000

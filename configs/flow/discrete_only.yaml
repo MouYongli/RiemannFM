@@ -1,7 +1,12 @@
+_target_: riemannfm.flow.joint_flow.RiemannFMJointFlow
 num_inference_steps: 100
 time_distribution: uniform
 avg_edge_density: 0.05
 ode_method: euler
 ode_atol: 1.0e-5
 ode_rtol: 1.0e-5
+t_max: 0.999
 disable_continuous: true
+disable_discrete: false
+radius_h: 5.0
+sigma_e: 1.0

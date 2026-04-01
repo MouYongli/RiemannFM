@@ -1,4 +1,3 @@
-use_mrope: true
 use_geodesic_kernel: true
 use_ath_norm: true
 use_edge_self_update: true
