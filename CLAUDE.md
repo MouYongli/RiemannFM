@@ -26,7 +26,7 @@ configs/                    # Hydra config groups (project root, not in src/)
 ├── model/                  #   rieformer_{small,base,large}
 ├── manifold/               #   product_h_s_e + 6 ablation variants
 ├── flow/                   #   joint, continuous_only, discrete_only
-├── embedding/              #   sbert, qwen3, xlm_roberta, nomic, none
+├── embedding/              #   sbert, nomic, qwen3, none
 ├── data/                   #   wikidata_5m, fb15k237, wn18rr, codex_l, yago3_10, wiki27k
 ├── training/               #   pretrain, finetune
 ├── task/                   #   kgc_lp, kgc_rp, t2g, gad
@@ -50,17 +50,17 @@ src/riemannfm/
 │       ├── preprocess.py   #   ID mapping + text embedding precomputation
 │       ├── embed.py        #   Multi-backend text embedder (HF/Ollama/OpenAI)
 │       └── validate.py     #   Data validation
-├── manifolds/              # (placeholder) Riemannian geometry
-├── flow/                   # (placeholder) Flow matching
-├── models/                 # (placeholder) Neural networks
-├── losses/                 # (placeholder) Loss functions
-├── tasks/                  # (placeholder) Downstream tasks
-├── optim/                  # (placeholder) Riemannian optimization
+├── manifolds/              # Riemannian geometry (Lorentz, Spherical, Euclidean, Product)
+├── flow/                   # Flow matching (continuous, discrete, joint, noise)
+├── models/                 # RieFormer backbone, RiemannFM model, heads, normalization
+├── losses/                 # Flow matching loss, contrastive loss, combined loss
+├── tasks/                  # (placeholder) Downstream task heads
+├── optim/                  # Riemannian optimizer (geoopt)
 ├── utils/                  # (placeholder) Utilities
 └── cli/                    # CLI entry points
     ├── download.py         #   Dataset download
     ├── preprocess.py       #   Data preprocessing
-    ├── pretrain.py         #   (placeholder) Pretraining
+    ├── pretrain.py         #   Pretraining (instantiate + Hydra)
     ├── finetune.py         #   (placeholder) Fine-tuning
     ├── evaluate.py         #   (placeholder) Evaluation
     └── generate.py         #   (placeholder) Graph generation
@@ -190,7 +190,7 @@ Squash merge to main. One feature = one clean commit.
 
 ## Development Commands
 
-All commands go through the Makefile:
+### Quality (via Makefile)
 
 | Command            | Purpose                              |
 |--------------------|--------------------------------------|
@@ -202,17 +202,31 @@ All commands go through the Makefile:
 | `make test`        | Run pytest verbosely                 |
 | `make test-cov`    | Run pytest with coverage report      |
 | `make precommit`   | Run all pre-commit hooks             |
-| `make pretrain`    | Launch pretraining (`ARGS=...`)      |
-| `make finetune`    | Launch fine-tuning (`ARGS=...`)      |
-| `make evaluate`    | Launch evaluation (`ARGS=...`)       |
-| `make generate`    | Launch graph generation (`ARGS=...`) |
-| `make preprocess`  | Launch data preprocessing            |
 | `make clean`       | Remove build/cache artifacts         |
 
-Training commands accept Hydra overrides via ARGS:
+### Data Pipeline
 
 ```bash
-make pretrain ARGS="training.lr=1e-4 data=fb15k237"
+uv run python -m riemannfm.cli.download data=wikidata_5m
+uv run python -m riemannfm.cli.download download.all=true
+uv run python -m riemannfm.cli.preprocess data=wikidata_5m preprocess.build_mini=true
+uv run python -m riemannfm.cli.preprocess data=wikidata_5m_mini embedding=sbert
+```
+
+### Pretraining (Hydra overrides as CLI args)
+
+```bash
+uv run python -m riemannfm.cli.pretrain training.lr=1e-4 data=fb15k237
+uv run python -m riemannfm.cli.pretrain model=rieformer_small data=wikidata_5m_mini training.max_steps=1000
+```
+
+### Logger Selection (Hydra config group)
+
+```bash
+uv run python -m riemannfm.cli.pretrain logger=default      # wandb + csv (default)
+uv run python -m riemannfm.cli.pretrain logger=wandb_only    # wandb only
+uv run python -m riemannfm.cli.pretrain logger=csv_only      # csv only (offline)
+uv run python -m riemannfm.cli.pretrain logger=none           # no logger
 ```
 
 ## Before Committing

@@ -41,7 +41,7 @@ conda activate riemannfm
 pip install -e ".[dev]"   # editable install with dev tools
 ```
 
-> Makefile and shell scripts auto-detect `uv`. With conda, activate the environment first — all `make` commands then work without changes.
+> With conda, activate the environment first — all commands then work without changes.
 
 ## Data
 
@@ -88,12 +88,6 @@ uv run python -m riemannfm.cli.pretrain \
     training.max_steps=1000
 ```
 
-Or via Makefile:
-
-```bash
-make pretrain ARGS="model=rieformer_small data=wikidata_5m_mini training.max_steps=1000"
-```
-
 ### Full pretraining
 
 ```bash
@@ -114,35 +108,17 @@ uv run python -m riemannfm.cli.pretrain \
 | `training.max_steps=` | `1000`, `500000` | Total training steps |
 | `training.lr=` | `1e-4` | Learning rate |
 | `training.mixed_precision=` | `bf16`, `fp16`, `null` | Mixed precision |
-| `~logger.wandb` | | Disable W&B (keep CSV only) |
-| `~logger.csv` | | Disable CSV (keep W&B only) |
+| `logger=` | `default`, `wandb_only`, `csv_only`, `none` | Logger selection |
 
 ### Logging
 
-By default both W&B and CSV loggers are active. CSV logs are written to `outputs/<run_name>/csv_logs/` as a local fallback.
+By default both W&B and CSV loggers are active (`logger=default`). CSV logs are written to the Hydra output directory as a local fallback.
 
 ```bash
-# W&B + CSV (default)
-make pretrain
-
-# Offline development (CSV only, no W&B)
-make pretrain ARGS="~logger.wandb"
-
-# W&B only
-make pretrain ARGS="~logger.csv"
-```
-
-### Downstream tasks (not yet implemented)
-
-```bash
-# Fine-tuning on FB15k-237
-uv run python -m riemannfm.cli.finetune data=fb15k237 training=finetune
-
-# Evaluation
-uv run python -m riemannfm.cli.evaluate data=fb15k237 eval=default
-
-# Graph generation
-uv run python -m riemannfm.cli.generate data=fb15k237
+uv run python -m riemannfm.cli.pretrain logger=default      # W&B + CSV (default)
+uv run python -m riemannfm.cli.pretrain logger=csv_only      # CSV only (offline)
+uv run python -m riemannfm.cli.pretrain logger=wandb_only    # W&B only
+uv run python -m riemannfm.cli.pretrain logger=none           # no logger
 ```
 
 ## Architecture

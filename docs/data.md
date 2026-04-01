@@ -81,8 +81,8 @@ Hydra 配置通过 `${oc.env:VAR,default}` 引用，优先级为：
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama 服务地址 |
-| `OLLAMA_EMBEDDING_MODEL_NAME` | `qwen3-embedding` | Ollama embedding 模型名 |
-| `OLLAMA_EMBEDDING_DIM` | `4096` | Ollama embedding 输出维度 |
+| `OLLAMA_EMBEDDING_MODEL_NAME` | `qwen3-embedding:8b` | Ollama embedding 模型名 |
+| `OLLAMA_EMBEDDING_DIM` | `768` | Ollama embedding 输出维度 (MRL 截断) |
 | `OPENAI_API_KEY` | (无) | OpenAI API 密钥 |
 
 ---
@@ -94,19 +94,10 @@ download 负责获取图结构和实体/关系文本，写入 `raw/`。不需要
 ### 4.1 调用方式
 
 ```bash
-# Python 模块 (推荐)
 uv run python -m riemannfm.cli.download data=wikidata_5m
 uv run python -m riemannfm.cli.download data=fb15k237
 uv run python -m riemannfm.cli.download download.all=true       # 下载全部数据集
 uv run python -m riemannfm.cli.download data=wn18rr download.force=true
-
-# Shell 脚本
-bash scripts/download.sh data=wikidata_5m
-bash scripts/download.sh download.all=true
-
-# Makefile
-make download ARGS="data=wikidata_5m"
-make download ARGS="download.all=true"
 ```
 
 ### 4.2 Hydra 参数
@@ -174,14 +165,7 @@ make download ARGS="download.all=true"
 前提：已完成 WikiData5M 下载 (`data/wikidata_5m/raw/` 存在)。
 
 ```bash
-# Python 模块 (推荐)
 uv run python -m riemannfm.cli.preprocess data=wikidata_5m preprocess.build_mini=true
-
-# Shell 脚本
-bash scripts/preprocess.sh data=wikidata_5m preprocess.build_mini=true
-
-# Makefile
-make preprocess ARGS="data=wikidata_5m preprocess.build_mini=true"
 
 # 强制重新构建
 uv run python -m riemannfm.cli.preprocess data=wikidata_5m preprocess.build_mini=true preprocess.force=true
@@ -201,17 +185,10 @@ preprocess 读取 `raw/` 产出两类文件到 `processed/`：
 ### 6.1 调用方式
 
 ```bash
-# Python 模块 (推荐)
 uv run python -m riemannfm.cli.preprocess data=wikidata_5m_mini embedding=sbert
 uv run python -m riemannfm.cli.preprocess data=wikidata_5m embedding=sbert
-uv run python -m riemannfm.cli.preprocess data=fb15k237 embedding=xlm_roberta
+uv run python -m riemannfm.cli.preprocess data=fb15k237 embedding=sbert
 uv run python -m riemannfm.cli.preprocess data=wikidata_5m embedding=none   # 只做 ID 映射
-
-# Shell 脚本
-bash scripts/preprocess.sh data=wikidata_5m_mini embedding=sbert
-
-# Makefile
-make preprocess ARGS="data=wikidata_5m_mini embedding=sbert"
 
 # 强制重新处理
 uv run python -m riemannfm.cli.preprocess data=wikidata_5m embedding=sbert preprocess.force=true
@@ -230,12 +207,12 @@ uv run python -m riemannfm.cli.preprocess data=wikidata_5m embedding=sbert prepr
 
 ### 6.3 Embedding 配置
 
-| 配置 | Provider | 模型 | 维度 | 说明 |
-|------|----------|------|------|------|
-| `embedding=sbert` | huggingface | `all-MiniLM-L6-v2` | 384 | 轻量，适合快速验证 |
-| `embedding=xlm_roberta` | huggingface | `xlm-roberta-large` | 1024 | 多语言，模型较大 |
-| `embedding=qwen3` | ollama | `qwen3-embedding` | 4096 | 需要本地 Ollama 服务 |
-| `embedding=none` | — | — | 0 | 跳过文本嵌入 |
+| 配置 | Provider | Ollama 模型名 | HuggingFace 模型名 | d_c | 用途 |
+|------|----------|--------------|-------------------|-----|------|
+| `embedding=sbert` | huggingface | `all-minilm:l6-v2` | `sentence-transformers/all-MiniLM-L6-v2` | 384 | 轻量 baseline / 快速调试 |
+| `embedding=nomic` | ollama | `nomic-embed-text` | `nomic-ai/nomic-embed-text-v1.5` | 768 | wikidata_5m_mini 默认 |
+| `embedding=qwen3` | ollama | `qwen3-embedding:8b` | `Qwen/Qwen3-Embedding-8B` | 768 (MRL 截断) | 完整预训练 / 最终论文 |
+| `embedding=none` | — | — | — | 0 | 消融对照（纯结构，无文本） |
 
 不同编码器的嵌入文件命名为 `{entity|relation}_emb_{encoder}_{dim}.pt`，互不干扰，支持 ablation。
 
@@ -294,14 +271,12 @@ uv run python -m riemannfm.cli.download download.all=true
 uv run python -m riemannfm.cli.preprocess data=wikidata_5m embedding=sbert
 
 # 3. 追加其他编码器（ID 映射不重复，只追加嵌入文件）
-uv run python -m riemannfm.cli.preprocess data=wikidata_5m embedding=xlm_roberta
 uv run python -m riemannfm.cli.preprocess data=wikidata_5m embedding=qwen3
 
 # 4. 预处理下游数据集
 uv run python -m riemannfm.cli.preprocess data=fb15k237 embedding=sbert
 uv run python -m riemannfm.cli.preprocess data=wn18rr embedding=sbert
 
-# 5. 训练
+# 5. 预训练
 uv run python -m riemannfm.cli.pretrain data=wikidata_5m embedding=sbert
-uv run python -m riemannfm.cli.finetune data=fb15k237 embedding=sbert
 ```
