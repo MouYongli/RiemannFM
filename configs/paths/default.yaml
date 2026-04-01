@@ -1,0 +1,15 @@
+# Path configuration for RiemannFM.
+# All other configs reference paths via ${paths.xxx}.
+
+# Project root directory.
+root_dir: ${oc.env:PROJECT_ROOT,.}
+
+# Raw and processed datasets.
+data_dir: ${paths.root_dir}/data
+
+# Output directory for the current run (checkpoints, logs, generated files).
+# Hydra creates this dynamically per run.
+output_dir: ${hydra:runtime.output_dir}
+
+# Working directory (where the command was launched).
+work_dir: ${hydra:runtime.cwd}

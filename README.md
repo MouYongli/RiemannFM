@@ -69,14 +69,72 @@ uv run python -m riemannfm.cli.preprocess data=wikidata_5m_mini embedding=sbert
 
 See [docs/data.md](docs/data.md) for full documentation (all datasets, embedding options, `.env` configuration).
 
-## Quick Start
+## Pretraining
 
-All training commands use Hydra for configuration:
+All commands use [Hydra](https://hydra.cc/) for configuration. Configs live in `configs/`.
+
+### Quick start (mini dataset)
 
 ```bash
-# Pretraining on WikiData5M
-uv run python -m riemannfm.cli.pretrain data=wikidata_5m model=rieformer_base training=pretrain
+# 1. Download + preprocess WikiData5M mini (~22K triples, fast iteration)
+uv run python -m riemannfm.cli.download data=wikidata_5m
+uv run python -m riemannfm.cli.preprocess data=wikidata_5m preprocess.build_mini=true
+uv run python -m riemannfm.cli.preprocess data=wikidata_5m_mini embedding=sbert
 
+# 2. Pretrain (small model, mini data)
+uv run python -m riemannfm.cli.pretrain \
+    model=rieformer_small \
+    data=wikidata_5m_mini \
+    training.max_steps=1000
+```
+
+Or via Makefile:
+
+```bash
+make pretrain ARGS="model=rieformer_small data=wikidata_5m_mini training.max_steps=1000"
+```
+
+### Full pretraining
+
+```bash
+uv run python -m riemannfm.cli.pretrain \
+    model=rieformer_base \
+    data=wikidata_5m \
+    manifold=product_h_s_e \
+    training=pretrain
+```
+
+### Key Hydra overrides
+
+| Override | Example | Description |
+|----------|---------|-------------|
+| `model=` | `rieformer_small`, `rieformer_base`, `rieformer_large` | Model size |
+| `data=` | `wikidata_5m_mini`, `wikidata_5m`, `fb15k237` | Dataset |
+| `manifold=` | `product_h_s_e`, `h_only`, `e_only` | Manifold composition |
+| `training.max_steps=` | `1000`, `500000` | Total training steps |
+| `training.lr=` | `1e-4` | Learning rate |
+| `training.mixed_precision=` | `bf16`, `fp16`, `null` | Mixed precision |
+| `~logger.wandb` | | Disable W&B (keep CSV only) |
+| `~logger.csv` | | Disable CSV (keep W&B only) |
+
+### Logging
+
+By default both W&B and CSV loggers are active. CSV logs are written to `outputs/<run_name>/csv_logs/` as a local fallback.
+
+```bash
+# W&B + CSV (default)
+make pretrain
+
+# Offline development (CSV only, no W&B)
+make pretrain ARGS="~logger.wandb"
+
+# W&B only
+make pretrain ARGS="~logger.csv"
+```
+
+### Downstream tasks (not yet implemented)
+
+```bash
 # Fine-tuning on FB15k-237
 uv run python -m riemannfm.cli.finetune data=fb15k237 training=finetune
 

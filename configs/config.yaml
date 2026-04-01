@@ -1,4 +1,5 @@
 defaults:
+  - paths: default
   - model: rieformer_base
   - manifold: product_h_s_e
   - flow: joint
@@ -7,6 +8,7 @@ defaults:
   - training: pretrain
   - task: kgc_lp
   - ablation: full
+  - accelerator: auto
   - eval: default
   - download: default
   - preprocess: default
@@ -15,6 +17,8 @@ defaults:
 seed: 42
 project_name: riemannfm
 run_name: ${now:%Y%m%d_%H%M%S}
-output_dir: outputs/${run_name}
-device: cuda
-num_gpus: 1
+device: ${accelerator.accelerator}
+
+# Loggers: "+" separated names from configs/logger/*.yaml
+# Examples: "wandb+csv", "csv", "wandb", "null"
+loggers: wandb+csv

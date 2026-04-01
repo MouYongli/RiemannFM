@@ -1,11 +1,11 @@
 slug: yago3_10
 dataset: kg_benchmark
 dataset_name: yago3-10
-data_dir: data/yago3_10
+data_dir: ${paths.data_dir}/yago3_10
 num_edge_types: 37
 max_nodes: 256
 num_workers: 4
 cross_domain: true
 text_source: wikipedia_mapping
 text_encoder: ${embedding.model_name}
-dim_text_emb: ${embedding.output_dim}
+dim_text_emb: 0

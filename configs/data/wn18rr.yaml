@@ -1,9 +1,9 @@
 slug: wn18rr
 dataset: kg_benchmark
-data_dir: data/wn18rr
+data_dir: ${paths.data_dir}/wn18rr
 num_edge_types: 12
 max_nodes: 256
 num_workers: 4
 text_source: wordnet_defs
 text_encoder: ${embedding.model_name}
-dim_text_emb: ${embedding.output_dim}
+dim_text_emb: 0

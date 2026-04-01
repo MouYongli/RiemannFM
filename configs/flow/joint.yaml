@@ -4,3 +4,4 @@ avg_edge_density: 0.05
 ode_method: euler
 ode_atol: 1.0e-5
 ode_rtol: 1.0e-5
+t_max: 0.999

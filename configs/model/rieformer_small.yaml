@@ -3,6 +3,8 @@ node_dim: 384
 edge_dim: 128
 num_heads: 6
 edge_heads: 2
+rel_emb_dim: 32
+d_c: 256
 text_dim: 0
 text_cross_attn_every: 999
 dropout: 0.1

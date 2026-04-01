@@ -1,11 +1,11 @@
 slug: codex_l
 dataset: kg_benchmark
 dataset_name: codex-l
-data_dir: data/codex_l
+data_dir: ${paths.data_dir}/codex_l
 num_edge_types: 69
 max_nodes: 256
 num_workers: 4
 cross_domain: true
 text_source: wikidata_description
 text_encoder: ${embedding.model_name}
-dim_text_emb: ${embedding.output_dim}
+dim_text_emb: 0

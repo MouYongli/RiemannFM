@@ -1,4 +1,7 @@
-epochs: 100
+# Use max_steps (not epochs) — subgraph sampling is an infinite data stream.
+max_steps: 500000
+val_check_interval: 10000
+
 batch_size: 64
 gradient_accumulation_steps: 4
 lr: 1.0e-4
@@ -12,6 +15,7 @@ mixed_precision: bf16
 lambda_disc: 1.0
 mu_align: 0.1
 temperature: 0.07
+w_max: 10.0
 
 # Optimization
 activation_checkpointing: true

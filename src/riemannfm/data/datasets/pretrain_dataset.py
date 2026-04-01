@@ -67,7 +67,7 @@ class RiemannFMKGDataset(Dataset[RiemannFMGraphData]):
         self.max_nodes = max_nodes
         self.max_hops = max_hops
         self.text_encoder = text_encoder
-        self.dim_text_emb = dim_text_emb
+        self.dim_text_emb = int(dim_text_emb)
 
         # Load data
         self.triples: Tensor = self._load_triples(split)
@@ -105,22 +105,52 @@ class RiemannFMKGDataset(Dataset[RiemannFMGraphData]):
         return triples
 
     def _load_text_embeddings(self) -> None:
-        """Load precomputed text embeddings for entities and relations."""
-        if not self.text_encoder or self.dim_text_emb <= 0:
+        """Load precomputed text embeddings for entities and relations.
+
+        If the expected file (matching text_encoder + dim_text_emb) is not
+        found, falls back to auto-detecting any embedding file on disk.
+        After loading, ``self.dim_text_emb`` is updated to the actual
+        dimension of the loaded tensors.
+        """
+        if not self.text_encoder:
             return
 
         key = encoder_slug(self.text_encoder)
         emb_dir = self.data_dir / "processed" / "text_embeddings"
 
-        entity_path = emb_dir / embedding_filename(key, self.dim_text_emb, prefix="entity")
-        if entity_path.exists():
+        # Try exact match first, then auto-detect.
+        entity_path = self._find_embedding_file(emb_dir, key, "entity")
+        if entity_path is not None:
             self.entity_emb = torch.load(entity_path, map_location="cpu", weights_only=True)
+            self.dim_text_emb = self.entity_emb.shape[-1]
             logger.info(f"  Loaded entity embeddings: {self.entity_emb.shape}")
 
-        relation_path = emb_dir / embedding_filename(key, self.dim_text_emb, prefix="relation")
-        if relation_path.exists():
+        relation_path = self._find_embedding_file(emb_dir, key, "relation")
+        if relation_path is not None:
             self.relation_emb = torch.load(relation_path, map_location="cpu", weights_only=True)
             logger.info(f"  Loaded relation embeddings: {self.relation_emb.shape}")
+
+    def _find_embedding_file(
+        self, emb_dir: Path, key: str, prefix: str,
+    ) -> Path | None:
+        """Find the embedding file, with fallback to auto-detection.
+
+        1. Try exact match: ``{prefix}_emb_{key}_{dim}.pt``
+        2. Fallback: glob ``{prefix}_emb_{key}_*.pt`` and pick the first match.
+        """
+        if self.dim_text_emb > 0:
+            exact = emb_dir / embedding_filename(key, self.dim_text_emb, prefix=prefix)
+            if exact.exists():
+                return exact
+
+        # Auto-detect: find any file matching the encoder key.
+        pattern = f"{prefix}_emb_{key}_*.pt"
+        matches = sorted(emb_dir.glob(pattern))
+        if matches:
+            logger.info(f"  Auto-detected embedding file: {matches[0].name}")
+            return matches[0]
+
+        return None
 
     @property
     def relation_text(self) -> Tensor:

@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+import torch
 from lightning import LightningDataModule
 from torch.utils.data import DataLoader
 
@@ -112,7 +113,10 @@ class RiemannFMDataModule(LightningDataModule):
 
     @property
     def dim_text_emb(self) -> int:
-        """Text embedding dimension d_c."""
+        """Text embedding dimension d_c (auto-detected from loaded data)."""
+        ds = self._train_dataset or self._val_dataset or self._test_dataset
+        if ds is not None:
+            return ds.dim_text_emb
         return int(self.cfg.data.get("dim_text_emb", 0))
 
     def _make_collator(self) -> RiemannFMGraphCollator:
@@ -129,7 +133,7 @@ class RiemannFMDataModule(LightningDataModule):
             shuffle=True,
             num_workers=self.cfg.data.get("num_workers", 4),
             collate_fn=self._make_collator(),
-            pin_memory=True,
+            pin_memory=torch.cuda.is_available(),
             drop_last=True,
             persistent_workers=self.cfg.data.get("num_workers", 4) > 0,
         )
@@ -142,7 +146,7 @@ class RiemannFMDataModule(LightningDataModule):
             shuffle=False,
             num_workers=self.cfg.data.get("num_workers", 4),
             collate_fn=self._make_collator(),
-            pin_memory=True,
+            pin_memory=torch.cuda.is_available(),
             persistent_workers=self.cfg.data.get("num_workers", 4) > 0,
         )
 
@@ -154,6 +158,6 @@ class RiemannFMDataModule(LightningDataModule):
             shuffle=False,
             num_workers=self.cfg.data.get("num_workers", 4),
             collate_fn=self._make_collator(),
-            pin_memory=True,
+            pin_memory=torch.cuda.is_available(),
             persistent_workers=self.cfg.data.get("num_workers", 4) > 0,
         )

@@ -1,11 +1,11 @@
 slug: wiki27k
 dataset: kg_benchmark
 dataset_name: wiki27k
-data_dir: data/wiki27k
+data_dir: ${paths.data_dir}/wiki27k
 num_edge_types: 214
 max_nodes: 256
 num_workers: 4
 cross_domain: true
 text_source: wikidata_description
 text_encoder: ${embedding.model_name}
-dim_text_emb: ${embedding.output_dim}
+dim_text_emb: 0
