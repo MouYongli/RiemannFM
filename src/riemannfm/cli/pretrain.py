@@ -3,12 +3,11 @@
 Launch pretraining with Hydra configuration:
     python -m riemannfm.cli.pretrain
     python -m riemannfm.cli.pretrain model=rieformer_small data=wikidata_5m_mini
-    make pretrain ARGS="model=rieformer_small data=wikidata_5m_mini"
 
 Logger selection (standard Hydra config group):
     python -m riemannfm.cli.pretrain logger=default      # wandb + csv (default)
-    python -m riemannfm.cli.pretrain logger=wandb_only    # wandb only
-    python -m riemannfm.cli.pretrain logger=csv_only      # csv only (offline)
+    python -m riemannfm.cli.pretrain logger=wandb    # wandb only
+    python -m riemannfm.cli.pretrain logger=csv      # csv only (offline)
     python -m riemannfm.cli.pretrain logger=none           # no logger
 """
 

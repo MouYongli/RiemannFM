@@ -28,7 +28,7 @@ uv run python -m riemannfm.cli.preprocess data=wikidata_5m embedding=nomic  # �
 
 ```bash
 # Smoke test (100 步, CSV 日志)
-uv run python -m riemannfm.cli.pretrain training.max_steps=100 training.batch_size=4 logger=csv_only
+uv run python -m riemannfm.cli.pretrain training.max_steps=100 training.batch_size=4 logger=csv
 
 # MVP (1000 步)
 uv run python -m riemannfm.cli.pretrain training.max_steps=1000 training.batch_size=8
@@ -48,8 +48,8 @@ uv run python -m riemannfm.cli.pretrain +experiment=ablation_architecture \
 
 ```bash
 uv run python -m riemannfm.cli.pretrain logger=default      # wandb + csv (默认)
-uv run python -m riemannfm.cli.pretrain logger=wandb_only    # 仅 wandb
-uv run python -m riemannfm.cli.pretrain logger=csv_only      # 仅 csv (离线)
+uv run python -m riemannfm.cli.pretrain logger=wandb    # 仅 wandb
+uv run python -m riemannfm.cli.pretrain logger=csv      # 仅 csv (离线)
 uv run python -m riemannfm.cli.pretrain logger=none           # 无日志
 ```
 

@@ -224,8 +224,8 @@ uv run python -m riemannfm.cli.pretrain model=rieformer_small data=wikidata_5m_m
 
 ```bash
 uv run python -m riemannfm.cli.pretrain logger=default      # wandb + csv (default)
-uv run python -m riemannfm.cli.pretrain logger=wandb_only    # wandb only
-uv run python -m riemannfm.cli.pretrain logger=csv_only      # csv only (offline)
+uv run python -m riemannfm.cli.pretrain logger=wandb    # wandb only
+uv run python -m riemannfm.cli.pretrain logger=csv      # csv only (offline)
 uv run python -m riemannfm.cli.pretrain logger=none           # no logger
 ```
 

@@ -108,7 +108,7 @@ uv run python -m riemannfm.cli.pretrain \
 | `training.max_steps=` | `1000`, `500000` | Total training steps |
 | `training.lr=` | `1e-4` | Learning rate |
 | `training.mixed_precision=` | `bf16`, `fp16`, `null` | Mixed precision |
-| `logger=` | `default`, `wandb_only`, `csv_only`, `none` | Logger selection |
+| `logger=` | `default`, `wandb`, `csv`, `none` | Logger selection |
 
 ### Logging
 
@@ -116,8 +116,8 @@ By default both W&B and CSV loggers are active (`logger=default`). CSV logs are 
 
 ```bash
 uv run python -m riemannfm.cli.pretrain logger=default      # W&B + CSV (default)
-uv run python -m riemannfm.cli.pretrain logger=csv_only      # CSV only (offline)
-uv run python -m riemannfm.cli.pretrain logger=wandb_only    # W&B only
+uv run python -m riemannfm.cli.pretrain logger=csv      # CSV only (offline)
+uv run python -m riemannfm.cli.pretrain logger=wandb    # W&B only
 uv run python -m riemannfm.cli.pretrain logger=none           # no logger
 ```
 

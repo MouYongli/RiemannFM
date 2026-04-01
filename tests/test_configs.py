@@ -52,7 +52,7 @@ CONFIG_GROUPS: dict[str, list[str]] = {
         "no_cross",
         "no_text_cond",
     ],
-    "logger": ["default", "wandb_only", "csv_only", "none"],
+    "logger": ["default", "wandb", "csv", "none"],
 }
 
 # Groups that must have _target_.
@@ -159,15 +159,15 @@ class TestLoggerGroup:
             cfg = compose(config_name="config", overrides=["logger=none"])
             assert len(cfg.logger) == 0
 
-    def test_wandb_only(self) -> None:
+    def test_wandb(self) -> None:
         with initialize_config_dir(config_dir=CONFIGS_DIR, version_base=None):
-            cfg = compose(config_name="config", overrides=["logger=wandb_only"])
+            cfg = compose(config_name="config", overrides=["logger=wandb"])
             assert "wandb" in cfg.logger
             assert "csv" not in cfg.logger
 
-    def test_csv_only(self) -> None:
+    def test_csv(self) -> None:
         with initialize_config_dir(config_dir=CONFIGS_DIR, version_base=None):
-            cfg = compose(config_name="config", overrides=["logger=csv_only"])
+            cfg = compose(config_name="config", overrides=["logger=csv"])
             assert "csv" in cfg.logger
             assert "wandb" not in cfg.logger
 
@@ -245,17 +245,9 @@ class TestExperimentConfigs:
                 assert cfg is not None, f"Experiment {exp} failed to compose"
 
 
-class TestNoOldLoggerConfig:
-    """Ensure old logger files are removed."""
+class TestLoggerFilesExist:
+    """Ensure all logger config files exist."""
 
-    def test_no_wandb_yaml(self) -> None:
-        assert not (Path(CONFIGS_DIR) / "logger" / "wandb.yaml").exists()
-
-    def test_no_csv_yaml(self) -> None:
-        assert not (Path(CONFIGS_DIR) / "logger" / "csv.yaml").exists()
-
-    def test_default_yaml_exists(self) -> None:
-        assert (Path(CONFIGS_DIR) / "logger" / "default.yaml").exists()
-
-    def test_none_yaml_exists(self) -> None:
-        assert (Path(CONFIGS_DIR) / "logger" / "none.yaml").exists()
+    @pytest.mark.parametrize("name", ["default", "wandb", "csv", "none"])
+    def test_logger_yaml_exists(self, name: str) -> None:
+        assert (Path(CONFIGS_DIR) / "logger" / f"{name}.yaml").exists()
