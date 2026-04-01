@@ -253,8 +253,8 @@ uv run python -m riemannfm.cli.preprocess data=wikidata_5m embedding=qwen3 \
 下载后自动运行验证。也可手动执行：
 
 ```bash
-uv run python -m riemannfm.data.validate data/wikidata_5m
-uv run python -m riemannfm.data.validate data/wikidata_5m_mini
+uv run python -m riemannfm.data.pipeline.validate data/wikidata_5m
+uv run python -m riemannfm.data.pipeline.validate data/wikidata_5m_mini
 ```
 
 检查项：

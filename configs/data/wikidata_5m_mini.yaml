@@ -1,11 +1,12 @@
 slug: wikidata_5m_mini
 dataset: wikidata
 data_dir: data/wikidata_5m_mini
-num_edge_types: 50
+num_entities: 7833
+num_edge_types: 822
 max_nodes: 64
 max_hops: 2
-max_text_length: 128
 num_workers: 4
-text_source: wikipedia
 text_encoder: ${embedding.model_name}
 dim_text_emb: ${embedding.output_dim}
+val_epoch_size: 500
+test_epoch_size: 500

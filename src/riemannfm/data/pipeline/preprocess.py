@@ -18,7 +18,7 @@ from pathlib import Path
 
 import torch
 
-from riemannfm.data.embed import (
+from riemannfm.data.pipeline.embed import (
     RiemannFMTextEmbedder,
     embedding_filename,
     encoder_slug,
@@ -257,7 +257,7 @@ def build_mini_wikidata_5m(
     Returns:
         Path to the mini dataset raw/ directory.
     """
-    from riemannfm.data.validate import validate_raw
+    from riemannfm.data.pipeline.validate import validate_raw
 
     source_raw = Path(source_dir) / "raw"
     output_raw = Path(output_dir) / "raw"
@@ -302,7 +302,7 @@ def build_mini_wikidata_5m(
     selected_set: set[tuple[str, str, str]] = set()
     entities: set[str] = set()
 
-    for rel, triples in rel_to_triples.items():
+    for _rel, triples in rel_to_triples.items():
         k = min(per_rel, len(triples))
         sampled = random.sample(triples, k)
         for triple in sampled:

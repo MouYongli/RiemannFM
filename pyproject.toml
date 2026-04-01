@@ -30,6 +30,7 @@ dependencies = [
     "nltk>=3.9.0",
     "openai>=1.0.0",
     "python-dotenv>=1.0.0",
+    "lightning>=2.4.0",
 ]
 
 [dependency-groups]

@@ -16,7 +16,7 @@ import logging
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
-from riemannfm.data.download import ALL_DATASETS, run_pipeline
+from riemannfm.data.pipeline.download import ALL_DATASETS, run_pipeline
 
 logger = logging.getLogger(__name__)
 

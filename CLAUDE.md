@@ -26,40 +26,44 @@ configs/                    # Hydra config groups (project root, not in src/)
 ├── model/                  #   rieformer_{small,base,large}
 ├── manifold/               #   product_h_s_e + 6 ablation variants
 ├── flow/                   #   joint, continuous_only, discrete_only
-├── text_encoder/           #   sbert, qwen3_embed, xlm_roberta, none
+├── embedding/              #   sbert, qwen3, xlm_roberta, nomic, none
 ├── data/                   #   wikidata_5m, fb15k237, wn18rr, codex_l, yago3_10, wiki27k
 ├── training/               #   pretrain, finetune
 ├── task/                   #   kgc_lp, kgc_rp, t2g, gad
 ├── ablation/               #   full + 7 architecture ablation flags
 ├── sweep/                  #   Optuna search spaces (pretrain, kgc, t2g, gad)
 ├── experiment/             #   Full experiment recipes (Hydra overrides)
+├── download/               #   default
+├── preprocess/             #   default
 └── eval/                   #   default
 
 src/riemannfm/
-├── manifolds/              # LAYER 0: Riemannian geometry
-│   ├── base.py, lorentz.py, spherical.py, euclidean.py
-│   ├── product.py          #   RiemannFMProductManifold (H×S×E, learnable κ)
-│   └── utils.py            #   safe_arccosh, lorentz_inner, clamp_norm
-├── flow/                   # LAYER 1: Flow matching
-│   ├── continuous_flow.py, discrete_flow.py, joint_flow.py
-│   ├── noise.py, solver.py, schedulers.py
-├── models/                 # LAYER 2: Neural networks (includes attention, normalization)
-│   ├── attention/          #   geodesic.py, edge.py, text_cross.py
-│   ├── normalization.py    #   ATH-Norm
-│   ├── positional.py       #   Manifold RoPE + timestep embedding
-│   ├── dual_stream.py, heads.py
-│   ├── rieformer_block.py  #   single RieFormer block
-│   ├── rieformer.py        #   RieFormer backbone
-│   ├── riemannfm.py        #   top-level model
-│   └── text_encoder.py     #   multi-backend (SBERT/Qwen3/XLM-R)
-├── tasks/                  # LAYER 3: Downstream tasks
-│   ├── kgc_lp.py           #   link prediction (same-domain + cross-domain)
-│   ├── kgc_rp.py, t2g.py, gad.py
-├── data/                   #   datasets/, transforms/, collator.py, graph_data.py
-├── losses/                 #   flow_matching, contrastive, combined
-├── optim/                  #   riemannian.py, scheduler.py
-├── utils/                  #   distributed, checkpoint, logging, seed, metrics/
-└── cli/                    #   pretrain, finetune, evaluate, generate, preprocess
+├── data/                   # Data loading and processing
+│   ├── graph.py            #   RiemannFMGraphData (universal 5-tuple container)
+│   ├── collator.py         #   Batch padding to N_max with virtual nodes
+│   ├── sampler.py          #   BFS subgraph sampling with multi-hot edges
+│   ├── datamodule.py       #   Lightning DataModule
+│   ├── datasets/           #   Dataset classes per task
+│   │   └── pretrain_dataset.py  # KG subgraph dataset (pretrain + KGC)
+│   └── pipeline/           #   Offline data preparation
+│       ├── download.py     #   Dataset download + text extraction
+│       ├── preprocess.py   #   ID mapping + text embedding precomputation
+│       ├── embed.py        #   Multi-backend text embedder (HF/Ollama/OpenAI)
+│       └── validate.py     #   Data validation
+├── manifolds/              # (placeholder) Riemannian geometry
+├── flow/                   # (placeholder) Flow matching
+├── models/                 # (placeholder) Neural networks
+├── losses/                 # (placeholder) Loss functions
+├── tasks/                  # (placeholder) Downstream tasks
+├── optim/                  # (placeholder) Riemannian optimization
+├── utils/                  # (placeholder) Utilities
+└── cli/                    # CLI entry points
+    ├── download.py         #   Dataset download
+    ├── preprocess.py       #   Data preprocessing
+    ├── pretrain.py         #   (placeholder) Pretraining
+    ├── finetune.py         #   (placeholder) Fine-tuning
+    ├── evaluate.py         #   (placeholder) Evaluation
+    └── generate.py         #   (placeholder) Graph generation
 ```
 
 ## Identity Rules (HIGHEST PRIORITY)

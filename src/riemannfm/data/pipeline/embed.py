@@ -24,19 +24,22 @@ _SLUG_MAP: dict[str, str] = {
     "sentence-transformers/all-MiniLM-L6-v2": "sbert",
     "xlm-roberta-large": "xlm_roberta",
     "qwen3-embedding": "qwen3",
-    "Alibaba-NLP/Qwen3-Embedding-8B": "qwen3",
+    "qwen3-embedding:8b": "qwen3",
+    "nomic-embed-text": "nomic",
 }
 
 _SLUG_TO_MODEL: dict[str, str] = {
     "sbert": "sentence-transformers/all-MiniLM-L6-v2",
     "xlm_roberta": "xlm-roberta-large",
     "qwen3": "qwen3-embedding",
+    "nomic": "nomic-embed-text",
 }
 
 ENCODER_DIMS: dict[str, int] = {
     "sbert": 384,
     "xlm_roberta": 1024,
     "qwen3": 4096,
+    "nomic": 768,
 }
 
 

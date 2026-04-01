@@ -647,7 +647,7 @@ def run_pipeline(
     extract_entity_texts(slug, data_dir, text_source, force=force)
     extract_relation_texts(slug, data_dir, force=force)
 
-    from riemannfm.data.validate import validate_raw
+    from riemannfm.data.pipeline.validate import validate_raw
 
     if not validate_raw(data_dir, slug=slug):
         raise RuntimeError(f"[{slug}] Validation failed — check logs above.")
