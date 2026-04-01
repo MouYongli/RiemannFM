@@ -1,8 +1,8 @@
 # @package _global_
 defaults:
-  - /data: yago3_10
-  - /training: finetune
-  - /task: kgc_lp
+  - override /data: yago3_10
+  - override /training: finetune
+  - override /task: kgc_lp
   - _self_
 
 seed: 42

@@ -1,6 +1,6 @@
 # @package _global_
 defaults:
-  - /task: gad
+  - override /task: gad
   - _self_
 
 seed: 42

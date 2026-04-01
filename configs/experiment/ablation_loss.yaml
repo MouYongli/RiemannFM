@@ -1,8 +1,8 @@
 # @package _global_
 defaults:
-  - /data: wikidata_5m
-  - /training: pretrain
-  - /task: kgc_lp
+  - override /data: wikidata_5m
+  - override /training: pretrain
+  - override /task: kgc_lp
   - _self_
 
 seed: 42

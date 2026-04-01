@@ -1,8 +1,8 @@
 # @package _global_
 defaults:
-  - /data: fb15k237
-  - /training: finetune
-  - /task: kgc_lp
+  - override /data: fb15k237
+  - override /training: finetune
+  - override /task: kgc_lp
   - _self_
 
 seed: 42
