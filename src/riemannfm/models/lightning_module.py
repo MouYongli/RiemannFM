@@ -63,6 +63,7 @@ class RiemannFMPretrainModule(L.LightningModule):
         max_steps: int = 500_000,
         max_grad_norm: float = 1.0,
         use_riemannian_optim: bool = True,
+        **kwargs: Any,
     ) -> None:
         super().__init__()
         self.save_hyperparameters(

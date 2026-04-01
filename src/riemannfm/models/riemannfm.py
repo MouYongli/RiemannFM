@@ -84,6 +84,7 @@ class RiemannFM(nn.Module):
         use_dual_stream_cross: bool = True,
         use_text_condition: bool = True,
         dropout: float = 0.1,
+        **kwargs: Any,
     ) -> None:
         super().__init__()
         self.manifold = manifold

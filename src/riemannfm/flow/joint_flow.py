@@ -76,6 +76,7 @@ class RiemannFMJointFlow:
         disable_discrete: bool = False,
         radius_h: float = 5.0,
         sigma_e: float = 1.0,
+        **kwargs: Any,
     ) -> None:
         self.manifold = manifold
         self.avg_edge_density = avg_edge_density
