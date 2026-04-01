@@ -27,16 +27,20 @@ uv run python -m riemannfm.cli.preprocess data=wikidata_5m embedding=qwen3  # �
 ## 4. 预训练
 
 ```bash
-# Smoke test (100 步, CSV 日志)
-uv run python -m riemannfm.cli.pretrain data=wikidata_5m_mini training.max_steps=100 training.batch_size=4 logger=csv
+# Smoke test (mini + nomic, 100 步, CSV 日志)
+uv run python -m riemannfm.cli.pretrain \
+    data=wikidata_5m_mini embedding=nomic \
+    training.max_steps=100 training.batch_size=4 logger=csv
 
-# MVP (1000 步)
-uv run python -m riemannfm.cli.pretrain training.max_steps=1000 training.batch_size=8
+# MVP (mini + nomic, 1000 步)
+uv run python -m riemannfm.cli.pretrain \
+    data=wikidata_5m_mini embedding=nomic \
+    training.max_steps=1000 training.batch_size=8
 
-# 超参搜索
+# 超参搜索 (默认 qwen3)
 uv run python -m riemannfm.cli.pretrain +experiment=pretrain_search --multirun
 
-# 完整预训练
+# 完整预训练 (默认 wikidata_5m + qwen3)
 uv run python -m riemannfm.cli.pretrain +experiment=pretrain_wiki5m
 
 # 消融
