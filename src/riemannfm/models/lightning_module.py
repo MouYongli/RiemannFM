@@ -188,7 +188,7 @@ class RiemannFMPretrainModule(L.LightningModule):
             P_hat=P_hat,
             E_1=sample.E_1,
             node_mask=node_mask,
-            h=h,
+            x_1=x_1,
             node_text=node_text,
         )
 
@@ -353,6 +353,8 @@ class RiemannFMPretrainModule(L.LightningModule):
             avg_edge_density=getattr(flow_cfg, "avg_edge_density", 0.05),
             w_max=getattr(training_cfg, "w_max", 10.0),
             temperature=training_cfg.temperature,
+            input_text_dim=input_text_dim,
+            d_a=int(getattr(model_cfg, "d_c", 256)),
         )
 
         return cls(

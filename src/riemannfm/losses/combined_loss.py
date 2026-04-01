@@ -25,6 +25,11 @@ class RiemannFMCombinedLoss(nn.Module):
 
     L_total = L_cont + lambda_disc * L_disc + mu_align * L_align
 
+    Contains learnable projection layers for the contrastive alignment
+    loss (Definition 6.9):
+      - proj_g: R^D -> R^{d_a}  (manifold ambient coords -> alignment space)
+      - proj_c: R^{d_c} -> R^{d_a}  (text embeddings -> alignment space)
+
     Args:
         manifold: Product manifold for tangent norm in L_cont.
         lambda_disc: Weight for discrete flow loss.
@@ -32,6 +37,8 @@ class RiemannFMCombinedLoss(nn.Module):
         avg_edge_density: Edge density for L_disc class weights.
         w_max: Maximum positive class weight for L_disc.
         temperature: InfoNCE temperature for L_align.
+        input_text_dim: Raw text embedding dimension d_c (0 to disable alignment).
+        d_a: Alignment space dimension for projection layers.
     """
 
     def __init__(
@@ -42,6 +49,8 @@ class RiemannFMCombinedLoss(nn.Module):
         avg_edge_density: float = 0.05,
         w_max: float = 10.0,
         temperature: float = 0.07,
+        input_text_dim: int = 0,
+        d_a: int = 256,
     ) -> None:
         super().__init__()
         self.manifold = manifold
@@ -51,19 +60,24 @@ class RiemannFMCombinedLoss(nn.Module):
         self.w_max = w_max
         self.temperature = temperature
 
-    @classmethod
-    def from_config(
-        cls, cfg: Any, manifold: RiemannFMProductManifold,
-    ) -> RiemannFMCombinedLoss:
-        """Construct from Hydra training config."""
-        return cls(
-            manifold=manifold,
-            lambda_disc=getattr(cfg, "lambda_disc", 1.0),
-            mu_align=getattr(cfg, "mu_align", 0.1),
-            avg_edge_density=getattr(cfg, "avg_edge_density", 0.05),
-            w_max=getattr(cfg, "w_max", 10.0),
-            temperature=getattr(cfg, "temperature", 0.07),
-        )
+        # Projection layers for L_align (Def 6.9):
+        #   g_i = proj_g(pi(x_{1,i}))
+        #   c_i = proj_c(text_emb_i)
+        if mu_align > 0 and input_text_dim > 0:
+            D = manifold.ambient_dim
+            self.proj_g = nn.Sequential(
+                nn.Linear(D, d_a),
+                nn.GELU(),
+                nn.Linear(d_a, d_a),
+            )
+            self.proj_c = nn.Sequential(
+                nn.Linear(input_text_dim, d_a),
+                nn.GELU(),
+                nn.Linear(d_a, d_a),
+            )
+        else:
+            self.proj_g = None
+            self.proj_c = None
 
     def forward(
         self,
@@ -73,7 +87,7 @@ class RiemannFMCombinedLoss(nn.Module):
         P_hat: Tensor,
         E_1: Tensor,
         node_mask: Tensor,
-        h: Tensor | None = None,
+        x_1: Tensor | None = None,
         node_text: Tensor | None = None,
     ) -> tuple[Tensor, dict[str, Tensor]]:
         """Compute combined loss.
@@ -85,9 +99,9 @@ class RiemannFMCombinedLoss(nn.Module):
             P_hat: Predicted edge logits, shape ``(B, N, N, K)``.
             E_1: Target edge types, shape ``(B, N, N, K)``.
             node_mask: Bool mask, shape ``(B, N)``.
-            h: Node hidden states for L_align, shape ``(B, N, d)``.
+            x_1: Data-end manifold coordinates for L_align, shape ``(B, N, D)``.
                 None to skip L_align.
-            node_text: Text embeddings for L_align, shape ``(B, N, d_c)``.
+            node_text: Raw text embeddings for L_align, shape ``(B, N, d_c)``.
                 None to skip L_align.
 
         Returns:
@@ -106,15 +120,18 @@ class RiemannFMCombinedLoss(nn.Module):
             w_max=self.w_max,
         )
 
-        # L_align: contrastive alignment loss.
+        # L_align: contrastive alignment loss (Def 6.9).
         if (
             self.mu_align > 0
-            and h is not None
+            and self.proj_g is not None
+            and x_1 is not None
             and node_text is not None
             and node_text.shape[-1] > 0
         ):
+            g = self.proj_g(x_1)         # (B, N, d_a)
+            c = self.proj_c(node_text)    # (B, N, d_a)
             l_align = contrastive_alignment_loss(
-                h, node_text, node_mask,
+                g, c, node_mask,
                 temperature=self.temperature,
             )
         else:

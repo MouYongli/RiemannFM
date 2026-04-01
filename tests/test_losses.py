@@ -114,30 +114,40 @@ class TestDiscreteFlowLoss:
 
 class TestContrastiveLoss:
     def test_with_text(self) -> None:
-        d = 32
-        h = torch.randn(B, N, d)
-        node_text = torch.randn(B, N, d)
+        d_a = 32
+        g = torch.randn(B, N, d_a)
+        c = torch.randn(B, N, d_a)
         mask = torch.ones(B, N, dtype=torch.bool)
-        loss = contrastive_alignment_loss(h, node_text, mask)
+        loss = contrastive_alignment_loss(g, c, mask)
         assert torch.isfinite(loss)
         assert loss >= 0
 
     def test_zero_when_no_text(self) -> None:
-        d = 32
-        h = torch.randn(B, N, d)
-        node_text = torch.zeros(B, N, 0)  # d_c = 0
+        g = torch.randn(B, N, 0)
+        c = torch.zeros(B, N, 0)  # d_a = 0
         mask = torch.ones(B, N, dtype=torch.bool)
-        loss = contrastive_alignment_loss(h, node_text, mask)
+        loss = contrastive_alignment_loss(g, c, mask)
         assert loss == 0.0
 
     def test_gradient_flow(self) -> None:
-        d = 32
-        h = torch.randn(B, N, d, requires_grad=True)
-        node_text = torch.randn(B, N, d)
+        d_a = 32
+        g = torch.randn(B, N, d_a, requires_grad=True)
+        c = torch.randn(B, N, d_a, requires_grad=True)
         mask = torch.ones(B, N, dtype=torch.bool)
-        loss = contrastive_alignment_loss(h, node_text, mask)
+        loss = contrastive_alignment_loss(g, c, mask)
         loss.backward()
-        assert h.grad is not None
+        assert g.grad is not None
+        assert c.grad is not None
+
+    def test_fewer_than_two_valid(self) -> None:
+        d_a = 32
+        g = torch.randn(B, N, d_a)
+        c = torch.randn(B, N, d_a)
+        # Only 1 valid node across all batches.
+        mask = torch.zeros(B, N, dtype=torch.bool)
+        mask[0, 0] = True
+        loss = contrastive_alignment_loss(g, c, mask)
+        assert loss == 0.0
 
 
 class TestCombinedLoss:
@@ -170,22 +180,57 @@ class TestCombinedLoss:
         E_1 = torch.randint(0, 2, (B, N, N, K)).float()
         mask = torch.ones(B, N, dtype=torch.bool)
 
-        # No text → L_align = 0.
+        # No x_1 or text → L_align = 0.
         _total, metrics = loss_fn(V_hat, u_t, x_t, P_hat, E_1, mask)
         assert metrics["loss/align"] == 0.0
+
+    def test_with_alignment(self) -> None:
+        manifold = _make_manifold()
+        D = manifold.ambient_dim
+        d_c = 16
+        d_a = 8
+        loss_fn = RiemannFMCombinedLoss(
+            manifold, mu_align=0.1, input_text_dim=d_c, d_a=d_a,
+        )
+        x_t = manifold.sample_noise(B, N, radius_h=1.0)
+        x_1 = manifold.sample_noise(B, N, radius_h=1.0)
+        V_hat = torch.randn(B, N, D)
+        u_t = torch.randn(B, N, D)
+        P_hat = torch.randn(B, N, N, K)
+        E_1 = torch.randint(0, 2, (B, N, N, K)).float()
+        node_text = torch.randn(B, N, d_c)
+        mask = torch.ones(B, N, dtype=torch.bool)
+
+        total, metrics = loss_fn(
+            V_hat, u_t, x_t, P_hat, E_1, mask,
+            x_1=x_1, node_text=node_text,
+        )
+        assert torch.isfinite(total)
+        assert metrics["loss/align"] > 0.0
 
     def test_gradient_backward(self) -> None:
         manifold = _make_manifold()
         D = manifold.ambient_dim
-        loss_fn = RiemannFMCombinedLoss(manifold)
+        d_c = 16
+        loss_fn = RiemannFMCombinedLoss(
+            manifold, mu_align=0.1, input_text_dim=d_c, d_a=8,
+        )
         x_t = manifold.sample_noise(B, N, radius_h=1.0)
+        x_1 = manifold.sample_noise(B, N, radius_h=1.0)
         V_hat = torch.randn(B, N, D, requires_grad=True)
         u_t = torch.randn(B, N, D)
         P_hat = torch.randn(B, N, N, K, requires_grad=True)
         E_1 = torch.randint(0, 2, (B, N, N, K)).float()
+        node_text = torch.randn(B, N, d_c)
         mask = torch.ones(B, N, dtype=torch.bool)
 
-        total, _ = loss_fn(V_hat, u_t, x_t, P_hat, E_1, mask)
+        total, _ = loss_fn(
+            V_hat, u_t, x_t, P_hat, E_1, mask,
+            x_1=x_1, node_text=node_text,
+        )
         total.backward()
         assert V_hat.grad is not None
         assert P_hat.grad is not None
+        # Projection layers should also have gradients.
+        assert loss_fn.proj_g[0].weight.grad is not None
+        assert loss_fn.proj_c[0].weight.grad is not None

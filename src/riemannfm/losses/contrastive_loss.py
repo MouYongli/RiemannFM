@@ -1,7 +1,7 @@
 """Graph-text contrastive alignment loss L_align (Def 6.9-6.10).
 
-Node-level InfoNCE contrastive loss between graph-derived node features
-and text condition embeddings.
+Node-level symmetric InfoNCE between projected manifold coordinates
+and projected text embeddings.
 """
 
 from __future__ import annotations
@@ -12,65 +12,61 @@ from torch import Tensor
 
 
 def contrastive_alignment_loss(
-    h: Tensor,
-    node_text: Tensor,
+    g: Tensor,
+    c: Tensor,
     node_mask: Tensor,
     temperature: float = 0.07,
 ) -> Tensor:
     """Graph-text contrastive alignment loss L_align (Def 6.9-6.10).
 
-    InfoNCE between node hidden states and text embeddings:
-        L_align = -log( exp(sim(h_i, c_i)/tau) / sum_j exp(sim(h_i, c_j)/tau) )
+    Symmetric InfoNCE between projected graph features and projected
+    text embeddings (both already in the shared alignment space d_a):
 
-    Only computed over real nodes (m_i = 1) with non-zero text embeddings.
+        L_align = 1/2 (L_{g->c} + L_{c->g})
+        L_{g->c} = -1/|B| sum_i log[ exp(sim(g_i, c_i)/tau) /
+                                       sum_j exp(sim(g_i, c_j)/tau) ]
 
     Args:
-        h: Node hidden states (graph-derived), shape ``(B, N, d)``.
-        node_text: Text condition embeddings, shape ``(B, N, d_c)``.
+        g: Projected graph features, shape ``(B, N, d_a)``.
+        c: Projected text embeddings, shape ``(B, N, d_a)``.
         node_mask: Bool mask, shape ``(B, N)``.
         temperature: InfoNCE temperature tau.
 
     Returns:
-        Scalar contrastive loss.  Returns 0 if no valid nodes.
+        Scalar contrastive loss.  Returns 0 if fewer than 2 valid nodes.
     """
-    # Flatten batch and node dims: (B*N, d).
-    B, N, d = h.shape
-    d_c = node_text.shape[-1]
+    d_a = g.shape[-1]
 
-    if d_c == 0:
-        return torch.tensor(0.0, device=h.device, dtype=h.dtype)
+    if d_a == 0:
+        return torch.tensor(0.0, device=g.device, dtype=g.dtype)
 
-    mask_flat = node_mask.reshape(-1)  # (B*N,)
+    # Flatten batch and node dims: (B*N,).
+    mask_flat = node_mask.reshape(-1)
     valid_idx = mask_flat.nonzero(as_tuple=True)[0]
 
     if valid_idx.numel() < 2:
-        return torch.tensor(0.0, device=h.device, dtype=h.dtype)
+        return torch.tensor(0.0, device=g.device, dtype=g.dtype)
 
-    # Gather valid node features and text embeddings.
-    h_flat = h.reshape(B * N, d)
-    t_flat = node_text.reshape(B * N, d_c)
-
-    h_valid = h_flat[valid_idx]  # (M, d)
-    t_valid = t_flat[valid_idx]  # (M, d_c)
+    B, N, _ = g.shape
+    g_valid = g.reshape(B * N, d_a)[valid_idx]  # (M, d_a)
+    c_valid = c.reshape(B * N, d_a)[valid_idx]  # (M, d_a)
 
     # Skip if text embeddings are all zero.
-    if t_valid.norm(dim=-1).max() < 1e-8:
-        return torch.tensor(0.0, device=h.device, dtype=h.dtype)
+    if c_valid.norm(dim=-1).max() < 1e-8:
+        return torch.tensor(0.0, device=g.device, dtype=g.dtype)
 
-    # Project to same dimension if needed (use simple linear projection).
-    # For MVP, assume d == d_c or use dot product on min(d, d_c).
-    min_dim = min(d, d_c)
-    h_proj = F.normalize(h_valid[:, :min_dim], dim=-1)
-    t_proj = F.normalize(t_valid[:, :min_dim], dim=-1)
+    # L2 normalize for cosine similarity.
+    g_norm = F.normalize(g_valid, dim=-1)
+    c_norm = F.normalize(c_valid, dim=-1)
 
     # Cosine similarity matrix: (M, M).
-    logits = h_proj @ t_proj.T / temperature
+    logits = g_norm @ c_norm.T / temperature
 
     # Labels: diagonal (each node matches its own text).
     labels = torch.arange(logits.shape[0], device=logits.device)
 
     # Symmetric InfoNCE.
-    loss_h2t = F.cross_entropy(logits, labels)
-    loss_t2h = F.cross_entropy(logits.T, labels)
+    loss_g2c = F.cross_entropy(logits, labels)
+    loss_c2g = F.cross_entropy(logits.T, labels)
 
-    return (loss_h2t + loss_t2h) / 2
+    return (loss_g2c + loss_c2g) / 2
