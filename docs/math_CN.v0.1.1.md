@@ -176,8 +176,8 @@ $$\left(\mathbf{X} \in \mathcal{M}^N,\; \mathbf{E} \in \{0,1\}^{N \times N \time
 **定义 4.1（分量测地距离）。**
 
 - 双曲距离 $d_{\mathbb{H}}: \mathbb{H}^{d_h}_{\kappa_h} \times \mathbb{H}^{d_h}_{\kappa_h} \to \mathbb{R}_{\geq 0}$：
-$$d_{\mathbb{H}}(\mathbf{a}, \mathbf{b}) = \frac{1}{\sqrt{|\kappa_h|}} \operatorname{arccosh}\!\left(-\kappa_h \cdot \langle \mathbf{a}, \mathbf{b} \rangle_{\mathrm{L}}\right)$$
-其中 $-\kappa_h \cdot \langle \mathbf{a}, \mathbf{b} \rangle_{\mathrm{L}} \geq 1$ 对所有 $\mathbf{a}, \mathbf{b} \in \mathbb{H}^{d_h}_{\kappa_h}$ 成立。
+$$d_{\mathbb{H}}(\mathbf{a}, \mathbf{b}) = \frac{1}{\sqrt{|\kappa_h|}} \operatorname{arccosh}\!\left(\kappa_h \cdot \langle \mathbf{a}, \mathbf{b} \rangle_{\mathrm{L}}\right)$$
+其中 $\kappa_h \cdot \langle \mathbf{a}, \mathbf{b} \rangle_{\mathrm{L}} \geq 1$ 对所有 $\mathbf{a}, \mathbf{b} \in \mathbb{H}^{d_h}_{\kappa_h}$ 成立。
 
 - 球面距离 $d_{\mathbb{S}}: \mathbb{S}^{d_s}_{\kappa_s} \times \mathbb{S}^{d_s}_{\kappa_s} \to \mathbb{R}_{\geq 0}$：
 $$d_{\mathbb{S}}(\mathbf{a}, \mathbf{b}) = \frac{1}{\sqrt{\kappa_s}} \arccos\!\left(\kappa_s \cdot \mathbf{a}^\top \mathbf{b}\right)$$
