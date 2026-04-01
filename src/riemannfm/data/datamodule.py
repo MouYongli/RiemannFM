@@ -88,7 +88,6 @@ class RiemannFMDataModule(LightningDataModule):
             "max_nodes": self.max_nodes,
             "max_hops": self.max_hops,
             "text_encoder": self.text_encoder,
-            "dim_text_emb": self._dim_text_emb,
         }
 
         if stage in ("fit", None):

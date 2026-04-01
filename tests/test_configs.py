@@ -220,7 +220,6 @@ class TestDataParamsComplete:
                 "max_nodes",
                 "max_hops",
                 "num_workers",
-                "dim_text_emb",
                 "num_entities",
             ]:
                 assert field in cfg.data, f"data/{variant} missing {field}"

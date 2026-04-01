@@ -5,7 +5,7 @@ L_total = L_cont + lambda_disc * L_disc + mu_align * L_align
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import torch
 from torch import Tensor, nn

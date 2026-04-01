@@ -172,7 +172,7 @@ class RiemannFMPretrainModule(L.LightningModule):
             sample.t = t_override
 
         # 3. Forward pass through model.
-        V_hat, P_hat, h = self.model(
+        V_hat, P_hat, _h = self.model(
             x_t=sample.x_t,
             E_t=sample.E_t,
             t=sample.t,
