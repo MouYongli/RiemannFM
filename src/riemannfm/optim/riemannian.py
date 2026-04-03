@@ -73,7 +73,8 @@ def build_optimizer(
     if use_riemannian_optim:
         import geoopt
 
-        return geoopt.optim.RiemannianAdam(param_groups)
+        optimizer: torch.optim.Optimizer = geoopt.optim.RiemannianAdam(param_groups)
+        return optimizer
 
     return torch.optim.AdamW(param_groups)
 

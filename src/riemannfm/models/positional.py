@@ -53,6 +53,8 @@ class RiemannFMTimeEmbedding(nn.Module):
         """
         t = t.view(-1, 1)  # (B, 1)
         # (B, half) for sin and cos
-        angles = t * self.freq  # broadcast: (B, 1) * (half,) -> (B, half)
+        freq: Tensor = self.freq  # type: ignore[assignment]
+        angles = t * freq  # broadcast: (B, 1) * (half,) -> (B, half)
         sinusoidal = torch.cat([angles.sin(), angles.cos()], dim=-1)  # (B, dim)
-        return self.mlp(sinusoidal)
+        result: Tensor = self.mlp(sinusoidal)
+        return result

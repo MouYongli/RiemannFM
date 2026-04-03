@@ -64,7 +64,8 @@ class RiemannFMATHNorm(nn.Module):
         gamma = gamma.unsqueeze(1)  # (B, 1, dim)
         beta = beta.unsqueeze(1)  # (B, 1, dim)
 
-        return gamma * x_norm + beta
+        result: Tensor = gamma * x_norm + beta
+        return result
 
 
 class RiemannFMPreNorm(nn.Module):
@@ -94,4 +95,5 @@ class RiemannFMPreNorm(nn.Module):
         Returns:
             Normalized features, shape ``(B, N, dim)``.
         """
-        return self.norm(x)
+        result: Tensor = self.norm(x)
+        return result

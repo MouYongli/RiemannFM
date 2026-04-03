@@ -63,6 +63,8 @@ class RiemannFMCombinedLoss(nn.Module):
         # Projection layers for L_align (Def 6.9):
         #   g_i = proj_g(pi(x_{1,i}))
         #   c_i = proj_c(text_emb_i)
+        self.proj_g: nn.Sequential | None
+        self.proj_c: nn.Sequential | None
         if mu_align > 0 and input_text_dim > 0:
             D = manifold.ambient_dim
             self.proj_g = nn.Sequential(
@@ -124,6 +126,7 @@ class RiemannFMCombinedLoss(nn.Module):
         if (
             self.mu_align > 0
             and self.proj_g is not None
+            and self.proj_c is not None
             and x_1 is not None
             and node_text is not None
             and node_text.shape[-1] > 0

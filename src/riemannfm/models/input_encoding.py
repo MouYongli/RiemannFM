@@ -72,7 +72,7 @@ class RiemannFMNodeEncoder(nn.Module):
             features.insert(1, node_text)
         cat = torch.cat(features, dim=-1)  # (B, N, D + d_c + 1)
 
-        h = self.mlp(cat)  # (B, N, node_dim)
+        h: Tensor = self.mlp(cat)  # (B, N, node_dim)
         # Add time conditioning (broadcast over N).
         h = h + self.time_proj(t_emb).unsqueeze(1)  # (B, N, node_dim)
         return h
@@ -142,4 +142,5 @@ class RiemannFMEdgeEncoder(nn.Module):
         else:
             edge_input = rel_feat
 
-        return self.mlp(edge_input)  # (B, N, N, edge_dim)
+        result: Tensor = self.mlp(edge_input)  # (B, N, N, edge_dim)
+        return result

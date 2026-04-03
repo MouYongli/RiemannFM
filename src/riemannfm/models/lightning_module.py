@@ -270,25 +270,29 @@ class RiemannFMPretrainModule(L.LightningModule):
         """
         project_curvatures(self.manifold)
 
-    def configure_optimizers(self) -> dict[str, Any]:
+    def configure_optimizers(self) -> dict[str, Any]:  # type: ignore[override]
         """Build optimizer with linear warmup + cosine annealing."""
+        lr: float = self.hparams["lr"]
+        curvature_lr: float = self.hparams["curvature_lr"]
+        weight_decay: float = self.hparams["weight_decay"]
+        use_riemannian_optim: bool = self.hparams["use_riemannian_optim"]
+        warmup: int = self.hparams["warmup_steps"]
+        total_steps: int = self.hparams["max_steps"]
+
         optimizer = build_optimizer(
             model=self,
             manifold=self.manifold,
-            lr=self.hparams.lr,
-            curvature_lr=self.hparams.curvature_lr,
-            weight_decay=self.hparams.weight_decay,
-            use_riemannian_optim=self.hparams.use_riemannian_optim,
+            lr=lr,
+            curvature_lr=curvature_lr,
+            weight_decay=weight_decay,
+            use_riemannian_optim=use_riemannian_optim,
         )
-
-        warmup = self.hparams.warmup_steps
-        max_steps = self.hparams.max_steps
 
         def lr_lambda(step: int) -> float:
             if step < warmup:
                 return step / max(warmup, 1)
             # Cosine annealing after warmup.
-            progress = (step - warmup) / max(max_steps - warmup, 1)
+            progress = (step - warmup) / max(total_steps - warmup, 1)
             return 0.5 * (1.0 + math.cos(math.pi * progress))
 
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)

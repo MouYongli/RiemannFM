@@ -33,7 +33,8 @@ class RiemannFMEdgeBias(nn.Module):
             Per-head bias, shape ``(B, num_heads, N, N)``.
         """
         # (B, N, N, edge_dim) -> (B, N, N, H) -> (B, H, N, N)
-        return self.proj(g).permute(0, 3, 1, 2)
+        result: Tensor = self.proj(g).permute(0, 3, 1, 2)
+        return result
 
 
 class RiemannFMEdgeSelfUpdate(nn.Module):
@@ -96,4 +97,5 @@ class RiemannFMEdgeSelfUpdate(nn.Module):
 
         # Combine and update with residual.
         combined = torch.cat([h_head_ij, h_tail_ij, g], dim=-1)
-        return g + self.mlp(combined)
+        result: Tensor = g + self.mlp(combined)
+        return result

@@ -46,7 +46,8 @@ class RiemannFMFeedForward(nn.Module):
         )
 
     def forward(self, x: Tensor) -> Tensor:
-        return self.net(x)
+        result: Tensor = self.net(x)
+        return result
 
 
 class RiemannFMBlock(nn.Module):

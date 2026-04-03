@@ -122,7 +122,8 @@ class RiemannFMGeodesicAttention(nn.Module):
         # Weighted sum of values.
         out = torch.matmul(attn, V)  # (B, H, N, d_k)
         out = out.transpose(1, 2).contiguous().view(B, N, self.node_dim)
-        return self.W_o(out)
+        result: Tensor = self.W_o(out)
+        return result
 
     def _reshape_heads(self, x: Tensor) -> Tensor:
         """Reshape (B, N, D) -> (B, H, N, d_k)."""

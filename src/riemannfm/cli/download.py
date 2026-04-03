@@ -65,6 +65,8 @@ def _load_data_config(slug: str) -> dict | None:
     for yaml_file in config_dir.glob("*.yaml"):
         try:
             data_cfg = OmegaConf.load(yaml_file)
+            if not isinstance(data_cfg, DictConfig):
+                continue
             if data_cfg.get("slug") == slug:
                 return {
                     "data_dir": data_cfg.get("data_dir", f"data/{slug}"),

@@ -96,6 +96,7 @@ class RiemannFM(nn.Module):
         time_dim = node_dim
 
         # Text projection: input_text_dim -> d_c.
+        self.text_proj: nn.Linear | None
         if input_text_dim > 0 and self.d_c > 0:
             self.text_proj = nn.Linear(input_text_dim, self.d_c)
         else:
@@ -156,7 +157,8 @@ class RiemannFM(nn.Module):
             Returns zero-width tensor if no text projection.
         """
         if self.text_proj is not None and x.shape[-1] > 0:
-            return self.text_proj(x)
+            result: Tensor = self.text_proj(x)
+            return result
         return torch.zeros(
             *x.shape[:-1], self.d_c, device=x.device, dtype=x.dtype,
         )

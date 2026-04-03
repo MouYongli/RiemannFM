@@ -95,7 +95,8 @@ class RiemannFMEdgeHead(nn.Module):
             Edge logits P_hat (pre-sigmoid), shape ``(B, N, N, K)``.
             Apply sigmoid for probabilities.
         """
-        return self.mlp(g)  # (B, N, N, K)
+        result: Tensor = self.mlp(g)  # (B, N, N, K)
+        return result
 
 
 class RiemannFMDualStreamCross(nn.Module):
