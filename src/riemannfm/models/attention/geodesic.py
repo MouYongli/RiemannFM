@@ -19,14 +19,17 @@ if TYPE_CHECKING:
 
 
 class RiemannFMGeodesicAttention(nn.Module):
-    """Multi-head attention with geodesic kernel (Def 5.5-5.8).
+    """Multi-head attention with M-RoPE and geodesic kernel (Def 5.5-5.8).
 
     Attention logits:
-        A_{ij} = (Q_i K_j^T) / sqrt(d_k) + geodesic_kernel(x_i, x_j) + edge_bias_{ij}
+        A_{ij} = (R(theta_ij) Q_i)^T K_j / sqrt(d_k)
+                 + beta^(s) * kernel^(s)(x_i, x_j) + edge_bias_{ij}
 
-    The geodesic kernel uses per-component distances weighted by learnable
-    parameters (Def 5.7):
-        kernel(x_i, x_j) = sum_c alpha_c * exp(-d_c(x_i, x_j)^2 / (2 * sigma_c^2))
+    M-RoPE (Def 5.6): Rotates Q by pairwise manifold distance theta_{ij,l}
+    = omega_l * d_M(x_i, x_j), using block-diagonal 2x2 rotation matrices.
+
+    Geodesic kernel (Def 5.7) uses per-component geometry-aware kernels:
+        H: -d_H,  S: kappa_s * a^T b,  E: -||a-b||^2
 
     Args:
         node_dim: Node hidden dimension.
@@ -62,12 +65,18 @@ class RiemannFMGeodesicAttention(nn.Module):
         self.W_v = nn.Linear(node_dim, node_dim)
         self.W_o = nn.Linear(node_dim, node_dim)
 
+        # M-RoPE frequencies (Def 5.6): omega_l = 10000^{-2l/d_head}.
+        half = self.head_dim // 2
+        rope_freq = torch.exp(-math.log(10000.0) * torch.arange(half) / half)
+        self.register_buffer("rope_freq", rope_freq)
+
         # Geodesic kernel parameters (Def 5.7).
         if use_geodesic_kernel:
             num_comp = manifold.num_components
-            # Per-component learnable alpha and sigma.
-            self.alpha = nn.Parameter(torch.ones(num_heads, num_comp))
-            self.log_sigma = nn.Parameter(torch.zeros(num_heads, num_comp))
+            # Per-head per-component weights w_c^(s).
+            self.w_kernel = nn.Parameter(torch.ones(num_heads, num_comp))
+            # Per-head scaling coefficient beta^(s) (Def 5.8).
+            self.beta = nn.Parameter(torch.ones(num_heads))
 
         self.attn_dropout = nn.Dropout(dropout)
 
@@ -98,13 +107,36 @@ class RiemannFMGeodesicAttention(nn.Module):
         K = self._reshape_heads(self.W_k(h))
         V = self._reshape_heads(self.W_v(h))
 
-        # Standard dot-product attention logits.
-        attn = torch.matmul(Q, K.transpose(-2, -1)) * self.scale  # (B, H, N, N)
+        # M-RoPE attention logits (Def 5.6 / 5.8).
+        # Compute pairwise product-manifold distances for RoPE angles.
+        x_f32 = x.float()
+        with torch.amp.autocast(device_type=x.device.type, enabled=False):
+            x_i_rope = x_f32.unsqueeze(2).expand(B, N, N, -1).reshape(B * N * N, -1)
+            x_j_rope = x_f32.unsqueeze(1).expand(B, N, N, -1).reshape(B * N * N, -1)
+            dist = self.manifold.dist(x_i_rope, x_j_rope).view(B, N, N)
 
-        # Geodesic distance kernel (Def 5.7).
+        # theta_{ij,l} = omega_l * d_M(x_i, x_j)  — (B, N, N, half)
+        theta = dist.unsqueeze(-1) * self.rope_freq  # type: ignore[arg-type]
+        cos_t = theta.cos().unsqueeze(1)  # (B, 1, N, N, half)
+        sin_t = theta.sin().unsqueeze(1)  # (B, 1, N, N, half)
+
+        # Split Q, K into even/odd pairs for 2x2 rotation blocks.
+        q1, q2 = Q[..., 0::2], Q[..., 1::2]  # (B, H, N, half)
+        k1, k2 = K[..., 0::2], K[..., 1::2]
+
+        # Expanded rotary dot product:
+        # (R(theta_ij) q_i)^T k_j = cos(theta) * (q1·k1 + q2·k2)
+        #                          + sin(theta) * (q1·k2 - q2·k1)
+        qk_same = q1.unsqueeze(3) * k1.unsqueeze(2) + q2.unsqueeze(3) * k2.unsqueeze(2)
+        qk_cross = q1.unsqueeze(3) * k2.unsqueeze(2) - q2.unsqueeze(3) * k1.unsqueeze(2)
+        # (B, H, N, N, half) -> sum over half -> (B, H, N, N)
+        attn = (cos_t * qk_same + sin_t * qk_cross).sum(dim=-1) * self.scale
+
+        # Geodesic distance kernel (Def 5.7) with beta scaling (Def 5.8).
         if self.use_geodesic_kernel:
             geo_bias = self._geodesic_kernel(x)  # (B, H, N, N)
-            attn = attn + geo_bias
+            beta = self.beta[None, :, None, None]  # (1, H, 1, 1)
+            attn = attn + beta * geo_bias
 
         # Edge bias from edge encoder (Def 5.6).
         if edge_bias is not None:
@@ -133,7 +165,12 @@ class RiemannFMGeodesicAttention(nn.Module):
     def _geodesic_kernel(self, x: Tensor) -> Tensor:
         """Compute geodesic distance kernel bias (Def 5.7).
 
-        kernel_h(x_i, x_j) = sum_c alpha_{h,c} * exp(-d_c^2 / (2 * sigma_{h,c}^2))
+        Per-component kernel functions tailored to geometry:
+          - Hyperbolic: kappa_H(a, b) = -d_H(a, b)
+          - Spherical:  kappa_S(a, b) = kappa_s * a^T b
+          - Euclidean:  kappa_R(a, b) = -||a - b||^2
+
+        Weighted sum: kernel^(s) = sum_c w_c^(s) * kappa_c
 
         Args:
             x: Manifold coordinates, shape ``(B, N, D)``.
@@ -145,7 +182,7 @@ class RiemannFMGeodesicAttention(nn.Module):
         # Force float32 for manifold distance (arccosh/arccos unstable in fp16/bf16).
         x_f32 = x.float()
 
-        # Compute per-component pairwise distances.
+        # Compute pairwise flattened coordinates.
         x_i = x_f32.unsqueeze(2)  # (B, N, 1, D)
         x_j = x_f32.unsqueeze(1)  # (B, 1, N, D)
         x_i_flat = x_i.expand(B, N, N, -1).reshape(B * N * N, -1)
@@ -155,19 +192,26 @@ class RiemannFMGeodesicAttention(nn.Module):
             comp_dists = self.manifold.component_dists(
                 x_i_flat, x_j_flat,
             )  # dict[str, (B*N*N,)]
+            x_i_parts = self.manifold.split(x_i_flat)
+            x_j_parts = self.manifold.split(x_j_flat)
 
-        # Stack component distances: (B*N*N, num_comp).
-        dist_stack = torch.stack(list(comp_dists.values()), dim=-1)
-        dist_stack = dist_stack.view(B, N, N, -1)  # (B, N, N, C)
+        # Build per-component kernels (Def 5.7).
+        kernels: list[Tensor] = []
+        for name in self.manifold._component_names:
+            if name == "hyperbolic":
+                # kappa_H = -d_H(a, b)
+                kernels.append(-comp_dists[name])
+            elif name == "spherical":
+                # kappa_S = kappa_s * a^T b
+                ks = self.manifold.spherical.curvature  # type: ignore[union-attr]
+                kernels.append(ks * (x_i_parts[name] * x_j_parts[name]).sum(-1))
+            elif name == "euclidean":
+                # kappa_R = -||a - b||^2
+                kernels.append(-comp_dists[name].pow(2))
 
-        # Gaussian kernel: alpha * exp(-d^2 / (2*sigma^2)).
-        sigma = self.log_sigma.exp().clamp(min=1e-4)  # (H, C)
-        # Reshape for broadcast: (B, 1, N, N, C) vs (1, H, 1, 1, C).
-        d_sq = dist_stack.unsqueeze(1).pow(2)  # (B, 1, N, N, C)
-        alpha = self.alpha[None, :, None, None, :]  # (1, H, 1, 1, C)
-        sigma = sigma[None, :, None, None, :]  # (1, H, 1, 1, C)
-        kernel = alpha * torch.exp(
-            -d_sq / (2.0 * sigma.pow(2)),
-        )  # (B, H, N, N, C)
+        # Stack and reshape: (B*N*N, C) -> (B, N, N, C).
+        kernel_stack = torch.stack(kernels, dim=-1).view(B, N, N, -1)
 
-        return kernel.sum(dim=-1)  # (B, H, N, N)
+        # Per-head per-component weights: w_c^(s).
+        w = self.w_kernel[None, :, None, None, :]  # (1, H, 1, 1, C)
+        return (w * kernel_stack.unsqueeze(1)).sum(dim=-1)  # (B, H, N, N)
