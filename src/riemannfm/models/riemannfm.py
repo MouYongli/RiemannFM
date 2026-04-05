@@ -144,7 +144,7 @@ class RiemannFM(nn.Module):
 
         # Prediction heads.
         self.vf_head = RiemannFMVFHead(node_dim, ambient_dim, manifold)
-        self.edge_head = RiemannFMEdgeHead(edge_dim, num_edge_types)
+        self.edge_head = RiemannFMEdgeHead(edge_dim, num_edge_types, d_c=self.d_c)
 
     def _project_text(self, x: Tensor) -> Tensor:
         """Project raw text embeddings to internal d_c dimension.
@@ -205,7 +205,7 @@ class RiemannFM(nn.Module):
 
         # 4. Prediction heads.
         V_hat = self.vf_head(h, x_t)
-        P_hat = self.edge_head(g)
+        P_hat = self.edge_head(g, C_R_proj)
 
         return V_hat, P_hat, h
 
