@@ -116,7 +116,7 @@ class RiemannFMBlock(nn.Module):
         self.use_edge_self_update = use_edge_self_update
         if use_edge_self_update:
             self.edge_update = RiemannFMEdgeSelfUpdate(
-                node_dim, edge_dim, edge_heads, dropout=dropout,
+                edge_dim, dropout=dropout,
             )
 
         # [D] Cross-interaction.
@@ -170,9 +170,9 @@ class RiemannFMBlock(nn.Module):
         bias = self.edge_bias(g)  # (B, H, N, N)
         h = h + self.attn(self.norm1(h, t_emb, node_mask), x, bias, node_mask)
 
-        # [C] Edge self-update (already has residual connection inside).
+        # [C] Edge self-update via factorized attention (Def 5.11).
         if self.use_edge_self_update:
-            g = self.edge_norm(self.edge_update(h, g))
+            g = self.edge_norm(self.edge_update(g))
 
         # [D] Cross-interaction.
         if self.use_dual_stream_cross:
@@ -192,6 +192,8 @@ class RiemannFMBlock(nn.Module):
             h = h + h_text
 
         # Feed-forward with residual.
+        # NOTE: Deviation from Def 5.15 — adds FFN after text cross-attention.
+        # Standard Transformer practice for additional nonlinear capacity.
         h = h + self.ff_node(self.norm2(h, t_emb, node_mask))
         g = g + self.ff_edge(self.edge_norm(g))
 
