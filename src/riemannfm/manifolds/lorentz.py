@@ -10,6 +10,8 @@ where kappa_h < 0 and <.,.>_L is the Lorentz inner product.
 
 from __future__ import annotations
 
+import math
+
 import torch
 from torch import Tensor, nn
 
@@ -253,12 +255,51 @@ class LorentzManifold(RiemannFMManifold):
         v[..., 1:] = torch.randn(
             *batch_shape, self._dim, device=device, dtype=dtype, generator=generator
         )
-        # Scale to target radius (adjust norm so average geodesic dist ~ radius)
+        # Scale to target radius: uniform w.r.t. hyperbolic volume measure.
+        # Volume element: dV ∝ sinh^{d-1}(r) dr, so we need rejection sampling
+        # to correctly sample radii in d_h-dimensional hyperbolic space.
         v_norm = clamp_norm(lorentz_norm(v, keepdim=True))
-        # Sample radii uniformly in [0, radius] via sqrt for area-proportional
-        u = torch.rand(
-            *batch_shape, 1, device=device, dtype=dtype, generator=generator
+        target_norm = self._sample_hyperbolic_radius(
+            radius, batch_shape, device=device, dtype=dtype, generator=generator,
         )
-        target_norm = radius * u.sqrt()
         v = v * (target_norm / v_norm)
         return self.exp_map(o, v)
+
+    def _sample_hyperbolic_radius(
+        self,
+        radius: float,
+        batch_shape: tuple[int, ...],
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
+        generator: torch.Generator | None = None,
+    ) -> Tensor:
+        """Sample geodesic radii uniformly w.r.t. hyperbolic volume measure.
+
+        In d_h-dimensional hyperbolic space, dV ∝ sinh^{d-1}(r) dr.
+        Uses rejection sampling with proposal U[0, R].
+
+        Returns:
+            Sampled radii, shape ``(*batch_shape, 1)``.
+        """
+        d = self._dim  # intrinsic dimension
+        if d <= 1 or radius <= 0:
+            # 1D or degenerate: uniform is correct.
+            u = torch.rand(*batch_shape, 1, device=device, dtype=dtype, generator=generator)
+            return radius * u
+
+        max_sinh = math.sinh(radius)
+        max_density = max_sinh ** (d - 1)
+        accepted = torch.zeros(*batch_shape, 1, device=device, dtype=dtype)
+        remaining = torch.ones(*batch_shape, 1, device=device, dtype=torch.bool)
+
+        for _ in range(200):  # generous iteration cap
+            if not remaining.any():
+                break
+            r = torch.rand(*batch_shape, 1, device=device, dtype=dtype, generator=generator) * radius
+            density = torch.sinh(r).pow(d - 1)
+            accept_prob = density / max_density
+            accept = (torch.rand(*batch_shape, 1, device=device, dtype=dtype, generator=generator) < accept_prob) & remaining
+            accepted = torch.where(accept, r, accepted)
+            remaining = remaining & ~accept
+
+        return accepted
