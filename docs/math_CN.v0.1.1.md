@@ -274,27 +274,27 @@ $\theta$ 包含所有可学习参数，含曲率 $\kappa_h, \kappa_s$。
 $$\pi(\mathbf{x}) = [\mathbf{x}^{\mathbb{H}} \| \mathbf{x}^{\mathbb{S}} \| \mathbf{x}^{\mathbb{R}}]$$
 
 **定义 5.3（节点初始嵌入）。**
-$$\mathbf{h}_i^{V,(0)} = \mathrm{MLP}_{\mathrm{node}}\!\left([\pi(\mathbf{x}_{t,i}) \| \mathbf{c}_i \| m_i]\right) \in \mathbb{R}^{d_v}$$
-其中输入维度为 $D + d_c + 1$，$d_v$ 为节点隐藏维度。
+$$\mathbf{h}_i^{V,(0)} = \mathrm{MLP}_{\mathrm{node}}\!\left([\pi(\mathbf{x}_{t,i}) \| \mathbf{c}_i \| m_i]\right) + \mathbf{W}_{\mathrm{tp}}\,\mathbf{t}_{\mathrm{emb}} \in \mathbb{R}^{d_v}$$
+其中输入维度为 $D + d_c + 1$，$d_v$ 为节点隐藏维度，$\mathbf{W}_{\mathrm{tp}} \in \mathbb{R}^{d_v \times d_v}$ 为时间投影矩阵，$\mathbf{t}_{\mathrm{emb}}$ 为定义 5.5 的时间嵌入。此时间投影与 ATH-Norm（定义 5.9）的逐层时间条件互补：前者在输入层提供全局时间锚点，后者在每层自适应调节归一化参数。
 
 **定义 5.4（边初始嵌入）。**
 $$\mathbf{h}_{ij}^{E,(0)} = \mathrm{MLP}_{\mathrm{edge}}\!\left([\mathbf{E}_{t,ij}\mathbf{W}_{\mathrm{rel}} \| \mathbf{E}_{t,ij}\mathbf{C}_\mathcal{R}]\right) \in \mathbb{R}^{d_{e'}}$$
 其中 $\mathbf{W}_{\mathrm{rel}} \in \mathbb{R}^{K \times d_r}$ 为可学习关系嵌入矩阵，$\mathbf{E}_{t,ij}\mathbf{W}_{\mathrm{rel}} \in \mathbb{R}^{d_r}$ 为激活关系类型的嵌入之和，$\mathbf{E}_{t,ij}\mathbf{C}_\mathcal{R} \in \mathbb{R}^{d_c}$ 为激活关系类型的文本嵌入之和。输入维度为 $d_r + d_c$。
 
-**定义 5.5（时间嵌入）。** 设 $d_t \in \mathbb{Z}_{>0}$ 为偶数，正弦位置编码：
-$$\boldsymbol{\psi}(t) = [\sin(\omega_1 t),\, \cos(\omega_1 t),\, \ldots,\, \sin(\omega_{d_t/2} t),\, \cos(\omega_{d_t/2} t)] \in \mathbb{R}^{d_t}$$
-其中 $\omega_l = 10000^{-2l/d_t}$，$l \in [d_t/2]$。线性投影：
-$$\mathbf{t}_{\mathrm{emb}} = \mathbf{W}_t \boldsymbol{\psi}(t) + \mathbf{b}_t \in \mathbb{R}^{d_v}$$
-其中 $\mathbf{W}_t \in \mathbb{R}^{d_v \times d_t}$，$\mathbf{b}_t \in \mathbb{R}^{d_v}$。
+**定义 5.5（时间嵌入）。** 设 $d_t \in \mathbb{Z}_{>0}$ 为偶数，正弦位置编码采用块拼接形式：
+$$\boldsymbol{\psi}(t) = [\sin(\omega_1 t),\, \ldots,\, \sin(\omega_{d_t/2} t),\, \cos(\omega_1 t),\, \ldots,\, \cos(\omega_{d_t/2} t)] \in \mathbb{R}^{d_t}$$
+其中 $\omega_l = 10000^{-2l/d_t}$，$l \in [d_t/2]$。经两层 MLP 投影：
+$$\mathbf{t}_{\mathrm{emb}} = \mathbf{W}_2\,\sigma\!\left(\mathbf{W}_1 \boldsymbol{\psi}(t) + \mathbf{b}_1\right) + \mathbf{b}_2 \in \mathbb{R}^{d_t}$$
+其中 $\mathbf{W}_1 \in \mathbb{R}^{d_t \times d_t}$，$\mathbf{W}_2 \in \mathbb{R}^{d_t \times d_t}$，$\sigma(\cdot) = \mathrm{SiLU}$。两层 MLP 相比单层线性提供更丰富的时间条件表达能力。
 
 ### 5.3 RieFormer 块
 
 RieFormer 由 $L \in \mathbb{Z}_{>0}$ 个相同结构的块堆叠而成。第 $l$ 层（$l \in [L]$）接收节点嵌入 $\mathbf{H}^{V,(l-1)} \in \mathbb{R}^{N \times d_v}$ 和边嵌入 $\mathbf{H}^{E,(l-1)} \in \mathbb{R}^{N \times N \times d_{e'}}$，输出 $\mathbf{H}^{V,(l)} \in \mathbb{R}^{N \times d_v}$ 和 $\mathbf{H}^{E,(l)} \in \mathbb{R}^{N \times N \times d_{e'}}$。
 
-每个块按以下顺序执行五个子模块：
+每个块按以下顺序执行五个子模块（采用 Pre-Norm 风格，即归一化在子模块内部、变换之前执行）：
 
-- A. 流形感知多头注意力（Manifold RoPE + Geodesic Kernel）→ 更新节点嵌入
-- B. ATH-Norm → 归一化节点嵌入
+- A. ATH-Norm + 流形感知多头注意力（Manifold RoPE + Geodesic Kernel）→ 更新节点嵌入
+- B.（已合并入 A，见下述 Pre-Norm 说明）
 - C. 边流自更新 → 更新边嵌入
 - D. 双向交叉交互 → 节点与边嵌入互相注入
 - E. 文本条件注入 → 通过交叉注意力注入文本语义
@@ -320,8 +320,12 @@ $$\kappa^{(s)}(\mathbf{x}_{t,i}, \mathbf{x}_{t,j}) = w_{\mathbb{H}}^{(s)} \kappa
 
 $w_{\mathbb{H}}^{(s)}, w_{\mathbb{S}}^{(s)}, w_{\mathbb{R}}^{(s)} \in \mathbb{R}$ 为每头独立的可学习权重。
 
-**定义 5.8（流形感知注意力）。** 查询/键/值投影（$s \in [n_h]$）：
-$$\mathbf{q}_i^{(s)} = \mathbf{W}_Q^{(s)} \mathbf{h}_i^{V,(l-1)},\quad \mathbf{k}_j^{(s)} = \mathbf{W}_K^{(s)} \mathbf{h}_j^{V,(l-1)},\quad \mathbf{v}_j^{(s)} = \mathbf{W}_V^{(s)} \mathbf{h}_j^{V,(l-1)} \in \mathbb{R}^{d_{\mathrm{head}}}$$
+**定义 5.8（流形感知注意力，Pre-Norm 风格）。** 先对节点嵌入做 ATH-Norm（定义 5.9），再计算注意力：
+
+$$\bar{\mathbf{h}}_i^{V} = \mathrm{ATH\text{-}Norm}(\mathbf{h}_i^{V,(l-1)},\, \mathbf{t}_{\mathrm{emb}})$$
+
+查询/键/值投影（$s \in [n_h]$）作用于归一化后的嵌入：
+$$\mathbf{q}_i^{(s)} = \mathbf{W}_Q^{(s)} \bar{\mathbf{h}}_i^{V},\quad \mathbf{k}_j^{(s)} = \mathbf{W}_K^{(s)} \bar{\mathbf{h}}_j^{V},\quad \mathbf{v}_j^{(s)} = \mathbf{W}_V^{(s)} \bar{\mathbf{h}}_j^{V} \in \mathbb{R}^{d_{\mathrm{head}}}$$
 其中 $\mathbf{W}_Q^{(s)}, \mathbf{W}_K^{(s)}, \mathbf{W}_V^{(s)} \in \mathbb{R}^{d_{\mathrm{head}} \times d_v}$。
 
 注意力分数：
@@ -337,7 +341,7 @@ $$\mathbf{o}_i^{(s)} = \sum_{j=1}^N \alpha_{ij}^{(s)} \cdot \mathbf{v}_j^{(s)} \
 $$\mathrm{MHA}_i = \mathbf{W}_O [\mathbf{o}_i^{(1)} \| \cdots \| \mathbf{o}_i^{(n_h)}] \in \mathbb{R}^{d_v}$$
 其中 $\mathbf{W}_O \in \mathbb{R}^{d_v \times d_v}$。
 
-残差连接：$\tilde{\mathbf{h}}_i^V = \mathbf{h}_i^{V,(l-1)} + \mathrm{MHA}_i$。
+残差连接（跳过归一化前的原始嵌入）：$\tilde{\mathbf{h}}_i^V = \mathbf{h}_i^{V,(l-1)} + \mathrm{MHA}_i$。
 
 #### 5.3.3 子模块 C：边流自更新
 
@@ -384,9 +388,13 @@ $$\mathbf{q}_i^{\mathrm{text}} = \mathbf{W}_Q^{\mathrm{text}} \hat{\mathbf{h}}_i
 交叉注意力：
 $$\mathrm{CrossAttn}_i = \sum_{j=1}^N \mathrm{softmax}_j\!\left(\frac{\mathbf{q}_i^{\mathrm{text}\top} \mathbf{k}_j^{\mathrm{text}}}{\sqrt{d_v}}\right) \cdot \mathbf{v}_j^{\mathrm{text}}$$
 
-**定义 5.15（第 $l$ 层输出）。**
-- 节点：$\mathbf{h}_i^{V,(l)} = \mathrm{LN}(\hat{\mathbf{h}}_i^V + \mathrm{CrossAttn}_i)$
-- 边：$\mathbf{h}_{ij}^{E,(l)} = \hat{\mathbf{h}}_{ij}^E$
+**定义 5.15（第 $l$ 层输出）。** 文本交叉注意力残差后，分别经 ATH-Norm + FFN 残差得到最终输出：
+
+- 节点文本残差：$\mathbf{h}_i^{V,\mathrm{text}} = \hat{\mathbf{h}}_i^V + \mathrm{CrossAttn}_i$
+- 节点 FFN：$\mathbf{h}_i^{V,(l)} = \mathbf{h}_i^{V,\mathrm{text}} + \mathrm{FFN}_V\!\left(\mathrm{ATH\text{-}Norm}(\mathbf{h}_i^{V,\mathrm{text}},\, \mathbf{t}_{\mathrm{emb}})\right)$
+- 边 FFN：$\mathbf{h}_{ij}^{E,(l)} = \hat{\mathbf{h}}_{ij}^E + \mathrm{FFN}_E\!\left(\mathrm{LN}(\hat{\mathbf{h}}_{ij}^E)\right)$
+
+其中 $\mathrm{FFN}_V: \mathbb{R}^{d_v} \to \mathbb{R}^{d_v}$ 和 $\mathrm{FFN}_E: \mathbb{R}^{d_{e'}} \to \mathbb{R}^{d_{e'}}$ 均为两层 MLP（Linear → SiLU → Linear），采用 Pre-Norm 残差连接。
 
 ### 5.4 输出投影层
 
