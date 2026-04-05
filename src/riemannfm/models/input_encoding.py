@@ -45,6 +45,8 @@ class RiemannFMNodeEncoder(nn.Module):
             nn.Linear(node_dim, node_dim),
         )
         # Project time embedding to node_dim for additive conditioning.
+        # NOTE: Deviation from Def 5.3 — adds time conditioning in the encoder
+        # in addition to ATH-Norm per-layer injection (double time injection).
         self.time_proj = nn.Linear(time_dim, node_dim)
 
     def forward(

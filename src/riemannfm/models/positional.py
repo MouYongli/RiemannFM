@@ -20,6 +20,12 @@ class RiemannFMTimeEmbedding(nn.Module):
          with log-spaced frequencies w_k = 10000^{-2k/d}.
       2. Two-layer MLP: Linear(d, d) -> SiLU -> Linear(d, d).
 
+    NOTE: Deviations from Def 5.5:
+      - sin/cos are block-concatenated [sin..., cos...] instead of interleaved
+        [sin,cos,sin,cos,...].  Equivalent after the learnable linear layer.
+      - Two-layer MLP instead of single linear projection.  Standard practice
+        in diffusion/flow-matching models for richer time conditioning.
+
     Args:
         dim: Output embedding dimension (must be even for sinusoidal part).
     """
