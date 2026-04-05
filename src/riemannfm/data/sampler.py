@@ -131,6 +131,9 @@ class RiemannFMSubgraphSampler:
         This naturally supports multi-relational edges: if (i, r1, j) and
         (i, r2, j) both exist, then E[i,j,r1] = E[i,j,r2] = 1.
 
+        Uses the original directed triples (not the bidirectional BFS adjacency
+        list) to preserve edge directionality per Def 3.4.
+
         Args:
             node_list: Global entity IDs in the subgraph.
 
@@ -144,13 +147,10 @@ class RiemannFMSubgraphSampler:
 
         edge_types = torch.zeros(N, N, K, dtype=torch.float32)
 
-        # Iterate over adjacency of subgraph nodes (directed edges only)
-        for node in node_list:
-            local_h = node_to_local[node]
-            for neighbor, rel in self.adj[node]:
-                if neighbor in node_set:
-                    local_t = node_to_local[neighbor]
-                    if 0 <= rel < K:
-                        edge_types[local_h, local_t, rel] = 1.0
+        # Iterate over original directed triples to avoid pseudo-reverse edges.
+        for row in self._triples:
+            h, r, t = int(row[0]), int(row[1]), int(row[2])
+            if h in node_set and t in node_set and 0 <= r < K:
+                edge_types[node_to_local[h], node_to_local[t], r] = 1.0
 
         return edge_types
