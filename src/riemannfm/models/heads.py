@@ -219,8 +219,9 @@ class RiemannFMDualStreamCross(nn.Module):
         h_update = h + self.edge_to_node(node_agg)        # (B, N, node_dim)
 
         # Node-to-Edge: [h_i || h_j || h_i ⊙ h_j] (Def 5.13).
-        h_i = h.unsqueeze(2).expand(B, N, N, -1)          # (B, N, N, node_dim)
-        h_j = h.unsqueeze(1).expand(B, N, N, -1)          # (B, N, N, node_dim)
+        # Use h_update (post edge-to-node) per Def 5.13, not the original h.
+        h_i = h_update.unsqueeze(2).expand(B, N, N, -1)   # (B, N, N, node_dim)
+        h_j = h_update.unsqueeze(1).expand(B, N, N, -1)   # (B, N, N, node_dim)
         h_hadamard = h_i * h_j                             # (B, N, N, node_dim)
         node_pair = torch.cat([h_i, h_j, h_hadamard], dim=-1)  # (B, N, N, 3*node_dim)
         g_update = g + self.node_to_edge(node_pair)        # (B, N, N, edge_dim)
