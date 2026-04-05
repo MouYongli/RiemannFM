@@ -1,4 +1,4 @@
-# RiemannFM 预训练阶段实施计划
+# RiemannFM 实施计划
 
 ## 项目概况
 
@@ -22,7 +22,7 @@ RiemannFM 是一个深度图生成基础模型，在积黎曼流形 (H x S x E) 
 ## 当前目录结构
 
 ```
-configs/                        # 59 个 Hydra YAML 配置
+configs/                        # 70 个 Hydra YAML 配置
 ├── model/                      #   rieformer_{small,base,large}
 ├── manifold/                   #   product_h_s_e + 6 ablation variants
 ├── flow/                       #   joint, continuous_only, discrete_only
@@ -32,10 +32,16 @@ configs/                        # 59 个 Hydra YAML 配置
 ├── task/                       #   kgc_lp, kgc_rp, t2g, gad
 ├── ablation/                   #   8 architecture ablation configs
 ├── experiment/                 #   14 full experiment recipes
-└── sweep/                      #   4 Optuna search spaces
+├── sweep/                      #   4 Optuna search spaces
+├── accelerator/                #   gpu, cpu, mps, ddp, auto
+├── logger/                     #   wandb, csv
+├── paths/                      #   路径配置
+├── download/                   #   下载配置
+├── preprocess/                 #   预处理配置
+└── eval/                       #   评估配置
 
 src/riemannfm/
-├── data/                       # ✅ 已实现 (~1,900 LOC)
+├── data/                       # ✅ 已实现 (~2,280 LOC)
 │   ├── graph.py                #   RiemannFMGraphData (Def 3.4-3.8)
 │   ├── sampler.py              #   BFS 子图采样 + multi-hot E
 │   ├── collator.py             #   Batch padding to N_max
@@ -47,27 +53,58 @@ src/riemannfm/
 │       ├── preprocess.py       #   ID 映射 + mini 数据集构建
 │       ├── embed.py            #   多后端文本编码 (HF/Ollama/OpenAI)
 │       └── validate.py         #   数据完整性验证
-├── manifolds/                  # ⬜ placeholder
-├── flow/                       # ⬜ placeholder
-├── models/                     # ⬜ placeholder
-├── losses/                     # ⬜ placeholder
-├── optim/                      # ⬜ placeholder
+├── manifolds/                  # ✅ 已实现 (~1,303 LOC)
+│   ├── base.py                 #   抽象基类 RiemannFMManifold
+│   ├── lorentz.py              #   Lorentz 双曲模型 (Def 2.1)
+│   ├── spherical.py            #   球面流形 (Def 2.2)
+│   ├── euclidean.py            #   欧氏空间 (Def 2.3)
+│   ├── product.py              #   积流形 H x S x E (Def 2.4)
+│   └── utils.py                #   辅助函数 (clamp, atanh, etc.)
+├── flow/                       # ✅ 已实现 (~438 LOC)
+│   ├── continuous_flow.py      #   测地线插值 + 向量场目标 (Def 6.3, 6.5)
+│   ├── discrete_flow.py        #   离散插值 E_t (Def 6.4)
+│   ├── joint_flow.py           #   联合流匹配编排 (Algorithm 1)
+│   └── noise.py                #   连续/离散噪声采样 (Def 6.1, 6.2)
+├── models/                     # ✅ 已实现 (~1,690 LOC)
+│   ├── riemannfm.py            #   顶层模型: 文本投影 → 编码 → RieFormer → 预测头
+│   ├── rieformer.py            #   L 层 Transformer 骨干
+│   ├── rieformer_block.py      #   单 Transformer block (A-E 五模块)
+│   ├── input_encoding.py       #   节点/边输入编码 (Def 5.3-5.4)
+│   ├── positional.py           #   时间嵌入 (Def 5.2)
+│   ├── normalization.py        #   ATH-Norm (Def 5.9) + Pre-Norm
+│   ├── heads.py                #   VF Head (Def 5.16-5.17) + Edge Head (Def 5.18-5.19)
+│   ├── lightning_module.py     #   Lightning 训练模块 (Algorithm 1 封装)
+│   └── attention/
+│       ├── geodesic.py         #   M-RoPE + 测地核 (Def 5.5-5.8)
+│       └── edge.py             #   Edge Self-Update (Def 5.10-5.11)
+├── losses/                     # ✅ 已实现 (~330 LOC)
+│   ├── flow_matching_loss.py   #   L_cont (Def 6.6) + L_disc (Def 6.8)
+│   ├── contrastive_loss.py     #   L_align (Def 6.9-6.10) + MLP 投影层
+│   └── combined_loss.py        #   多任务加权: L_cont + λ·L_disc + μ·L_align
+├── optim/                      # ✅ 已实现 (~98 LOC)
+│   └── riemannian.py           #   双参数组 Riemannian Adam + 曲率投影
 ├── tasks/                      # ⬜ placeholder
-├── utils/                      # ⬜ placeholder
+├── utils/                      # ⬜ placeholder (metrics/ 子目录已创建)
 └── cli/
     ├── download.py             # ✅ 已实现
     ├── preprocess.py           # ✅ 已实现
-    ├── pretrain.py             # ⬜ placeholder
-    ├── finetune.py             # ⬜ placeholder
-    ├── evaluate.py             # ⬜ placeholder
-    └── generate.py             # ⬜ placeholder
+    ├── pretrain.py             # ✅ 已实现 (Hydra + wandb/CSV logging)
+    ├── finetune.py             # ⬜ stub (NotImplementedError)
+    ├── evaluate.py             # ⬜ stub (NotImplementedError)
+    └── generate.py             # ⬜ stub (NotImplementedError)
 
 tests/
-├── test_datamodule.py          # ✅ 15 个测试全部通过
-└── conftest.py
+├── conftest.py                 # 共享 fixtures
+├── test_datamodule.py          # ✅ 339 行, data 模块测试
+├── test_manifolds.py           # ✅ 499 行, 流形几何性质测试
+├── test_flow.py                # ✅ 282 行, 流匹配测试
+├── test_models.py              # ✅ 360 行, 模型 forward/gradient 测试
+└── test_losses.py              # ✅ 236 行, 损失函数测试
 ```
 
 ## 已实现的功能
+
+### 数据层 (data/)
 
 | 功能 | 对应数学定义 | 状态 |
 |------|------------|------|
@@ -81,100 +118,101 @@ tests/
 | Lightning DataModule | — | ✅ |
 | 预计算文本嵌入 C_V, C_R | Def 3.5-3.6 | ✅ |
 
-## 预训练阶段：待实现功能
+### 流形层 (manifolds/)
 
-### Layer 0: manifolds/ — 黎曼几何基础
+| 功能 | 对应数学定义 | 状态 |
+|------|------------|------|
+| Lorentz 双曲流形 (exp/log/dist/proj_tangent) | Def 2.1 | ✅ |
+| 球面流形 | Def 2.2 | ✅ |
+| 欧氏流形 | Def 2.3 | ✅ |
+| 积流形 H x S x E (split/combine, 可学习 kappa) | Def 2.4 | ✅ |
+| 流形均匀采样 (hyperbolic ball, sphere, Gaussian) | Def 6.1 | ✅ |
+| 曲率符号约束 (kappa_h < 0, kappa_s > 0) | — | ✅ |
+| 6 种消融变体 (h_only, s_only, e_only, h_e, s_e, fixed) | — | ✅ |
 
-| 组件 | 数学定义 | 说明 |
-|------|---------|------|
-| Lorentz 双曲流形 | Def 2.1 | exp/log map, 测地距离, 切空间投影, 曲率缩放 |
-| 球面流形 | Def 2.2 | 同上 |
-| 欧氏流形 | Def 2.3 | trivial, 但需统一接口 |
-| 积流形 H x S x E | Def 2.4 | split/combine, 可学习 kappa, origin point |
-| 流形采样 | Def 6.1 | 均匀采样 (hyperbolic ball, sphere, Gaussian) |
+### 流匹配层 (flow/)
 
-**文件**: `manifolds/{base,lorentz,spherical,euclidean,product,utils}.py`
-**验证**: exp/log 往返、距离公理、切向正交性、kappa!=1 测试
+| 功能 | 对应数学定义 | 状态 |
+|------|------------|------|
+| 连续噪声先验采样 | Def 6.1 | ✅ |
+| 离散噪声先验 (per-relation Bernoulli) | Def 6.2 | ✅ |
+| 测地线插值 x_t = exp(t * log(x_1)) | Def 6.3 | ✅ |
+| 离散插值 E_t (shared z_ij Bernoulli mask) | Def 6.4 | ✅ |
+| 向量场目标 u_t = (1/(1-t)) * log_{x_t}(x_1) | Def 6.5 | ✅ |
+| 联合流匹配编排 (Algorithm 1) | — | ✅ |
+| 消融支持 (continuous_only / discrete_only) | — | ✅ |
 
-### Layer 1: flow/ — 流匹配
+### 模型层 (models/)
 
-| 组件 | 数学定义 | 说明 |
-|------|---------|------|
-| 连续噪声先验 | Def 6.1 | 双曲/球面/欧氏空间的均匀采样 |
-| 离散噪声先验 | Def 6.2 | per-relation Bernoulli(rho_k) |
-| 测地线插值 x_t | Def 6.3 | exp(t * log(x_1)) 从噪声到数据 |
-| 离散插值 E_t | Def 6.4 | shared z_ij Bernoulli mask |
-| 向量场目标 u_t | Def 6.5 | (1/(1-t)) * log_{x_t}(x_1) |
+| 功能 | 对应数学定义 | 状态 |
+|------|------------|------|
+| 输入编码 MLP([pi(x) ‖ c_i ‖ m_i]) | Def 5.3-5.4 | ✅ |
+| 时间嵌入 (正弦 + 可学习投影) | Def 5.2 | ✅ |
+| Module A: Manifold Attention (M-RoPE + 测地核) | Def 5.5-5.8 | ✅ |
+| Module B: ATH-Norm | Def 5.9 | ✅ |
+| Module C: Edge Self-Update | Def 5.10-5.11 | ✅ |
+| Module D: Cross-Interaction (Edge<->Node) | Def 5.12-5.13 | ✅ |
+| Module E: Text Injection (cross-attention) | Def 5.14-5.15 | ✅ |
+| VF Head (MLP -> 切空间投影) | Def 5.16-5.17 | ✅ |
+| Edge Head (per-relation MLP + sigmoid) | Def 5.18-5.19 | ✅ |
+| Lightning Module (training_step + optimizers) | — | ✅ |
 
-**文件**: `flow/{continuous_flow,discrete_flow,joint_flow,noise}.py`
-**验证**: t=0 得噪声, t=1 得数据; 向量场方向正确; z_ij 在 K 个关系间共享
+### 损失层 (losses/)
 
-### Layer 2: models/ — RieFormer 神经网络
+| 功能 | 对应数学定义 | 状态 |
+|------|------------|------|
+| L_cont 黎曼范数 MSE + m_i masking | Def 6.6 | ✅ |
+| L_disc weighted BCE (w_k+ 自动平衡) | Def 6.8 | ✅ |
+| L_align 节点级 graph-text contrastive + MLP 投影 | Def 6.9-6.10 | ✅ |
+| 多任务加权组合损失 | — | ✅ |
 
-| 组件 | 数学定义 | 说明 |
-|------|---------|------|
-| 输入编码 | Def 5.3-5.4 | MLP([pi(x) ‖ c_i ‖ m_i]) + edge MLP([E_t*W_rel ‖ E_t*C_R]) |
-| 时间嵌入 | Def 5.2 | 正弦编码 + 可学习投影 |
-| Module A: Manifold Attention | Def 5.5-5.8 | M-RoPE + 测地核 + edge bias |
-| Module B: ATH-Norm | Def 5.9 | 自适应切空间归一化 |
-| Module C: Edge Self-Update | Def 5.10-5.11 | factorized head/tail 聚合 |
-| Module D: Cross-Interaction | Def 5.12-5.13 | Edge<->Node 双向 |
-| Module E: Text Injection | Def 5.14-5.15 | cross-attention with C_V |
-| VF Head | Def 5.16-5.17 | MLP -> 切空间投影 (含曲率因子) |
-| Edge Head | Def 5.18-5.19 | per-relation MLP + relation Transformer + sigmoid |
+### 优化层 (optim/)
 
-**文件**: `models/{rieformer,rieformer_block,riemannfm,heads,normalization,positional}.py`, `models/attention/{geodesic,edge,text_cross}.py`
-**验证**: forward pass shape 测试、梯度流测试、参数量检查
+| 功能 | 对应数学定义 | 状态 |
+|------|------------|------|
+| Riemannian Adam 双参数组 (模型 vs 曲率) | Algo 1 step 10 | ✅ |
+| 曲率投影 (kappa_h <- min, kappa_s <- max) | Algo 1 step 11 | ✅ |
 
-### Layer 3: losses/ — 损失函数
+### 训练入口 (cli/)
 
-| 组件 | 数学定义 | 说明 |
-|------|---------|------|
-| L_cont | Def 6.6 | 黎曼范数 MSE + m_i masking |
-| L_disc | Def 6.8 | weighted BCE, w_k+ = min((1-rho_k)/rho_k, w_max) |
-| L_align | Def 6.9-6.10 | 节点级 graph-text contrastive loss |
+| 功能 | 状态 |
+|------|------|
+| riemannfm-download | ✅ |
+| riemannfm-preprocess | ✅ |
+| riemannfm-pretrain (Hydra + wandb/CSV + checkpoint) | ✅ |
+| riemannfm-finetune | ⬜ |
+| riemannfm-evaluate | ⬜ |
+| riemannfm-generate | ⬜ |
 
-**文件**: `losses/{flow_matching_loss,contrastive_loss,combined_loss}.py`
-**验证**: loss 有限且正、梯度流到曲率参数
-
-### Layer 4: optim/ + cli/pretrain.py — 训练循环
-
-| 组件 | 数学定义 | 说明 |
-|------|---------|------|
-| Riemannian Adam | Algo 1 step 10 | geoopt 封装 + 双参数组 (模型 vs 曲率) |
-| 曲率投影 | Algo 1 step 11 | kappa_h <- min(kappa_h, -eps), kappa_s <- max(kappa_s, eps) |
-| Lightning Module | — | training_step + configure_optimizers |
-| wandb logging | — | loss curves, curvature tracking |
-
-**文件**: `optim/riemannian.py`, `cli/pretrain.py`, 新增 `training/lightning_module.py`
-**验证**: wikidata_5m_mini 上 1000 步 loss 下降、无 NaN/Inf
-
-## 实施顺序与依赖
+## 预训练阶段实施状态
 
 ```
-Layer 0: manifolds ──────────────────────────────────┐
-    依赖: 无                                          │
-    输出: exp/log/dist/proj_tangent/sample/origin      │
-                                                      ▼
-Layer 1: flow ─────────────────── 依赖 manifolds 的 exp/log/sample
-    输出: noise sampling, interpolation, VF target
-                                                      │
-Layer 2: models ─────────────── 依赖 manifolds + flow │
-    输出: RieFormer forward: (x_t,E_t,t,C_V,C_R,m) -> (V_hat, P_hat)
-                                                      │
-Layer 3: losses ─────────────── 依赖 manifolds 的 norm │
-    输出: L_cont + lambda*L_disc + mu*L_align          │
-                                                      ▼
-Layer 4: optim + pretrain ──── 组装所有组件
-    输出: MVP — wikidata_5m_mini loss 下降 ⭐
+Layer 0: manifolds ✅ 已完成 (~1,303 LOC, 499 行测试)
+    exp/log/dist/proj_tangent/sample/origin, 积流形, 可学习曲率
+
+Layer 1: flow ✅ 已完成 (~438 LOC, 282 行测试)
+    noise sampling, interpolation, VF target, joint orchestration
+
+Layer 2: models ✅ 已完成 (~1,690 LOC, 360 行测试)
+    RieFormer forward: (x_t,E_t,t,C_V,C_R,m) -> (V_hat, P_hat)
+
+Layer 3: losses ✅ 已完成 (~330 LOC, 236 行测试)
+    L_cont + lambda*L_disc + mu*L_align
+
+Layer 4: optim + pretrain ✅ 已完成 (~98 + 167 LOC)
+    Riemannian Adam, curvature projection, Hydra CLI, wandb logging
 ```
 
-每层完成后可独立测试:
-- manifolds: 几何性质 (exp/log 往返, 距离三角不等式)
-- flow: 插值端点 (t=0 噪声, t=1 数据)
-- models: forward pass shape + 梯度流
-- losses: 有限正值 + 梯度到 kappa
-- pretrain: 端到端 loss 下降
+## 测试覆盖
+
+| 模块 | 测试文件 | 行数 | 覆盖范围 |
+|------|---------|------|---------|
+| data | test_datamodule.py | 339 | DataModule, collation, sampling, graph data |
+| manifolds | test_manifolds.py | 499 | exp/log 往返, distance, tangent, curvature, product |
+| flow | test_flow.py | 282 | continuous, discrete, joint, noise, time sampling |
+| models | test_models.py | 360 | 组件测试, RieFormer forward, shape, gradients |
+| losses | test_losses.py | 236 | continuous loss, discrete loss, combined loss |
+| **合计** | **5 个文件** | **1,716** | **Layer 0-3 全覆盖** |
 
 ## MVP 验证标准
 
@@ -184,3 +222,43 @@ Layer 4: optim + pretrain ──── 组装所有组件
 - 无 NaN/Inf
 - 单 GPU < 24GB
 - checkpoint/resume 正常
+
+## 下一步：微调与评估阶段
+
+### 待实现功能
+
+#### tasks/ — 下游任务头
+
+| 组件 | 说明 |
+|------|------|
+| KGC-LP | 链接预测 (Link Prediction) |
+| KGC-RP | 关系预测 (Relation Prediction) |
+| T2G | 文本到图生成 (Text-to-Graph) |
+| GAD | 零样本图异常检测 (Graph Anomaly Detection) |
+
+#### utils/ — 工具函数
+
+| 组件 | 说明 |
+|------|------|
+| metrics | MRR, Hits@K, AUROC, F1 等评估指标 |
+| logging | 分布式训练工具, 日志辅助 |
+
+#### cli/ — 入口命令
+
+| 命令 | 说明 |
+|------|------|
+| riemannfm-finetune | 下游任务微调 |
+| riemannfm-evaluate | 模型评估 |
+| riemannfm-generate | 图生成推理 |
+
+### 依赖关系
+
+```
+pretrain checkpoint ─────────────────────────────┐
+                                                  ▼
+tasks/ (KGC/T2G/GAD heads) ──── 依赖 models/ + manifolds/
+                                                  │
+utils/metrics ───────────────── 依赖 task 定义     │
+                                                  ▼
+cli/finetune + evaluate + generate ── 组装所有组件
+```
