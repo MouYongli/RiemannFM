@@ -59,6 +59,7 @@ class RiemannFMCombinedLoss(nn.Module):
         self.avg_edge_density = avg_edge_density
         self.w_max = w_max
         self.temperature = temperature
+        self.rho_k: Tensor | None = None
 
         # Projection layers for L_align (Def 6.9):
         #   g_i = proj_g(pi(x_{1,i}))
@@ -115,9 +116,10 @@ class RiemannFMCombinedLoss(nn.Module):
             self.manifold, V_hat, u_t, x_t, node_mask,
         )
 
-        # L_disc: discrete flow matching loss.
+        # L_disc: discrete flow matching loss (Def 6.8).
         l_disc = discrete_flow_loss(
             P_hat, E_1, node_mask,
+            rho_k=self.rho_k,
             avg_edge_density=self.avg_edge_density,
             w_max=self.w_max,
         )

@@ -364,6 +364,8 @@ class RiemannFMPretrainModule(L.LightningModule):
             input_text_dim=input_text_dim,
             d_a=int(getattr(model_cfg, "d_c", 256)),
         )
+        # Share per-relation edge density from flow to loss (Def 6.8).
+        loss_fn.rho_k = flow.rho_k
 
         return cls(
             manifold=manifold,

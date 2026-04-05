@@ -60,6 +60,7 @@ def discrete_flow_loss(
     P_hat: Tensor,
     E_1: Tensor,
     node_mask: Tensor,
+    rho_k: Tensor | None = None,
     avg_edge_density: float = 0.05,
     w_max: float = 10.0,
 ) -> Tensor:
@@ -68,24 +69,34 @@ def discrete_flow_loss(
     Weighted binary cross-entropy per relation:
         L_disc = sum_k BCE(P_hat_k, E_1_k, weight=w_k)
 
-    Positive class weight for relation k:
+    Per-relation positive class weight:
         w_k+ = min( (1 - rho_k) / rho_k, w_max )
-
-    For the MVP, we use a uniform rho = avg_edge_density.
 
     Args:
         P_hat: Predicted edge logits (pre-sigmoid), shape ``(B, N, N, K)``.
         E_1: Target edge types, shape ``(B, N, N, K)``.
         node_mask: Bool mask, shape ``(B, N)``.
-        avg_edge_density: Edge density rho for class weight computation.
+        rho_k: Per-relation edge density, shape ``(K,)``.
+            When provided, computes per-relation weights (Def 6.8).
+            Falls back to uniform ``avg_edge_density`` when None.
+        avg_edge_density: Fallback uniform edge density when ``rho_k`` is None.
         w_max: Maximum positive class weight cap.
 
     Returns:
         Scalar loss (mean over real node pairs and relations).
     """
-    # Positive class weight.
-    rho = max(avg_edge_density, 1e-6)
-    w_pos = min((1.0 - rho) / rho, w_max)
+    K = E_1.shape[-1]
+
+    # Per-relation positive class weights (Def 6.8).
+    if rho_k is not None:
+        rho = rho_k.to(device=E_1.device, dtype=E_1.dtype).clamp(min=1e-6)
+        w_pos = ((1.0 - rho) / rho).clamp(max=w_max)  # (K,)
+    else:
+        rho_scalar = max(avg_edge_density, 1e-6)
+        w_pos = torch.full(
+            (K,), min((1.0 - rho_scalar) / rho_scalar, w_max),
+            device=E_1.device, dtype=E_1.dtype,
+        )
 
     # Mask: only real node pairs.
     pair_mask = node_mask.unsqueeze(2) & node_mask.unsqueeze(1)  # (B, N, N)
@@ -95,13 +106,14 @@ def discrete_flow_loss(
         P_hat, E_1, reduction="none",
     )  # (B, N, N, K)
 
-    # Apply positive class weighting: scale losses where E_1=1.
-    weight = torch.where(E_1 > 0.5, w_pos, 1.0)
+    # Apply per-relation positive class weighting: scale losses where E_1=1.
+    # w_pos shape (K,) broadcasts over (B, N, N, K).
+    weight = torch.where(E_1 > 0.5, w_pos, torch.ones_like(w_pos))
     bce_weighted = bce * weight  # (B, N, N, K)
 
     # Mask virtual nodes and average.
     mask_expanded = pair_mask.unsqueeze(-1)  # (B, N, N, 1)
-    num_elements = mask_expanded.sum().clamp(min=1) * E_1.shape[-1]
+    num_elements = mask_expanded.sum().clamp(min=1) * K
     loss = (bce_weighted * mask_expanded).sum() / num_elements
 
     return loss
