@@ -56,28 +56,32 @@ def sample_continuous_noise(
 def sample_discrete_noise(
     E_1: Tensor,
     avg_edge_density: float = 0.05,
+    rho_k: Tensor | None = None,
     generator: torch.Generator | None = None,
 ) -> Tensor:
     """Sample discrete noise from per-relation Bernoulli priors (Def 6.2).
 
     For each relation k, the noise prior is Bernoulli(rho_k) where rho_k
-    is estimated as the average edge density (or per-relation density).
+    is estimated as the per-relation edge density from the training set.
 
-    For the MVP, we use a single ``avg_edge_density`` for all relations.
+    When ``rho_k`` is provided, each relation type uses its own density.
+    Otherwise falls back to a uniform ``avg_edge_density`` for all relations.
 
     Args:
         E_1: Target edge types (data), shape ``(B, N, N, K)``.
             Used only for shape; values are ignored.
-        avg_edge_density: Expected edge density rho (probability of edge=1).
+        avg_edge_density: Fallback edge density when ``rho_k`` is None.
+        rho_k: Per-relation edge density, shape ``(K,)``.
         generator: Optional RNG.
 
     Returns:
         Noise edge types E_0, shape ``(B, N, N, K)``, binary {0, 1}.
     """
-    return torch.bernoulli(
-        torch.full_like(E_1, avg_edge_density),
-        generator=generator,
-    )
+    if rho_k is not None:
+        probs = rho_k.to(device=E_1.device, dtype=E_1.dtype).view(1, 1, 1, -1).expand_as(E_1)
+    else:
+        probs = torch.full_like(E_1, avg_edge_density)
+    return torch.bernoulli(probs, generator=generator)
 
 
 def compute_edge_density(E_1: Tensor, node_mask: Tensor) -> Tensor:

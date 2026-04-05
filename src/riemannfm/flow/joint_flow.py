@@ -71,6 +71,7 @@ class RiemannFMJointFlow:
         self,
         manifold: RiemannFMProductManifold,
         avg_edge_density: float = 0.05,
+        rho_k: Tensor | None = None,
         t_max: float = 0.999,
         disable_continuous: bool = False,
         disable_discrete: bool = False,
@@ -80,6 +81,7 @@ class RiemannFMJointFlow:
     ) -> None:
         self.manifold = manifold
         self.avg_edge_density = avg_edge_density
+        self.rho_k = rho_k
         self.t_max = t_max
         self.disable_continuous = disable_continuous
         self.disable_discrete = disable_discrete
@@ -150,7 +152,7 @@ class RiemannFMJointFlow:
         else:
             E_0 = sample_discrete_noise(
                 E_1, avg_edge_density=self.avg_edge_density,
-                generator=generator,
+                rho_k=self.rho_k, generator=generator,
             )
             E_t = discrete_interpolation(E_0, E_1, t, generator=generator)
 

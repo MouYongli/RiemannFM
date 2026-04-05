@@ -157,7 +157,10 @@ class RiemannFMPretrainModule(L.LightningModule):
 
             x_0 = sample_continuous_noise(self.manifold, *x_1.shape[:-1],
                                           device=x_1.device, dtype=x_1.dtype)
-            E_0 = sample_discrete_noise(E_1, avg_edge_density=self.flow.avg_edge_density)
+            E_0 = sample_discrete_noise(
+                E_1, avg_edge_density=self.flow.avg_edge_density,
+                rho_k=self.flow.rho_k,
+            )
 
             with torch.amp.autocast(device_type=self.device.type, enabled=False):
                 sample.x_t = geodesic_interpolation(
