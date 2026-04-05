@@ -7,7 +7,7 @@ num_edge_types: 822
 max_nodes: 256
 max_hops: 3
 num_workers: 8
-text_source: wikidata_description
+text_source: wikipedia
 text_encoder: ${embedding.model_name}
 val_epoch_size: 5000
 test_epoch_size: 5000
