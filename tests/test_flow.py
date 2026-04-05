@@ -119,8 +119,10 @@ class TestGeodesicInterpolation:
     def test_monotonic_distance(
         self, manifold: RiemannFMProductManifold,
     ) -> None:
-        x_0 = manifold.sample_noise(B, N)
-        x_1 = manifold.sample_noise(B, N)
+        # Use small radius to keep points close enough for monotonic interpolation
+        # (avoids wrapping issues on the sphere when points are > pi apart).
+        x_0 = manifold.sample_noise(B, N, radius_h=1.0, sigma_e=0.5)
+        x_1 = manifold.sample_noise(B, N, radius_h=1.0, sigma_e=0.5)
         # Distance to x_1 should decrease as t increases.
         d_t03 = manifold.dist(
             geodesic_interpolation(manifold, x_0, x_1, torch.full((B,), 0.3)),

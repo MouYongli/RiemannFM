@@ -235,20 +235,24 @@ class TestGeodesicAttention:
 
 class TestEdgeSelfUpdate:
     def test_output_shape(self) -> None:
-        mod = RiemannFMEdgeSelfUpdate(NODE_DIM, EDGE_DIM, EDGE_HEADS)
-        h = torch.randn(B, N, NODE_DIM)
+        mod = RiemannFMEdgeSelfUpdate(EDGE_DIM)
         g = torch.randn(B, N, N, EDGE_DIM)
-        out = mod(h, g)
+        out = mod(g)
         assert out.shape == (B, N, N, EDGE_DIM)
 
     def test_residual(self) -> None:
-        mod = RiemannFMEdgeSelfUpdate(NODE_DIM, EDGE_DIM, EDGE_HEADS)
-        h = torch.randn(B, N, NODE_DIM)
+        mod = RiemannFMEdgeSelfUpdate(EDGE_DIM)
         g = torch.randn(B, N, N, EDGE_DIM)
-        # With zero init, output should be close to input (residual).
-        # Just check shape; exact residual depends on init.
-        out = mod(h, g)
+        out = mod(g)
         assert out.shape == g.shape
+
+    def test_gradient_flow(self) -> None:
+        mod = RiemannFMEdgeSelfUpdate(EDGE_DIM)
+        g = torch.randn(B, N, N, EDGE_DIM, requires_grad=True)
+        out = mod(g)
+        out.sum().backward()
+        assert g.grad is not None
+        assert torch.isfinite(g.grad).all()
 
 
 class TestDualStreamCross:
@@ -295,16 +299,26 @@ class TestVFHead:
 
 
 class TestEdgeHead:
-    def test_output_shape(self) -> None:
+    def test_output_shape_no_text(self) -> None:
         head = RiemannFMEdgeHead(EDGE_DIM, K)
         g = torch.randn(B, N, N, EDGE_DIM)
         out = head(g)
         assert out.shape == (B, N, N, K)
 
+    def test_output_shape_with_text(self) -> None:
+        d_c = 16
+        head = RiemannFMEdgeHead(EDGE_DIM, K, d_c=d_c)
+        g = torch.randn(B, N, N, EDGE_DIM)
+        C_R = torch.randn(K, d_c)
+        out = head(g, C_R)
+        assert out.shape == (B, N, N, K)
+
     def test_gradient_flow(self) -> None:
-        head = RiemannFMEdgeHead(EDGE_DIM, K)
+        d_c = 16
+        head = RiemannFMEdgeHead(EDGE_DIM, K, d_c=d_c)
         g = torch.randn(B, N, N, EDGE_DIM, requires_grad=True)
-        out = head(g)
+        C_R = torch.randn(K, d_c)
+        out = head(g, C_R)
         out.sum().backward()
         assert g.grad is not None
 
@@ -324,9 +338,7 @@ class TestEndToEndForwardPass:
         geo_attn = RiemannFMGeodesicAttention(
             NODE_DIM, NUM_HEADS, manifold,
         )
-        edge_update = RiemannFMEdgeSelfUpdate(
-            NODE_DIM, EDGE_DIM, EDGE_HEADS,
-        )
+        edge_update = RiemannFMEdgeSelfUpdate(EDGE_DIM)
         cross = RiemannFMDualStreamCross(NODE_DIM, EDGE_DIM)
         vf_head = RiemannFMVFHead(NODE_DIM, ambient_dim, manifold)
         edge_head = RiemannFMEdgeHead(EDGE_DIM, K)
@@ -344,7 +356,7 @@ class TestEndToEndForwardPass:
         g = edge_enc(E_t)
         bias = edge_bias_mod(g)
         h = geo_attn(h, x, edge_bias=bias, node_mask=mask)
-        g = edge_update(h, g)
+        g = edge_update(g)
         h, g = cross(h, g, mask)
         V_hat = vf_head(h, x)
         P_hat = edge_head(g)

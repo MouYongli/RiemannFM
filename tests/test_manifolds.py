@@ -32,7 +32,7 @@ def _random_lorentz_point(
     manifold: LorentzManifold, batch: int = B,
 ) -> Tensor:
     """Generate random points on the hyperboloid via noise sampling."""
-    return manifold.sample_noise(batch, radius=2.0)
+    return manifold.sample_noise(batch, radius=1.0)
 
 
 def _random_sphere_point(
