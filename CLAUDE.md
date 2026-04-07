@@ -217,7 +217,7 @@ uv run python -m riemannfm.cli.preprocess data=wikidata_5m_mini embedding=sbert
 
 ```bash
 uv run python -m riemannfm.cli.pretrain training.lr=1e-4 data=fb15k237
-uv run python -m riemannfm.cli.pretrain model=rieformer_small data=wikidata_5m_mini training.max_steps=1000
+uv run python -m riemannfm.cli.pretrain model=small data=wikidata_5m_mini training.max_steps=1000
 ```
 
 ### Logger Selection (Hydra config group)

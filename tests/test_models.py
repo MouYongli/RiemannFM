@@ -27,7 +27,7 @@ from riemannfm.models.input_encoding import (
 from riemannfm.models.normalization import RiemannFMATHNorm, RiemannFMPreNorm
 from riemannfm.models.positional import RiemannFMTimeEmbedding
 
-# Test constants matching rieformer_small config.
+# Test constants matching small model config.
 B = 4
 N = 8
 K = 10

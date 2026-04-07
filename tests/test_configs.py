@@ -20,7 +20,7 @@ CONFIGS_DIR = str(Path(__file__).resolve().parent.parent / "configs")
 
 # Config groups and their variants.
 CONFIG_GROUPS: dict[str, list[str]] = {
-    "model": ["rieformer_small", "rieformer_base", "rieformer_large"],
+    "model": ["small", "base", "large"],
     "manifold": [
         "product_h_s_e",
         "h_only",

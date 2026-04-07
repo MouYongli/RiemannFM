@@ -2,7 +2,7 @@
 
 Launch pretraining with Hydra configuration:
     python -m riemannfm.cli.pretrain
-    python -m riemannfm.cli.pretrain model=rieformer_small data=wikidata_5m_mini
+    python -m riemannfm.cli.pretrain model=small data=wikidata_5m_mini
 
 Logger selection (standard Hydra config group):
     python -m riemannfm.cli.pretrain logger=default      # wandb + csv (default)
@@ -26,6 +26,8 @@ from omegaconf import DictConfig, OmegaConf
 from riemannfm.losses.combined_loss import RiemannFMCombinedLoss
 
 logger = logging.getLogger(__name__)
+
+
 
 
 def _resolve_precision(mixed_precision: str | None) -> str:

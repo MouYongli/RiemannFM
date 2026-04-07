@@ -83,7 +83,7 @@ uv run python -m riemannfm.cli.preprocess data=wikidata_5m_mini embedding=sbert
 
 # 2. Pretrain (small model, mini data)
 uv run python -m riemannfm.cli.pretrain \
-    model=rieformer_small \
+    model=small \
     data=wikidata_5m_mini \
     training.max_steps=1000
 ```
@@ -92,7 +92,7 @@ uv run python -m riemannfm.cli.pretrain \
 
 ```bash
 uv run python -m riemannfm.cli.pretrain \
-    model=rieformer_base \
+    model=base \
     data=wikidata_5m \
     manifold=product_h_s_e \
     training=pretrain
@@ -102,7 +102,7 @@ uv run python -m riemannfm.cli.pretrain \
 
 | Override | Example | Description |
 |----------|---------|-------------|
-| `model=` | `rieformer_small`, `rieformer_base`, `rieformer_large` | Model size |
+| `model=` | `small`, `base`, `large` | Model size |
 | `data=` | `wikidata_5m_mini`, `wikidata_5m`, `fb15k237` | Dataset |
 | `manifold=` | `product_h_s_e`, `h_only`, `e_only` | Manifold composition |
 | `training.max_steps=` | `1000`, `500000` | Total training steps |

@@ -8,7 +8,6 @@
 
 ```bash
 uv run python -m riemannfm.cli.download data=wikidata_5m
-uv run python -m riemannfm.cli.download download.all=true        # 全部 7 个
 ```
 
 ## 2. Build Mini (工程验证子集)
@@ -20,70 +19,71 @@ uv run python -m riemannfm.cli.preprocess data=wikidata_5m preprocess.build_mini
 ## 3. 数据预处理 (文本嵌入)
 
 ```bash
-uv run python -m riemannfm.cli.preprocess data=wikidata_5m_mini embedding=nomic
-uv run python -m riemannfm.cli.preprocess data=wikidata_5m embedding=qwen3  # 换编码器
+uv run python -m riemannfm.cli.preprocess data=wikidata_5m_mini embedding=qwen3
+uv run python -m riemannfm.cli.preprocess data=wikidata_5m embedding=qwen3
 ```
 
 ## 4. 预训练
 
+### Phase 0: Smoke Test
+
 ```bash
-# Smoke test (mini + nomic, 100 步, CSV 日志)
 uv run python -m riemannfm.cli.pretrain \
-    data=wikidata_5m_mini embedding=nomic \
-    training.max_steps=100 training.batch_size=4 \
-    training.warmup_steps=10 training.val_check_interval=50 \
-    training.gradient_accumulation_steps=1 logger=csv
+    model=small data=wikidata_5m_mini training.max_steps=1000
+```
 
-# MVP (mini + nomic, 1000 步)
+### Phase 1: Validation Run
+
+```bash
 uv run python -m riemannfm.cli.pretrain \
-    data=wikidata_5m_mini embedding=nomic \
-    training.max_steps=1000 training.batch_size=8 \
-    training.warmup_steps=100 training.val_check_interval=200
+    model=base data=wikidata_5m training.max_steps=10000 \
+    training.warmup_steps=1000 training.val_check_interval=2000
+```
 
-# 超参搜索 (默认 qwen3)
-uv run python -m riemannfm.cli.pretrain +experiment=pretrain_search --multirun
+### Phase 2: HP Search
 
-# 完整预训练 (默认 wikidata_5m + qwen3)
-uv run python -m riemannfm.cli.pretrain +experiment=pretrain_wiki5m
+```bash
+uv run python -m riemannfm.cli.pretrain \
+    experiment=pretrain_search sweep=pretrain
+```
 
-# 消融
-uv run python -m riemannfm.cli.pretrain +experiment=ablation_architecture \
-    ablation=no_mrope,no_geok,no_ath,no_edge_self,no_cross,no_text_cond --multirun
+### E1: Main Pretrain (3 seeds)
+
+```bash
+uv run python -m riemannfm.cli.pretrain experiment=pretrain_wiki5m seed=42
+uv run python -m riemannfm.cli.pretrain experiment=pretrain_wiki5m seed=123
+uv run python -m riemannfm.cli.pretrain experiment=pretrain_wiki5m seed=456
+```
+
+### E2: Manifold Ablation
+
+```bash
+uv run python -m riemannfm.cli.pretrain experiment=ablation_manifold --multirun
+```
+
+### E3: Architecture Ablation
+
+```bash
+uv run python -m riemannfm.cli.pretrain experiment=ablation_architecture --multirun
+```
+
+### E4: Flow Ablation
+
+```bash
+uv run python -m riemannfm.cli.pretrain experiment=ablation_loss --multirun
+```
+
+### E5: Scaling
+
+```bash
+uv run python -m riemannfm.cli.pretrain experiment=scaling --multirun
 ```
 
 ### Logger 选择
 
 ```bash
-uv run python -m riemannfm.cli.pretrain logger=default      # wandb + csv (默认)
-uv run python -m riemannfm.cli.pretrain logger=wandb    # 仅 wandb
-uv run python -m riemannfm.cli.pretrain logger=csv      # 仅 csv (离线)
-uv run python -m riemannfm.cli.pretrain logger=none           # 无日志
-```
-
-## 5. 微调 (未实现)
-
-```bash
-uv run python -m riemannfm.cli.finetune +experiment=kgc_fb15k237 \
-    training.pretrained_ckpt=/path/to/ckpt.pt
-```
-
-## 6. 评估 (未实现)
-
-```bash
-uv run python -m riemannfm.cli.evaluate +experiment=kgc_fb15k237 \
-    eval.checkpoint=/path/to/finetuned.pt
-```
-
-## 7. 生成 / 推理 (未实现)
-
-```bash
-uv run python -m riemannfm.cli.generate task=t2g \
-    eval.checkpoint=/path/to/t2g.pt eval.num_generation_samples=1000
-```
-
-## 8. GAD 零样本评估 (未实现)
-
-```bash
-uv run python -m riemannfm.cli.evaluate +experiment=gad \
-    eval.checkpoint=/path/to/pretrained.pt
+uv run python -m riemannfm.cli.pretrain logger=default   # wandb + csv (默认)
+uv run python -m riemannfm.cli.pretrain logger=wandb     # 仅 wandb
+uv run python -m riemannfm.cli.pretrain logger=csv       # 仅 csv (离线)
+uv run python -m riemannfm.cli.pretrain logger=none      # 无日志
 ```

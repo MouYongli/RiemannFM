@@ -217,7 +217,7 @@ Layer 4: optim + pretrain ✅ 已完成 (~98 + 167 LOC)
 ## MVP 验证标准
 
 在 wikidata_5m_mini (822 relations, 7833 entities, 22862 triples) 上:
-- `make pretrain ARGS="model=rieformer_small data=wikidata_5m_mini"`
+- `make pretrain ARGS="model=small data=wikidata_5m_mini"`
 - 1000 步内 loss 单调下降
 - 无 NaN/Inf
 - 单 GPU < 24GB
