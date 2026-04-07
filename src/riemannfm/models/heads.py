@@ -60,19 +60,16 @@ class RiemannFMVFHead(nn.Module):
 
 
 class RiemannFMEdgeHead(nn.Module):
-    """Edge prediction head with relation Transformer (Def 5.18-5.19).
+    """Edge prediction head via bilinear matching (Def 5.18-5.19).
 
-    For each edge (i,j) and relation k:
-      1. Construct candidate: r_{ij}^(k) = MLP_proj([g_{ij} || c_{r_k}])
-      2. Relation Transformer: self-attention over K candidates
-      3. Classify: P_{ij}^(k) = sigmoid(w_cls^T r_tilde + b_cls)
+    Projects edge hidden states into a matching space and computes inner
+    products with relation prototypes to predict per-relation logits.
+    Supports multi-relational edges (independent sigmoid per relation).
 
     Args:
         edge_dim: Edge hidden dimension.
         num_edge_types: Number of relation types K.
         text_proj_dim: Relation text embedding dimension (0 to disable text).
-        n_rel_layers: Number of relation Transformer layers.
-        n_rel_heads: Number of attention heads in relation Transformer.
     """
 
     def __init__(
@@ -80,38 +77,36 @@ class RiemannFMEdgeHead(nn.Module):
         edge_dim: int,
         num_edge_types: int,
         text_proj_dim: int = 0,
-        n_rel_layers: int = 2,
-        n_rel_heads: int = 4,
     ) -> None:
         super().__init__()
         self.num_edge_types = num_edge_types
         self.text_proj_dim = text_proj_dim
 
-        # Step 1: per-relation candidate projection.
-        proj_in = edge_dim + text_proj_dim if text_proj_dim > 0 else edge_dim
-        self.rel_proj = nn.Sequential(
-            nn.Linear(proj_in, edge_dim),
+        # Project edge hidden states to matching space.
+        self.edge_proj = nn.Sequential(
+            nn.Linear(edge_dim, edge_dim),
             nn.SiLU(),
             nn.Linear(edge_dim, edge_dim),
         )
 
-        # Step 2: relation Transformer (self-attention over K candidates).
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=edge_dim,
-            nhead=n_rel_heads,
-            dim_feedforward=edge_dim * 2,
-            batch_first=True,
-            activation="gelu",
-        )
-        self.rel_transformer = nn.TransformerEncoder(
-            encoder_layer, num_layers=n_rel_layers,
-        )
+        # Relation prototypes: project from text or learn from scratch.
+        if text_proj_dim > 0:
+            self.rel_proto_proj = nn.Sequential(
+                nn.Linear(text_proj_dim, edge_dim),
+                nn.SiLU(),
+                nn.Linear(edge_dim, edge_dim),
+            )
+        else:
+            # Learnable relation prototypes when no text is available.
+            self.rel_prototypes = nn.Parameter(
+                nn.init.xavier_uniform_(Tensor(num_edge_types, edge_dim)),
+            )
 
-        # Step 3: per-relation binary classifier.
-        self.w_cls = nn.Linear(edge_dim, 1)
+        # Per-relation bias for asymmetric thresholding.
+        self.rel_bias = nn.Parameter(torch.zeros(num_edge_types))
 
     def forward(self, g: Tensor, C_R: Tensor | None = None) -> Tensor:
-        """Predict edge probabilities with relation interaction.
+        """Predict edge logits via inner product matching.
 
         Args:
             g: Edge hidden states, shape ``(B, N, N, edge_dim)``.
@@ -120,31 +115,19 @@ class RiemannFMEdgeHead(nn.Module):
 
         Returns:
             Edge logits P_hat (pre-sigmoid), shape ``(B, N, N, K)``.
-            Apply sigmoid for probabilities.
         """
-        B, N, _, D = g.shape
-        K = self.num_edge_types
+        # Project edges: (B, N, N, edge_dim) -> (B, N, N, edge_dim).
+        g_proj = self.edge_proj(g)
 
-        # Expand g to per-relation: (B, N, N, 1, D) -> (B, N, N, K, D).
-        g_exp = g.unsqueeze(3).expand(-1, -1, -1, K, -1)
-
+        # Build relation prototypes: (K, edge_dim).
         if C_R is not None and self.text_proj_dim > 0:
-            c_r = C_R.unsqueeze(0).unsqueeze(0).unsqueeze(0).expand(B, N, N, -1, -1)
-            proj_input = torch.cat([g_exp, c_r], dim=-1)
+            rel_proto = self.rel_proto_proj(C_R)  # (K, edge_dim)
         else:
-            proj_input = g_exp
+            rel_proto = self.rel_prototypes  # (K, edge_dim)
 
-        # Step 1: per-relation candidates.
-        r = self.rel_proj(proj_input)  # (B, N, N, K, D)
-
-        # Step 2: relation Transformer — self-attention over K dim.
-        r_flat = r.view(B * N * N, K, D)
-        r_flat = self.rel_transformer(r_flat)  # (B*N*N, K, D)
-
-        # Step 3: classify each relation independently.
-        logits = self.w_cls(r_flat).squeeze(-1)  # (B*N*N, K)
-        result: Tensor = logits.view(B, N, N, K)
-        return result
+        # Inner product: (B, N, N, edge_dim) @ (edge_dim, K) -> (B, N, N, K).
+        logits: Tensor = torch.einsum("bijd,kd->bijk", g_proj, rel_proto) + self.rel_bias
+        return logits
 
 
 class RiemannFMDualStreamCross(nn.Module):
@@ -214,6 +197,7 @@ class RiemannFMDualStreamCross(nn.Module):
             edge_mask = node_mask.unsqueeze(1) & node_mask.unsqueeze(2)  # (B, N, N)
             attn_scores = attn_scores.masked_fill(~edge_mask, float("-inf"))
         alpha = F.softmax(attn_scores, dim=2)             # softmax over j
+        alpha = alpha.nan_to_num(0.0)                     # virtual nodes: all -inf -> NaN -> 0
         node_agg = (alpha.unsqueeze(-1) * v).sum(dim=2)   # (B, N, d_v)
         h_update = h + self.edge_to_node(node_agg)        # (B, N, node_dim)
 

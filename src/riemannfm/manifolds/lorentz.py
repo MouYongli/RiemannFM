@@ -53,6 +53,11 @@ class LorentzManifold(RiemannFMManifold):
             torch.tensor(curvature, dtype=torch.float32),
             requires_grad=learnable,
         )
+        # Guard against NaN/Inf gradients from arccosh/sqrt backprop.
+        if learnable:
+            self._curvature.register_hook(
+                lambda g: g.nan_to_num(0.0).clamp(-1.0, 1.0)
+            )
 
     # ------------------------------------------------------------------
     # Properties

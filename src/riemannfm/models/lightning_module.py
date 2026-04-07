@@ -141,7 +141,9 @@ class RiemannFMPretrainModule(L.LightningModule):
         x_1 = self._get_manifold_coords(node_ids, node_mask)
 
         # 2. Flow matching: sample noise, time, interpolate.
-        sample = self.flow.sample(x_1, E_1, node_mask)
+        #    Force fp32 — geodesic interpolation is numerically sensitive.
+        with torch.amp.autocast(device_type=self.device.type, enabled=False):
+            sample = self.flow.sample(x_1.float(), E_1.float(), node_mask)
 
         # Override t if provided (for multi-t validation).
         if t_override is not None:
@@ -184,17 +186,18 @@ class RiemannFMPretrainModule(L.LightningModule):
             C_R=self.C_R,
         )
 
-        # 4. Compute loss.
-        total_loss, metrics = self.loss_fn(
-            V_hat=V_hat,
-            u_t=sample.u_t,
-            x_t=sample.x_t,
-            P_hat=P_hat,
-            E_1=sample.E_1,
-            node_mask=node_mask,
-            x_1=x_1,
-            node_text=node_text,
-        )
+        # 4. Compute loss (fp32 — manifold distances are numerically sensitive).
+        with torch.amp.autocast(device_type=self.device.type, enabled=False):
+            total_loss, metrics = self.loss_fn(
+                V_hat=V_hat.float(),
+                u_t=sample.u_t.float(),
+                x_t=sample.x_t.float(),
+                P_hat=P_hat.float(),
+                E_1=sample.E_1.float(),
+                node_mask=node_mask,
+                x_1=x_1.float(),
+                node_text=node_text.float(),
+            )
 
         return total_loss, metrics
 

@@ -223,7 +223,7 @@ class RiemannFM(nn.Module):
         """Construct from Hydra configs.
 
         Args:
-            model_cfg: Model config (rieformer_small/base/large).
+            model_cfg: Model config (small/base/large).
             manifold_cfg: Manifold config (product_h_s_e etc.).
             ablation_cfg: Ablation config (full, no_mrope, etc.).
             num_edge_types: Number of relation types K.
