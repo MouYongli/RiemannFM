@@ -307,7 +307,7 @@ class TestEdgeHead:
 
     def test_output_shape_with_text(self) -> None:
         d_c = 16
-        head = RiemannFMEdgeHead(EDGE_DIM, K, d_c=d_c)
+        head = RiemannFMEdgeHead(EDGE_DIM, K, text_proj_dim=d_c)
         g = torch.randn(B, N, N, EDGE_DIM)
         C_R = torch.randn(K, d_c)
         out = head(g, C_R)
@@ -315,7 +315,7 @@ class TestEdgeHead:
 
     def test_gradient_flow(self) -> None:
         d_c = 16
-        head = RiemannFMEdgeHead(EDGE_DIM, K, d_c=d_c)
+        head = RiemannFMEdgeHead(EDGE_DIM, K, text_proj_dim=d_c)
         g = torch.randn(B, N, N, EDGE_DIM, requires_grad=True)
         C_R = torch.randn(K, d_c)
         out = head(g, C_R)

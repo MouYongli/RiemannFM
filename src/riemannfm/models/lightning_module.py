@@ -133,7 +133,7 @@ class RiemannFMPretrainModule(L.LightningModule):
             (total_loss, metrics_dict).
         """
         E_1 = batch["edge_types"]       # (B, N, N, K)
-        node_text = batch["node_text"]   # (B, N, d_c)
+        node_text = batch["node_text"]   # (B, N, input_text_dim)
         node_mask = batch["node_mask"]   # (B, N)
         node_ids = batch["node_ids"]     # (B, N)
 
@@ -340,8 +340,8 @@ class RiemannFMPretrainModule(L.LightningModule):
             edge_heads=model_cfg.edge_heads,
             num_edge_types=num_edge_types,
             input_text_dim=input_text_dim,
-            d_c=int(getattr(model_cfg, "d_c", 256)),
-            text_dim=model_cfg.text_dim,
+            text_proj_dim=int(getattr(model_cfg, "text_proj_dim", 256)),
+            use_text_cross_attn=bool(getattr(model_cfg, "use_text_cross_attn", False)),
             text_cross_attn_every=model_cfg.text_cross_attn_every,
             rel_emb_dim=model_cfg.rel_emb_dim,
             use_geodesic_kernel=ablation_cfg.use_geodesic_kernel,
@@ -362,7 +362,7 @@ class RiemannFMPretrainModule(L.LightningModule):
             w_max=getattr(training_cfg, "w_max", 10.0),
             temperature=training_cfg.temperature,
             input_text_dim=input_text_dim,
-            d_a=int(getattr(model_cfg, "d_c", 256)),
+            d_a=int(getattr(model_cfg, "text_proj_dim", 256)),
         )
         # Share per-relation edge density from flow to loss (Def 6.8).
         loss_fn.rho_k = flow.rho_k

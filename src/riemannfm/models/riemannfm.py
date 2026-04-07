@@ -28,12 +28,12 @@ class RiemannFM(nn.Module):
 
     Text embeddings from the data pipeline (``input_text_dim``, e.g. 768
     from nomic, 4096 from qwen3) are first projected to a fixed internal
-    dimension ``d_c`` via a learned linear layer.  This decouples the model
-    architecture from the choice of text encoder.
+    dimension ``text_proj_dim`` via a learned linear layer.  This decouples
+    the model architecture from the choice of text encoder.
 
     Full forward pass:
-      0. Text projection: C_V (input_text_dim) -> C_V (d_c),
-                           C_R (input_text_dim) -> C_R (d_c)
+      0. Text projection: C_V (input_text_dim) -> C_V (text_proj_dim),
+                           C_R (input_text_dim) -> C_R (text_proj_dim)
       1. Time embedding: t -> t_emb
       2. Node encoding: (x_t, C_V_proj, m) -> h^0
       3. Edge encoding: (E_t, C_R_proj) -> g^0
@@ -51,9 +51,9 @@ class RiemannFM(nn.Module):
         num_edge_types: Number of relation types K.
         input_text_dim: Raw text embedding dimension from data pipeline
             (e.g. 768, 4096).  0 means no text.
-        d_c: Internal text condition dimension after projection (Def 3.5).
-            All model components use this fixed dimension.
-        text_dim: Cross-attention (Module E) dimension. 0 to disable.
+        text_proj_dim: Internal text condition dimension after projection
+            (Def 3.5).  All model components use this fixed dimension.
+        use_text_cross_attn: Enable text cross-attention (Module E).
         text_cross_attn_every: Insert text cross-attn every N layers.
         rel_emb_dim: Learnable relation embedding dimension.
         use_geodesic_kernel: Ablation flag.
@@ -74,8 +74,8 @@ class RiemannFM(nn.Module):
         edge_heads: int = 2,
         num_edge_types: int = 10,
         input_text_dim: int = 0,
-        d_c: int = 256,
-        text_dim: int = 0,
+        text_proj_dim: int = 256,
+        use_text_cross_attn: bool = False,
         text_cross_attn_every: int = 999,
         rel_emb_dim: int = 32,
         use_geodesic_kernel: bool = True,
@@ -90,25 +90,25 @@ class RiemannFM(nn.Module):
         self.manifold = manifold
         self.node_dim = node_dim
         self.edge_dim = edge_dim
-        self.d_c = d_c if input_text_dim > 0 else 0
+        self.text_proj_dim = text_proj_dim if input_text_dim > 0 else 0
 
         ambient_dim = manifold.ambient_dim
         time_dim = node_dim
 
-        # Text projection: input_text_dim -> d_c.
+        # Text projection: input_text_dim -> text_proj_dim.
         self.text_proj: nn.Linear | None
-        if input_text_dim > 0 and self.d_c > 0:
-            self.text_proj = nn.Linear(input_text_dim, self.d_c)
+        if input_text_dim > 0 and self.text_proj_dim > 0:
+            self.text_proj = nn.Linear(input_text_dim, self.text_proj_dim)
         else:
             self.text_proj = None
 
         # Time embedding.
         self.time_emb = RiemannFMTimeEmbedding(time_dim)
 
-        # Input encoders use d_c (projected dimension).
+        # Input encoders use text_proj_dim (projected dimension).
         self.node_encoder = RiemannFMNodeEncoder(
             ambient_dim=ambient_dim,
-            text_dim=self.d_c,
+            text_dim=self.text_proj_dim,
             node_dim=node_dim,
             time_dim=time_dim,
             dropout=dropout,
@@ -116,14 +116,14 @@ class RiemannFM(nn.Module):
         self.edge_encoder = RiemannFMEdgeEncoder(
             num_edge_types=num_edge_types,
             rel_emb_dim=rel_emb_dim,
-            text_dim=self.d_c if use_text_condition else 0,
+            text_dim=self.text_proj_dim if use_text_condition else 0,
             edge_dim=edge_dim,
             dropout=dropout,
         )
 
         # RieFormer backbone.
-        # Cross-attention uses d_c as kdim/vdim when text_dim > 0.
-        cross_attn_dim = self.d_c if text_dim > 0 else 0
+        # Cross-attention uses text_proj_dim as kdim/vdim.
+        cross_attn_dim = self.text_proj_dim if use_text_cross_attn else 0
         self.backbone = RiemannFMRieFormer(
             num_layers=num_layers,
             node_dim=node_dim,
@@ -144,23 +144,25 @@ class RiemannFM(nn.Module):
 
         # Prediction heads.
         self.vf_head = RiemannFMVFHead(node_dim, ambient_dim, manifold)
-        self.edge_head = RiemannFMEdgeHead(edge_dim, num_edge_types, d_c=self.d_c)
+        self.edge_head = RiemannFMEdgeHead(
+            edge_dim, num_edge_types, text_proj_dim=self.text_proj_dim,
+        )
 
     def _project_text(self, x: Tensor) -> Tensor:
-        """Project raw text embeddings to internal d_c dimension.
+        """Project raw text embeddings to internal text_proj_dim dimension.
 
         Args:
             x: Raw text embeddings, shape ``(..., input_text_dim)``.
 
         Returns:
-            Projected embeddings, shape ``(..., d_c)``.
+            Projected embeddings, shape ``(..., text_proj_dim)``.
             Returns zero-width tensor if no text projection.
         """
         if self.text_proj is not None and x.shape[-1] > 0:
             result: Tensor = self.text_proj(x)
             return result
         return torch.zeros(
-            *x.shape[:-1], self.d_c, device=x.device, dtype=x.dtype,
+            *x.shape[:-1], self.text_proj_dim, device=x.device, dtype=x.dtype,
         )
 
     def forward(
@@ -188,19 +190,19 @@ class RiemannFM(nn.Module):
               - P_hat: Predicted edge logits, shape ``(B, N, N, K)``.
               - h: Final node hidden states, shape ``(B, N, node_dim)``.
         """
-        # 0. Project text embeddings: input_text_dim -> d_c.
-        node_text_proj = self._project_text(node_text)  # (B, N, d_c)
-        C_R_proj = self._project_text(C_R) if C_R is not None else None  # (K, d_c)
+        # 0. Project text embeddings: input_text_dim -> text_proj_dim.
+        node_text_proj = self._project_text(node_text)  # (B, N, text_proj_dim)
+        C_R_proj = self._project_text(C_R) if C_R is not None else None
 
         # 1. Time embedding.
         t_emb = self.time_emb(t)  # (B, time_dim)
 
-        # 2. Input encoding (uses projected d_c-dim text).
+        # 2. Input encoding (uses projected text_proj_dim-dim text).
         h = self.node_encoder(x_t, node_text_proj, node_mask, t_emb)
         g = self.edge_encoder(E_t, C_R_proj)
 
         # 3. RieFormer backbone.
-        C_V = node_text_proj if self.d_c > 0 else None
+        C_V = node_text_proj if self.text_proj_dim > 0 else None
         h, g = self.backbone(h, g, x_t, t_emb, node_mask, C_V)
 
         # 4. Prediction heads.
@@ -240,8 +242,8 @@ class RiemannFM(nn.Module):
             edge_heads=model_cfg.edge_heads,
             num_edge_types=num_edge_types,
             input_text_dim=input_text_dim,
-            d_c=int(getattr(model_cfg, "d_c", 256)),
-            text_dim=model_cfg.text_dim,
+            text_proj_dim=int(getattr(model_cfg, "text_proj_dim", 256)),
+            use_text_cross_attn=bool(getattr(model_cfg, "use_text_cross_attn", False)),
             text_cross_attn_every=model_cfg.text_cross_attn_every,
             rel_emb_dim=model_cfg.rel_emb_dim,
             use_geodesic_kernel=ablation_cfg.use_geodesic_kernel,

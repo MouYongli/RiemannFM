@@ -70,7 +70,7 @@ class RiemannFMEdgeHead(nn.Module):
     Args:
         edge_dim: Edge hidden dimension.
         num_edge_types: Number of relation types K.
-        d_c: Relation text embedding dimension (0 to disable text injection).
+        text_proj_dim: Relation text embedding dimension (0 to disable text).
         n_rel_layers: Number of relation Transformer layers.
         n_rel_heads: Number of attention heads in relation Transformer.
     """
@@ -79,16 +79,16 @@ class RiemannFMEdgeHead(nn.Module):
         self,
         edge_dim: int,
         num_edge_types: int,
-        d_c: int = 0,
+        text_proj_dim: int = 0,
         n_rel_layers: int = 2,
         n_rel_heads: int = 4,
     ) -> None:
         super().__init__()
         self.num_edge_types = num_edge_types
-        self.d_c = d_c
+        self.text_proj_dim = text_proj_dim
 
         # Step 1: per-relation candidate projection.
-        proj_in = edge_dim + d_c if d_c > 0 else edge_dim
+        proj_in = edge_dim + text_proj_dim if text_proj_dim > 0 else edge_dim
         self.rel_proj = nn.Sequential(
             nn.Linear(proj_in, edge_dim),
             nn.SiLU(),
@@ -115,7 +115,7 @@ class RiemannFMEdgeHead(nn.Module):
 
         Args:
             g: Edge hidden states, shape ``(B, N, N, edge_dim)``.
-            C_R: Relation text embeddings, shape ``(K, d_c)``.
+            C_R: Relation text embeddings, shape ``(K, text_proj_dim)``.
                 None if text conditioning is disabled.
 
         Returns:
@@ -128,10 +128,9 @@ class RiemannFMEdgeHead(nn.Module):
         # Expand g to per-relation: (B, N, N, 1, D) -> (B, N, N, K, D).
         g_exp = g.unsqueeze(3).expand(-1, -1, -1, K, -1)
 
-        if C_R is not None and self.d_c > 0:
-            # Expand C_R: (K, d_c) -> (1, 1, 1, K, d_c) -> (B, N, N, K, d_c).
+        if C_R is not None and self.text_proj_dim > 0:
             c_r = C_R.unsqueeze(0).unsqueeze(0).unsqueeze(0).expand(B, N, N, -1, -1)
-            proj_input = torch.cat([g_exp, c_r], dim=-1)  # (B, N, N, K, D + d_c)
+            proj_input = torch.cat([g_exp, c_r], dim=-1)
         else:
             proj_input = g_exp
 
