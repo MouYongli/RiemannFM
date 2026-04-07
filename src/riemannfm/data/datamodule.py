@@ -23,6 +23,7 @@ from torch.utils.data import DataLoader
 
 from riemannfm.data.collator import RiemannFMGraphCollator
 from riemannfm.data.datasets.pretrain_dataset import RiemannFMKGDataset
+from riemannfm.data.sampler import RiemannFMSubgraphSampler
 
 if TYPE_CHECKING:
     from torch import Tensor
@@ -79,17 +80,66 @@ class RiemannFMDataModule(LightningDataModule):
     def setup(self, stage: str | None = None) -> None:
         """Create datasets for the requested stage.
 
+        Loads shared resources (embeddings, train triples, sampler) once
+        and passes them to all datasets to avoid redundant I/O and memory.
+        Guarded against repeat calls from Lightning Trainer.
+
         Args:
             stage: "fit", "validate", "test", or None (all).
         """
+        # Guard: skip if already set up for this stage.
+        if stage in ("fit", None) and self._train_dataset is not None:
+            return
+        if stage == "test" and self._test_dataset is not None:
+            return
+
+        from pathlib import Path
+
+        from riemannfm.data.pipeline.embed import encoder_slug
+
+        data_path = Path(self.data_dir)
+
+        # ── Load shared resources once ─────────────────────────────────
+        # Text embeddings (loaded once, shared by all splits).
+        entity_emb: Tensor | None = None
+        relation_emb: Tensor | None = None
+        if self.text_encoder:
+            key = encoder_slug(self.text_encoder)
+            emb_dir = data_path / "processed" / "text_embeddings"
+            for p in sorted(emb_dir.glob(f"entity_emb_{key}_*.pt")):
+                entity_emb = torch.load(p, map_location="cpu", weights_only=True)
+                logger.info(f"Loaded shared entity embeddings: {entity_emb.shape} from {p.name}")
+                break
+            for p in sorted(emb_dir.glob(f"relation_emb_{key}_*.pt")):
+                relation_emb = torch.load(p, map_location="cpu", weights_only=True)
+                logger.info(f"Loaded shared relation embeddings: {relation_emb.shape} from {p.name}")
+                break
+
+        # Train triples + sampler (shared by train and val datasets).
+        train_triples_path = data_path / "processed" / "train_triples.pt"
+        train_triples = torch.load(train_triples_path, map_location="cpu", weights_only=True)
+        logger.info(f"Loaded shared train_triples: {train_triples.shape}")
+
+        sampler = RiemannFMSubgraphSampler(
+            triples=train_triples,
+            num_edge_types=self._num_edge_types,
+            max_nodes=self.max_nodes,
+            max_hops=self.max_hops,
+        )
+
         common_kwargs: dict[str, Any] = {
             "data_dir": self.data_dir,
             "num_edge_types": self._num_edge_types,
             "max_nodes": self.max_nodes,
             "max_hops": self.max_hops,
             "text_encoder": self.text_encoder,
+            "entity_emb": entity_emb,
+            "relation_emb": relation_emb,
+            "sampler": sampler,
+            "train_triples": train_triples,
         }
 
+        # ── Create datasets ────────────────────────────────────────────
         if stage in ("fit", None):
             self._train_dataset = RiemannFMKGDataset(
                 split="train",

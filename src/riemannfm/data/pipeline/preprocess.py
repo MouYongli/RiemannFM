@@ -169,10 +169,12 @@ def precompute_embeddings(
 ) -> None:
     """Precompute text embeddings for entities and relations.
 
-    Reads raw/entity_texts.tsv and raw/relation_texts.tsv,
-    encodes with the given embedder, and saves to
-    processed/text_embeddings/entity_emb_{key}_{dim}.pt
-    processed/text_embeddings/relation_emb_{key}_{dim}.pt
+    Texts are loaded in the order defined by entity2id.tsv / relation2id.tsv
+    so that row i of the embedding tensor corresponds to integer ID i.
+
+    Saves to:
+        processed/text_embeddings/entity_emb_{key}_{dim}.pt
+        processed/text_embeddings/relation_emb_{key}_{dim}.pt
 
     Args:
         raw_dir: Path to raw/ directory.
@@ -187,43 +189,83 @@ def precompute_embeddings(
 
     # Entity embeddings
     entity_texts_path = raw_dir / "entity_texts.tsv"
+    entity_id_path = processed_dir / "entity2id.tsv"
     entity_emb_path = emb_dir / embedding_filename(encoder_key, dim, prefix="entity")
 
-    if entity_texts_path.exists():
+    if entity_texts_path.exists() and entity_id_path.exists():
         if entity_emb_path.exists() and not force:
             logger.info(f"Entity embeddings already exist: {entity_emb_path.name}")
         else:
-            texts = _load_texts(entity_texts_path)
+            texts = _load_texts_ordered(entity_texts_path, entity_id_path)
             logger.info(f"Encoding {len(texts)} entity texts with {encoder_key}...")
             embedder.embed(texts, output_path=entity_emb_path)
     else:
-        logger.warning(f"entity_texts.tsv not found in {raw_dir}")
+        logger.warning(f"entity_texts.tsv or entity2id.tsv not found in {raw_dir}")
 
     # Relation embeddings
     relation_texts_path = raw_dir / "relation_texts.tsv"
+    relation_id_path = processed_dir / "relation2id.tsv"
     relation_emb_path = emb_dir / embedding_filename(encoder_key, dim, prefix="relation")
 
-    if relation_texts_path.exists():
+    if relation_texts_path.exists() and relation_id_path.exists():
         if relation_emb_path.exists() and not force:
             logger.info(f"Relation embeddings already exist: {relation_emb_path.name}")
         else:
-            texts = _load_texts(relation_texts_path)
+            texts = _load_texts_ordered(relation_texts_path, relation_id_path)
             logger.info(f"Encoding {len(texts)} relation texts with {encoder_key}...")
             embedder.embed(texts, output_path=relation_emb_path)
     else:
-        logger.warning(f"relation_texts.tsv not found in {raw_dir}")
+        logger.warning(f"relation_texts.tsv or relation2id.tsv not found in {raw_dir}")
 
 
-def _load_texts(path: Path) -> list[str]:
-    """Load texts from a TSV file (id<TAB>text)."""
-    texts: list[str] = []
-    with open(path) as f:
+def _load_texts_ordered(texts_path: Path, id_path: Path) -> list[str]:
+    """Load texts ordered by integer IDs from an id mapping file.
+
+    Reads ``texts_path`` (id<TAB>text) into a dict, then orders by the
+    integer IDs in ``id_path`` (string_id<TAB>int_id). Only IDs present
+    in the mapping are included; extras in texts_path are dropped.
+
+    Args:
+        texts_path: Path to TSV with ``string_id<TAB>text``.
+        id_path: Path to TSV with ``string_id<TAB>int_id``.
+
+    Returns:
+        List of texts where index i corresponds to integer ID i.
+    """
+    # Build string_id -> text lookup
+    id_to_text: dict[str, str] = {}
+    with open(texts_path) as f:
         for line in f:
             parts = line.strip().split("\t", 1)
             if len(parts) == 2:
-                texts.append(parts[1])
-            elif len(parts) == 1 and parts[0]:
-                texts.append(parts[0])
+                id_to_text[parts[0]] = parts[1]
+
+    # Load id mapping: string_id -> int_id
+    id_mapping: list[tuple[str, int]] = []
+    with open(id_path) as f:
+        for line in f:
+            parts = line.strip().split("\t")
+            if len(parts) == 2:
+                id_mapping.append((parts[0], int(parts[1])))
+
+    # Sort by int_id and build ordered text list
+    id_mapping.sort(key=lambda x: x[1])
+    n = len(id_mapping)
+    texts = [""] * n
+    missing = 0
+    for string_id, int_id in id_mapping:
+        if string_id in id_to_text:
+            texts[int_id] = id_to_text[string_id]
+        else:
+            missing += 1
+
+    if missing > 0:
+        logger.warning(
+            f"{missing}/{n} IDs in {id_path.name} have no text in {texts_path.name}"
+        )
+    else:
+        logger.info(f"Loaded {n} texts aligned with {id_path.name}")
+
     return texts
 
 

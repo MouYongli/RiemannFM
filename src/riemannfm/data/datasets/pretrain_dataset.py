@@ -58,6 +58,10 @@ class RiemannFMKGDataset(Dataset[RiemannFMGraphData]):
         max_hops: int = 2,
         text_encoder: str | None = None,
         epoch_size: int | None = None,
+        entity_emb: Tensor | None = None,
+        relation_emb: Tensor | None = None,
+        sampler: RiemannFMSubgraphSampler | None = None,
+        train_triples: Tensor | None = None,
     ):
         self.data_dir = Path(data_dir)
         self.split = split
@@ -67,20 +71,37 @@ class RiemannFMKGDataset(Dataset[RiemannFMGraphData]):
         self.text_encoder = text_encoder
         self.dim_text_emb = 0
 
-        # Load data
-        self.triples: Tensor = self._load_triples(split)
-        self.entity_emb: Tensor | None = None
-        self.relation_emb: Tensor | None = None
-        self._load_text_embeddings()
+        # Use pre-loaded embeddings if provided, otherwise load from disk.
+        if entity_emb is not None:
+            self.entity_emb = entity_emb
+            self.dim_text_emb = entity_emb.shape[-1]
+        else:
+            self.entity_emb = None
+        self.relation_emb = relation_emb
 
-        # Build sampler from training triples (always use train for graph structure)
-        train_triples = self._load_triples("train") if split != "train" else self.triples
-        self.sampler = RiemannFMSubgraphSampler(
-            triples=train_triples,
-            num_edge_types=num_edge_types,
-            max_nodes=max_nodes,
-            max_hops=max_hops,
-        )
+        if self.entity_emb is None:
+            self._load_text_embeddings()
+
+        # Use pre-loaded triples if available, otherwise load from disk.
+        if split == "train" and train_triples is not None:
+            self.triples = train_triples
+            logger.info(f"  Reusing shared train_triples: {self.triples.shape}")
+        else:
+            self.triples = self._load_triples(split)
+
+        # Use pre-built sampler if provided, otherwise build one.
+        if sampler is not None:
+            self.sampler = sampler
+        else:
+            _triples = train_triples if train_triples is not None else (
+                self.triples if split == "train" else self._load_triples("train")
+            )
+            self.sampler = RiemannFMSubgraphSampler(
+                triples=_triples,
+                num_edge_types=num_edge_types,
+                max_nodes=max_nodes,
+                max_hops=max_hops,
+            )
 
         # Virtual epoch size
         self._epoch_size = epoch_size or len(self.triples)

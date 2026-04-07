@@ -454,7 +454,15 @@ class RiemannFMTextEmbedder:
         summary = "\n".join(summary_lines)
         logger.info(summary)
 
-        return torch.cat([r for r in results if r is not None], dim=0)
+        out = torch.cat([r for r in results if r is not None], dim=0)
+        # Truncate to output_dim (supports Matryoshka embeddings like qwen3).
+        if out.shape[-1] > self.output_dim:
+            logger.info(
+                f"Truncating embeddings from {out.shape[-1]} to {self.output_dim} "
+                f"(Matryoshka truncation)"
+            )
+            out = out[..., : self.output_dim]
+        return out
 
     def _load_hf_model(self):
         """Lazy-load HuggingFace model and tokenizer."""

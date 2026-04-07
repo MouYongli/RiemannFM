@@ -40,14 +40,21 @@ class RiemannFMSubgraphSampler:
         self.max_hops = max_hops
         self.importance_sample = importance_sample
 
-        # Build adjacency: node -> [(neighbor, relation)]
+        # Convert to numpy once — avoids slow torch tensor indexing in the loop.
+        h_col = triples[:, 0].numpy()
+        r_col = triples[:, 1].numpy()
+        t_col = triples[:, 2].numpy()
+
+        # Build adjacency and directed edge index in a single pass.
         self.adj: dict[int, list[tuple[int, int]]] = defaultdict(list)
+        self._edge_index: dict[tuple[int, int], list[int]] = defaultdict(list)
         self.relation_count: dict[int, int] = defaultdict(int)
 
-        for row in triples:
-            h, r, t = int(row[0]), int(row[1]), int(row[2])
+        for i in range(len(h_col)):
+            h, r, t = int(h_col[i]), int(r_col[i]), int(t_col[i])
             self.adj[h].append((t, r))
             self.adj[t].append((h, r))  # undirected for BFS traversal
+            self._edge_index[(h, t)].append(r)
             self.relation_count[r] += 1
 
         self.all_nodes = list(self.adj.keys())
@@ -58,9 +65,6 @@ class RiemannFMSubgraphSampler:
             self.relation_weight = {r: max_count / c for r, c in self.relation_count.items()}
         else:
             self.relation_weight = {}
-
-        # Store original directed triples for edge construction
-        self._triples = triples
 
     def sample(self) -> tuple[list[int], Tensor]:
         """Sample a subgraph from a random seed.
@@ -131,8 +135,8 @@ class RiemannFMSubgraphSampler:
         This naturally supports multi-relational edges: if (i, r1, j) and
         (i, r2, j) both exist, then E[i,j,r1] = E[i,j,r2] = 1.
 
-        Uses the original directed triples (not the bidirectional BFS adjacency
-        list) to preserve edge directionality per Def 3.4.
+        Uses the precomputed ``_edge_index`` for O(N^2) lookups instead of
+        scanning all triples.
 
         Args:
             node_list: Global entity IDs in the subgraph.
@@ -142,15 +146,12 @@ class RiemannFMSubgraphSampler:
         """
         N = len(node_list)
         K = self.num_edge_types
-        node_set = set(node_list)
-        node_to_local = {n: i for i, n in enumerate(node_list)}
-
         edge_types = torch.zeros(N, N, K, dtype=torch.float32)
 
-        # Iterate over original directed triples to avoid pseudo-reverse edges.
-        for row in self._triples:
-            h, r, t = int(row[0]), int(row[1]), int(row[2])
-            if h in node_set and t in node_set and 0 <= r < K:
-                edge_types[node_to_local[h], node_to_local[t], r] = 1.0
+        for i, ni in enumerate(node_list):
+            for j, nj in enumerate(node_list):
+                for r in self._edge_index.get((ni, nj), ()):
+                    if 0 <= r < K:
+                        edge_types[i, j, r] = 1.0
 
         return edge_types
