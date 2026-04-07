@@ -4,8 +4,8 @@ _target_: riemannfm.models.lightning_module.RiemannFMPretrainModule
 max_steps: 500000
 val_check_interval: 10000
 
-batch_size: 64
-gradient_accumulation_steps: 4
+batch_size: 8
+gradient_accumulation_steps: 8
 lr: 1.0e-4
 curvature_lr: 1.0e-5
 weight_decay: 0.01

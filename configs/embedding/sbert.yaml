@@ -1,7 +1,0 @@
-embedding_provider: huggingface
-model_name: sentence-transformers/all-MiniLM-L6-v2
-ollama_model_name: all-minilm:l6-v2
-output_dim: 384
-freeze: true
-pooling: mean
-max_length: 128

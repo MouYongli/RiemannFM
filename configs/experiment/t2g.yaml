@@ -1,8 +1,0 @@
-# @package _global_
-defaults:
-  - override /training: finetune
-  - override /task: t2g
-  - _self_
-
-seed: 42
-run_name: t2g_${now:%Y%m%d_%H%M%S}

@@ -2,7 +2,6 @@
 defaults:
   - override /data: wikidata_5m
   - override /training: pretrain
-  - override /task: kgc_lp
   - _self_
 
 seed: 42

@@ -5,10 +5,10 @@ defaults:
   - _self_
 
 seed: 42
-run_name: ablation_arch_${now:%Y%m%d_%H%M%S}
+run_name: scaling_${model.node_dim}_${now:%Y%m%d_%H%M%S}
 
 hydra:
   mode: MULTIRUN
   sweeper:
     params:
-      ablation: full,no_mrope,no_geok,no_mrope_geok,no_ath,no_edge_self,no_cross,no_text_cond
+      model: small,base,large

@@ -2,7 +2,7 @@ _target_: riemannfm.data.datamodule.RiemannFMDataModule
 slug: wikidata_5m
 dataset: wikidata
 data_dir: ${paths.data_dir}/wikidata_5m
-num_entities: 4818679
+num_entities: 4594485
 num_edge_types: 822
 max_nodes: 256
 max_hops: 3

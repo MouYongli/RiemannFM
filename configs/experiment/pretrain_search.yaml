@@ -8,4 +8,4 @@ seed: 42
 run_name: pretrain_search_${now:%Y%m%d_%H%M%S}
 
 training:
-  total_steps: 50000
+  max_steps: 50000

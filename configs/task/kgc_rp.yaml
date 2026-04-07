@@ -1,4 +1,0 @@
-task_name: kgc_rp
-# Reuses KGC-LP checkpoint, no extra training
-checkpoint_from: kgc_lp
-scoring: filtered

@@ -1,6 +1,0 @@
-embedding_provider: none
-model_name: null
-output_dim: 0
-freeze: true
-pooling: null
-max_length: 0

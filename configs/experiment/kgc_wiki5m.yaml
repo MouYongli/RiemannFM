@@ -1,9 +1,0 @@
-# @package _global_
-defaults:
-  - override /data: wikidata_5m
-  - override /training: finetune
-  - override /task: kgc_lp
-  - _self_
-
-seed: 42
-run_name: kgc_wiki5m_${now:%Y%m%d_%H%M%S}

@@ -1,15 +1,13 @@
 defaults:
   - paths: default
-  - model: rieformer_base
+  - model: base
   - manifold: product_h_s_e
   - flow: joint
   - embedding: qwen3
   - data: wikidata_5m
   - training: pretrain
-  - task: kgc_lp
   - ablation: full
   - accelerator: gpu
-  - eval: default
   - download: default
   - preprocess: default
   - logger: default
