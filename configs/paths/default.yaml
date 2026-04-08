@@ -16,3 +16,6 @@ work_dir: ${hydra:runtime.cwd}
 
 # Log directory (loggers write here).
 log_dir: ${paths.output_dir}
+
+# Resume from checkpoint (null = train from scratch, path = resume from ckpt).
+ckpt_path: null

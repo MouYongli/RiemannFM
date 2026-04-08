@@ -79,11 +79,19 @@ uv run python -m riemannfm.cli.pretrain experiment=ablation_loss --multirun
 uv run python -m riemannfm.cli.pretrain experiment=scaling --multirun
 ```
 
+### 从 Checkpoint 恢复训练
+
+```bash
+uv run python -m riemannfm.cli.pretrain \
+    paths.ckpt_path=/path/to/outputs/<run_dir>/checkpoints/last.ckpt
+```
+
+恢复内容包括：模型权重、优化器状态、lr scheduler、global_step、callbacks 状态。
+若原始 run 使用了 wandb，会自动检测 run id 并续接同一个 wandb run。
+
 ### Logger 选择
 
 ```bash
-uv run python -m riemannfm.cli.pretrain logger=default   # wandb + csv (默认)
-uv run python -m riemannfm.cli.pretrain logger=wandb     # 仅 wandb
-uv run python -m riemannfm.cli.pretrain logger=csv       # 仅 csv (离线)
-uv run python -m riemannfm.cli.pretrain logger=none      # 无日志
+# default (wandb+csv) | wandb | csv (离线) | none
+uv run python -m riemannfm.cli.pretrain logger=default
 ```

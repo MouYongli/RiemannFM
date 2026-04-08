@@ -13,6 +13,7 @@ Logger selection (standard Hydra config group):
 
 import logging
 import warnings
+from pathlib import Path
 
 import hydra
 import lightning as L
@@ -39,19 +40,67 @@ def _resolve_precision(mixed_precision: str | None) -> str:
     return "32-true"
 
 
-def _instantiate_loggers(cfg: DictConfig) -> list:
+def _find_wandb_run_id(ckpt_path: str) -> str | None:
+    """Extract wandb run id from a previous run's output directory.
+
+    Searches for ``wandb/latest-run/run-<id>.wandb`` relative to the
+    checkpoint's parent output directory.
+    """
+    output_dir = Path(ckpt_path).resolve().parent.parent
+    latest_run = output_dir / "wandb" / "latest-run"
+    if not latest_run.exists():
+        return None
+    for f in latest_run.glob("run-*.wandb"):
+        return f.stem.removeprefix("run-")
+    return None
+
+
+def _carry_over_csv_logs(ckpt_path: str, csv_logger: object) -> None:
+    """Copy previous CSV metrics into the new CSVLogger directory.
+
+    CSVLogger appends when ``metrics.csv`` already exists, so copying
+    the old file ensures continuous logs across resume boundaries.
+    """
+    old_output = Path(ckpt_path).resolve().parent.parent
+    old_metrics = list(old_output.glob("csv/*/metrics.csv"))
+    if not old_metrics:
+        return
+    new_log_dir = Path(csv_logger.log_dir)  # type: ignore[attr-defined]
+    new_log_dir.mkdir(parents=True, exist_ok=True)
+    dest = new_log_dir / "metrics.csv"
+    if not dest.exists():
+        import shutil
+
+        shutil.copy2(old_metrics[0], dest)
+        logger.info("Copied previous CSV metrics: %s -> %s", old_metrics[0], dest)
+
+
+def _instantiate_loggers(cfg: DictConfig, ckpt_path: str | None = None) -> list:
     """Instantiate loggers from cfg.logger dict.
 
     Each key in cfg.logger is a logger config with a ``_target_`` field.
-    Returns a list of instantiated logger objects.
+    When *ckpt_path* is given, wandb loggers are configured to resume
+    the previous run and CSV logs are carried over.
     """
     if not cfg.get("logger"):
         return []
-    return [
-        instantiate(lg_conf)
-        for lg_conf in cfg.logger.values()
-        if isinstance(lg_conf, DictConfig) and "_target_" in lg_conf
-    ]
+
+    wandb_run_id = _find_wandb_run_id(ckpt_path) if ckpt_path else None
+
+    loggers: list = []
+    for lg_conf in cfg.logger.values():
+        if not (isinstance(lg_conf, DictConfig) and "_target_" in lg_conf):
+            continue
+        if wandb_run_id and "WandbLogger" in lg_conf._target_:
+            lg = instantiate(lg_conf, id=wandb_run_id, resume="must")
+            logger.info("Resuming wandb run: %s", wandb_run_id)
+        elif ckpt_path and "CSVLogger" in lg_conf._target_:
+            lg = instantiate(lg_conf)
+            _carry_over_csv_logs(ckpt_path, lg)
+        else:
+            lg = instantiate(lg_conf)
+        loggers.append(lg)
+    return loggers
 
 
 @hydra.main(version_base=None, config_path="../../../configs", config_name="config")
@@ -125,7 +174,8 @@ def main(cfg: DictConfig) -> None:
     logger.info("Parameters: %s total, %s trainable", f"{total_params:,}", f"{trainable:,}")
 
     # 7. Loggers (standard Hydra dict-of-loggers).
-    loggers = _instantiate_loggers(cfg) or None
+    ckpt_path = cfg.paths.get("ckpt_path")
+    loggers = _instantiate_loggers(cfg, ckpt_path=ckpt_path) or None
 
     # 8. Callbacks.
     ckpt_dir = f"{cfg.paths.output_dir}/checkpoints"
@@ -162,9 +212,12 @@ def main(cfg: DictConfig) -> None:
         deterministic=False,
     )
 
-    # Train.
-    logger.info("Starting pretraining...")
-    trainer.fit(module, datamodule=dm)
+    # Train (resume from checkpoint if provided).
+    if ckpt_path:
+        logger.info("Resuming from checkpoint: %s", ckpt_path)
+    else:
+        logger.info("Starting pretraining from scratch...")
+    trainer.fit(module, datamodule=dm, ckpt_path=ckpt_path)
 
 
 if __name__ == "__main__":

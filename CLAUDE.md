@@ -207,26 +207,46 @@ Squash merge to main. One feature = one clean commit.
 ### Data Pipeline
 
 ```bash
+# Download
 uv run python -m riemannfm.cli.download data=wikidata_5m
-uv run python -m riemannfm.cli.download download.all=true
+
+# Build mini subset (engineering validation)
 uv run python -m riemannfm.cli.preprocess data=wikidata_5m preprocess.build_mini=true
-uv run python -m riemannfm.cli.preprocess data=wikidata_5m_mini embedding=sbert
+
+# Preprocess (text embedding)
+uv run python -m riemannfm.cli.preprocess data=wikidata_5m_mini embedding=qwen3
+uv run python -m riemannfm.cli.preprocess data=wikidata_5m embedding=qwen3
 ```
 
-### Pretraining (Hydra overrides as CLI args)
+### Pretraining
 
 ```bash
-uv run python -m riemannfm.cli.pretrain training.lr=1e-4 data=fb15k237
-uv run python -m riemannfm.cli.pretrain model=small data=wikidata_5m_mini training.max_steps=1000
-```
+# Phase 0: Smoke Test
+uv run python -m riemannfm.cli.pretrain \
+    model=small data=wikidata_5m_mini training.max_steps=1000
 
-### Logger Selection (Hydra config group)
+# Phase 1: Validation Run
+uv run python -m riemannfm.cli.pretrain \
+    model=base data=wikidata_5m training.max_steps=10000 \
+    training.warmup_steps=1000 training.val_check_interval=2000
 
-```bash
-uv run python -m riemannfm.cli.pretrain logger=default      # wandb + csv (default)
-uv run python -m riemannfm.cli.pretrain logger=wandb    # wandb only
-uv run python -m riemannfm.cli.pretrain logger=csv      # csv only (offline)
-uv run python -m riemannfm.cli.pretrain logger=none           # no logger
+# Phase 2: HP Search
+uv run python -m riemannfm.cli.pretrain \
+    experiment=pretrain_search sweep=pretrain
+
+# E1: Main Pretrain (3 seeds)
+uv run python -m riemannfm.cli.pretrain experiment=pretrain_wiki5m seed=42
+uv run python -m riemannfm.cli.pretrain experiment=pretrain_wiki5m seed=123
+uv run python -m riemannfm.cli.pretrain experiment=pretrain_wiki5m seed=456
+
+# E2–E5: Ablation & Scaling (--multirun)
+uv run python -m riemannfm.cli.pretrain experiment=ablation_manifold --multirun
+uv run python -m riemannfm.cli.pretrain experiment=ablation_architecture --multirun
+uv run python -m riemannfm.cli.pretrain experiment=ablation_loss --multirun
+uv run python -m riemannfm.cli.pretrain experiment=scaling --multirun
+
+# Logger: default (wandb+csv) | wandb | csv (offline) | none
+uv run python -m riemannfm.cli.pretrain logger=default
 ```
 
 ## Before Committing
