@@ -86,13 +86,20 @@ def project_curvatures(manifold: RiemannFMProductManifold) -> None:
       - Hyperbolic: kappa_h <= -CURVATURE_EPS
       - Spherical:  kappa_s >= +CURVATURE_EPS
 
+    ``Tensor.clamp_`` does not replace ``NaN`` values, so we explicitly
+    sanitize first to recover from any upstream poisoning (e.g. a NaN
+    optimizer step) instead of leaving the manifold in an unrecoverable
+    state.
+
     Args:
         manifold: Product manifold with learnable curvatures.
     """
     with torch.no_grad():
         if manifold.hyperbolic is not None:
             kappa = manifold.hyperbolic._curvature
+            kappa.nan_to_num_(nan=-1.0, posinf=-CURVATURE_EPS, neginf=-1.0)
             kappa.clamp_(max=-CURVATURE_EPS)
         if manifold.spherical is not None:
             kappa = manifold.spherical._curvature
+            kappa.nan_to_num_(nan=1.0, posinf=1.0, neginf=CURVATURE_EPS)
             kappa.clamp_(min=CURVATURE_EPS)

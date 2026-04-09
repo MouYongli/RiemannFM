@@ -103,8 +103,13 @@ def lorentz_inner(
 def lorentz_norm(v: Tensor, *, keepdim: bool = False) -> Tensor:
     """Riemannian norm of a tangent vector under the Lorentz metric.
 
-    For a tangent vector on the hyperboloid, ``<v, v>_L >= 0``.
-    We clamp before ``sqrt`` to handle small numerical violations.
+    For a tangent vector on the hyperboloid, ``<v, v>_L >= 0``.  At ``v = 0``
+    the naive ``sqrt(<v, v>_L)`` has an infinite backward gradient that
+    PyTorch returns as ``NaN`` — unlike :func:`torch.linalg.norm`, which
+    picks subgradient zero at the origin.  We mirror that behaviour with the
+    double-``where`` trick: substitute a safe constant before ``sqrt`` and
+    mask the result back to zero on the unsafe branch, so the backward never
+    touches ``sqrt(0)``.
 
     Args:
         v: Tangent vector, shape ``(..., d+1)``.
@@ -113,5 +118,7 @@ def lorentz_norm(v: Tensor, *, keepdim: bool = False) -> Tensor:
     Returns:
         shape ``(...)`` or ``(..., 1)``.
     """
-    sq = lorentz_inner(v, v, keepdim=keepdim)
-    return sq.clamp(min=0.0).sqrt()
+    sq = lorentz_inner(v, v, keepdim=keepdim).clamp(min=0.0)
+    safe = sq > MIN_NORM
+    safe_sq = torch.where(safe, sq, torch.ones_like(sq))
+    return torch.where(safe, safe_sq.sqrt(), torch.zeros_like(sq))

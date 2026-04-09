@@ -268,12 +268,24 @@ class RiemannFMPretrainModule(L.LightningModule):
         return avg_loss
 
     def on_before_optimizer_step(self, optimizer: torch.optim.Optimizer) -> None:
-        """Curvature projection before optimizer step (Algo 1, step 11).
+        """Sanitize gradients and project curvatures before optimizer step.
 
-        Ensures curvatures stay in valid ranges after gradient update:
+        Runs *before* Lightning's automatic ``gradient_clip_val`` clipping.
+        ``clip_grad_norm_`` computes a single global norm across all
+        parameters; if any parameter has a ``NaN``/``Inf`` gradient (e.g.
+        from a degenerate manifold op), the global ``clip_coef`` becomes
+        ``NaN`` and re-poisons every other parameter — including curvature,
+        which has its own per-parameter sanitizing hook.  Replacing NaN/Inf
+        with zero here keeps a single bad token from corrupting the entire
+        step.
+
+        Also re-projects curvatures into valid ranges (Algo 1, step 11):
           - kappa_h <= -eps (hyperbolic must be negative)
           - kappa_s >= +eps (spherical must be positive)
         """
+        for p in self.parameters():
+            if p.grad is not None:
+                p.grad.nan_to_num_(nan=0.0, posinf=0.0, neginf=0.0)
         project_curvatures(self.manifold)
 
     def configure_optimizers(self) -> dict[str, Any]:  # type: ignore[override]

@@ -195,10 +195,15 @@ class RiemannFMDualStreamCross(nn.Module):
         # attn[b,i,j] = q[b,i] · k[b,i,j] / sqrt(d_v)
         attn_scores = (q.unsqueeze(2) * k).sum(-1) * self.scale_e2n  # (B, N, N)
         if node_mask is not None:
+            # Use a large finite negative bias instead of -inf so that fully
+            # masked rows (virtual node queries) still produce a finite softmax
+            # whose backward does not poison gradients with NaN.
             edge_mask = node_mask.unsqueeze(1) & node_mask.unsqueeze(2)  # (B, N, N)
-            attn_scores = attn_scores.masked_fill(~edge_mask, float("-inf"))
+            attn_scores = attn_scores.masked_fill(~edge_mask, -1e4)
         alpha = F.softmax(attn_scores, dim=2)             # softmax over j
-        alpha = alpha.nan_to_num(0.0)                     # virtual nodes: all -inf -> NaN -> 0
+        if node_mask is not None:
+            # Zero out virtual query rows so they contribute nothing downstream.
+            alpha = alpha * node_mask.unsqueeze(2).to(alpha.dtype)
         node_agg = (alpha.unsqueeze(-1) * v).sum(dim=2)   # (B, N, d_v)
         h_update = h + self.edge_to_node(node_agg)        # (B, N, node_dim)
 
