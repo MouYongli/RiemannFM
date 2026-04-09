@@ -11,6 +11,7 @@ defaults:
   - download: default
   - preprocess: default
   - logger: default
+  - optional experiment: null
   - _self_
 
 seed: 42

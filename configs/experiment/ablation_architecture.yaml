@@ -1,4 +1,5 @@
 # @package _global_
+# E3: Architecture ablation — remove one component at a time.
 defaults:
   - override /data: wikidata_5m
   - override /training: pretrain
@@ -6,6 +7,13 @@ defaults:
 
 seed: 42
 run_name: ablation_arch_${now:%Y%m%d_%H%M%S}
+
+data:
+  max_nodes: 128
+
+training:
+  batch_size: 4
+  gradient_accumulation_steps: 8
 
 hydra:
   mode: MULTIRUN

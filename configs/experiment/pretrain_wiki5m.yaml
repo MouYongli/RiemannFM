@@ -1,4 +1,6 @@
 # @package _global_
+# E1: Main pretrain — 3 seeds, best HP from search.
+# Target: ~3 days/seed on 1x H100.
 defaults:
   - override /data: wikidata_5m
   - override /training: pretrain
@@ -6,3 +8,11 @@ defaults:
 
 seed: 42
 run_name: pretrain_wiki5m_${now:%Y%m%d_%H%M%S}
+
+data:
+  max_nodes: 128
+
+training:
+  batch_size: 4
+  gradient_accumulation_steps: 8
+  # HP search results will be filled in here after Phase 2.

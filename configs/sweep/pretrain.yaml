@@ -1,5 +1,5 @@
 sampler: tpe
-n_trials: 30
+n_trials: 15
 direction: minimize
 objective: val_loss
 
@@ -12,7 +12,7 @@ search_space:
     choices: [1.0e-6, 5.0e-6, 1.0e-5, 5.0e-5]
   training.warmup_steps:
     type: categorical
-    choices: [5000, 10000, 20000]
+    choices: [2000, 4000, 8000]
   training.lambda_disc:
     type: categorical
     choices: [0.1, 0.5, 1.0, 2.0]

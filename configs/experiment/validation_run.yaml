@@ -1,0 +1,21 @@
+# @package _global_
+# Phase 1: Validation run — confirm training dynamics on full data.
+# Target: wikidata_5m + base model, ~18h on 1x H100.
+# Pass criteria: multi-t val stable, loss components balanced, curvature evolving.
+defaults:
+  - override /data: wikidata_5m
+  - override /training: pretrain
+  - _self_
+
+seed: 42
+run_name: validation_run_${now:%Y%m%d_%H%M%S}
+
+data:
+  max_nodes: 128
+
+training:
+  max_steps: 10000
+  warmup_steps: 1000
+  val_check_interval: 2000
+  batch_size: 4
+  gradient_accumulation_steps: 8

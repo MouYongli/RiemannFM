@@ -1,4 +1,6 @@
 # @package _global_
+# E5: Scaling — small / base / large at same step budget.
+# Note: large model may need batch_size=2 or grad_accum=16; adjust if OOM.
 defaults:
   - override /data: wikidata_5m
   - override /training: pretrain
@@ -6,6 +8,13 @@ defaults:
 
 seed: 42
 run_name: scaling_${model.node_dim}_${now:%Y%m%d_%H%M%S}
+
+data:
+  max_nodes: 128
+
+training:
+  batch_size: 4
+  gradient_accumulation_steps: 8
 
 hydra:
   mode: MULTIRUN
