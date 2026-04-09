@@ -17,6 +17,7 @@ from pathlib import Path
 
 import hydra
 import lightning as L
+import torch
 from hydra.utils import instantiate
 from lightning.pytorch.callbacks import (
     LearningRateMonitor,
@@ -109,6 +110,10 @@ def main(cfg: DictConfig) -> None:
     # Suppress noisy warnings from Lightning internals.
     warnings.filterwarnings("ignore", message=".*LeafSpec.*")
     warnings.filterwarnings("ignore", message=".*pin_memory.*MPS.*")
+    warnings.filterwarnings("ignore", message=".*AccumulateGrad.*stream.*")
+
+    # Enable TF32 for H100/A100 Tensor Cores (trades minimal precision for speed).
+    torch.set_float32_matmul_precision("medium")
 
     logger.info("Config:\n%s", OmegaConf.to_yaml(cfg))
 
@@ -156,6 +161,8 @@ def main(cfg: DictConfig) -> None:
         avg_edge_density=cfg.flow.avg_edge_density,
         w_max=cfg.training.w_max,
         temperature=cfg.training.temperature,
+        input_text_dim=input_text_dim,
+        d_a=int(getattr(cfg.model, "text_proj_dim", 256)),
     )
 
     # 6. LitModule — pass all pre-built objects.
@@ -181,13 +188,16 @@ def main(cfg: DictConfig) -> None:
     ckpt_dir = f"{cfg.paths.output_dir}/checkpoints"
     callbacks = [
         # Save top-3 checkpoints by val/loss with metric in filename.
+        # No `every_n_train_steps`: with `monitor` set, ModelCheckpoint fires
+        # at validation_end so the val/loss baked into the filename is always
+        # the freshly logged one (the train-step trigger could fire before
+        # validation and stamp a stale value).
         ModelCheckpoint(
             dirpath=ckpt_dir,
             filename="step={step}-val_loss={val/loss:.4f}",
             save_top_k=3,
             monitor="val/loss",
             mode="min",
-            every_n_train_steps=cfg.training.val_check_interval,
             auto_insert_metric_name=False,
             save_last=True,  # always save last.ckpt for easy resume
         ),
