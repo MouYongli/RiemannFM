@@ -93,7 +93,7 @@ class RiemannFMEdgeSelfUpdate(nn.Module):
         Returns:
             Updated edge features, shape ``(B, N, N, edge_dim)``.
         """
-        B, N, _, D = g.shape
+        N = g.shape[1]
 
         # Self-exclusion mask: prevent edge (i,j) from attending to itself.
         # For head-side: exclude p=j; for tail-side: exclude p=i.

@@ -120,10 +120,11 @@ class RiemannFMEdgeHead(nn.Module):
         g_proj = self.edge_proj(g)
 
         # Build relation prototypes: (K, edge_dim).
-        if C_R is not None and self.text_proj_dim > 0:
-            rel_proto = self.rel_proto_proj(C_R)  # (K, edge_dim)
-        else:
-            rel_proto = self.rel_prototypes  # (K, edge_dim)
+        rel_proto = (
+            self.rel_proto_proj(C_R)
+            if C_R is not None and self.text_proj_dim > 0
+            else self.rel_prototypes
+        )
 
         # Inner product: (B, N, N, edge_dim) @ (edge_dim, K) -> (B, N, N, K).
         logits: Tensor = torch.einsum("bijd,kd->bijk", g_proj, rel_proto) + self.rel_bias
