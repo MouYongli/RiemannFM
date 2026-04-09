@@ -27,7 +27,11 @@ def continuous_flow_loss(
 
     L_cont = (1/|V_real|) * sum_{i: m_i=1} ||V_hat_i - u_t_i||^2_{T_{x_t} M}
 
-    The Riemannian norm is computed via the product manifold's tangent_norm.
+    The squared norm is computed via :meth:`tangent_norm_sq`, which avoids
+    the ``sqrt`` of :meth:`tangent_norm`.  Going through ``sqrt`` then
+    ``pow(2)`` is mathematically equivalent in the forward pass but produces
+    ``NaN`` gradients whenever the residual vanishes at any token (the
+    backward of ``sqrt`` at zero is ``inf``, multiplied by the mask zero).
 
     Args:
         manifold: Product manifold for tangent norm computation.
@@ -42,11 +46,11 @@ def continuous_flow_loss(
     # Residual in tangent space.
     residual = V_hat - u_t  # (B, N, D)
 
-    # Riemannian norm squared per node.
+    # Riemannian norm squared per node, computed without an intermediate sqrt.
     # Force float32 for Lorentz inner product stability under AMP.
-    norm_sq = manifold.tangent_norm(
+    norm_sq = manifold.tangent_norm_sq(
         x_t.float(), residual.float(),
-    ).pow(2)  # (B, N)
+    )  # (B, N)
 
     # Mask virtual nodes and average over real nodes.
     mask_float = node_mask.float()  # (B, N)

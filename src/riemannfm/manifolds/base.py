@@ -126,6 +126,24 @@ class RiemannFMManifold(nn.Module, abc.ABC):
             Non-negative norm, shape ``(...)``.
         """
 
+    def tangent_norm_sq(self, x: Tensor, v: Tensor) -> Tensor:
+        """Squared Riemannian norm of a tangent vector at *x*.
+
+        Avoids the ``sqrt`` in :meth:`tangent_norm`, whose backward at zero is
+        ``inf`` and produces ``NaN`` gradients when chained with masking.
+        Subclasses should override if a more numerically stable implementation
+        is available; the default delegates to :meth:`inner` and clamps to
+        non-negative.
+
+        Args:
+            x: Base point, shape ``(..., A)``.
+            v: Tangent vector, shape ``(..., A)``.
+
+        Returns:
+            Squared norm, shape ``(...)``.
+        """
+        return self.inner(x, v, v).clamp(min=0.0)
+
     @abc.abstractmethod
     def origin(
         self,

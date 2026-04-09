@@ -276,14 +276,31 @@ class RiemannFMProductManifold(nn.Module):
         Returns:
             shape ``(...)``.
         """
+        return self.tangent_norm_sq(x, v).sqrt()
+
+    def tangent_norm_sq(self, x: Tensor, v: Tensor) -> Tensor:
+        """Squared product tangent norm without ``sqrt`` (Def 4.6).
+
+        ||v||^2_{T_x M} = ||v^H||_L^2 + ||v^S||^2 + ||v^R||^2
+
+        Dispatches to each component's :meth:`tangent_norm_sq` so that
+        component-specific safety (e.g. Lorentz clamping) is preserved.
+
+        Args:
+            x: Base point, shape ``(..., D)``.
+            v: Tangent vector, shape ``(..., D)``.
+
+        Returns:
+            shape ``(...)``.
+        """
         x_parts = self.split(x)
         v_parts = self.split(v)
         norm_sq = torch.zeros(x.shape[:-1], device=x.device, dtype=x.dtype)
         for name in self._component_names:
-            norm_sq = norm_sq + self._get(name).tangent_norm(
+            norm_sq = norm_sq + self._get(name).tangent_norm_sq(
                 x_parts[name], v_parts[name],
-            ).pow(2)
-        return norm_sq.sqrt()
+            )
+        return norm_sq
 
     def origin(
         self,

@@ -74,6 +74,32 @@ class TestContinuousFlowLoss:
         assert V_hat.grad is not None
         assert torch.isfinite(V_hat.grad).all()
 
+    def test_gradient_finite_when_residual_zero_at_masked_token(self) -> None:
+        """Regression: zero residual at any token must not produce NaN grads.
+
+        Going through ``tangent_norm`` (sqrt) then ``pow(2)`` is forward-equal
+        to a direct squared norm, but the backward of ``sqrt`` at zero is
+        ``inf``; multiplied by the mask zero this gave ``0 * inf = NaN`` and
+        poisoned the curvature parameter via global gradient clipping.
+        """
+        manifold = _make_manifold()
+        D = manifold.ambient_dim
+        x_t = manifold.sample_noise(B, N, radius_h=1.0)
+        u_t = torch.randn(B, N, D)
+        # Make V_hat exactly equal to u_t at one token so residual = 0 there.
+        V_hat = u_t.clone().detach().requires_grad_(True)
+        # Mask out that token to mimic a virtual / padding node.
+        mask = torch.ones(B, N, dtype=torch.bool)
+        mask[0, 0] = False
+        loss = continuous_flow_loss(manifold, V_hat, u_t, x_t, mask)
+        loss.backward()
+        assert V_hat.grad is not None
+        assert torch.isfinite(V_hat.grad).all()
+        # Curvatures must also receive finite gradients.
+        for comp in (manifold.hyperbolic, manifold.spherical):
+            if comp is not None and comp._curvature.grad is not None:
+                assert torch.isfinite(comp._curvature.grad).all()
+
 
 class TestDiscreteFlowLoss:
     def test_finite_and_positive(self) -> None:

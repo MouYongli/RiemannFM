@@ -206,6 +206,23 @@ class LorentzManifold(RiemannFMManifold):
         """
         return lorentz_norm(v)
 
+    def tangent_norm_sq(self, x: Tensor, v: Tensor) -> Tensor:
+        """Squared Lorentz norm of a tangent vector at *x* (Def 4.6).
+
+        Computes ``<v, v>_L`` directly and clamps small numerical drift to
+        non-negative.  Avoids the ``sqrt`` of :meth:`tangent_norm`, whose
+        backward at zero is ``inf`` and produces ``NaN`` gradients when the
+        residual at any token vanishes.
+
+        Args:
+            x: Base point (unused, metric is constant in ambient coords).
+            v: Tangent vector, shape ``(..., d_h+1)``.
+
+        Returns:
+            shape ``(...)``.
+        """
+        return lorentz_inner(v, v).clamp(min=0.0)
+
     def origin(
         self,
         *batch_shape: int,
