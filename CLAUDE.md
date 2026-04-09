@@ -222,17 +222,13 @@ uv run python -m riemannfm.cli.preprocess data=wikidata_5m embedding=qwen3
 
 ```bash
 # Phase 0: Smoke Test
-uv run python -m riemannfm.cli.pretrain \
-    model=small data=wikidata_5m_mini training.max_steps=1000
+uv run python -m riemannfm.cli.pretrain experiment=smoke_test
 
 # Phase 1: Validation Run
-uv run python -m riemannfm.cli.pretrain \
-    model=base data=wikidata_5m training.max_steps=10000 \
-    training.warmup_steps=1000 training.val_check_interval=2000
+uv run python -m riemannfm.cli.pretrain experiment=validation_run
 
 # Phase 2: HP Search
-uv run python -m riemannfm.cli.pretrain \
-    experiment=pretrain_search sweep=pretrain
+uv run python -m riemannfm.cli.pretrain experiment=pretrain_search sweep=pretrain
 
 # E1: Main Pretrain (3 seeds)
 uv run python -m riemannfm.cli.pretrain experiment=pretrain_wiki5m seed=42

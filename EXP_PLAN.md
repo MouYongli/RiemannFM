@@ -63,33 +63,40 @@ Phase 3: Ablation (independent, parallelizable)     Phase 3: Main + Scaling
 | Item | Setting |
 |------|---------|
 | Dataset | wikidata_5m_mini (7.8k entities, 822 relations) |
-| Model | small (22.7M) |
+| Model | small (23.6M total) |
 | Steps | 1,000 |
-| Command | `uv run python -m riemannfm.cli.pretrain model=small data=wikidata_5m_mini training.max_steps=1000` |
+| Config | `experiment=smoke_test` |
+| Command | `uv run python -m riemannfm.cli.pretrain experiment=smoke_test` |
+| Est. time | ~4 min (1x H100) |
 | Pass criteria | No NaN/Inf, loss monotonically decreasing, no OOM |
 
 ### Phase 1: Validation Run
 
 | Item | Setting |
 |------|---------|
-| Dataset | wikidata_5m |
-| Model | base (174.7M) |
+| Dataset | wikidata_5m (max_nodes=128) |
+| Model | base (625M total, incl. 450M entity_emb) |
 | Steps | 10,000 |
-| Command | `uv run python -m riemannfm.cli.pretrain model=base data=wikidata_5m training.max_steps=10000` |
+| Batch | 4 × 8 accum = 32 effective |
+| Config | `experiment=validation_run` |
+| Command | `uv run python -m riemannfm.cli.pretrain experiment=validation_run` |
+| Est. time | ~18h (1x H100) |
 | Pass criteria | Multi-t val stable, L_cont/L_disc/L_align ratios reasonable, curvature values evolving |
 
 ### Phase 2: HP Search
 
 | Item | Setting |
 |------|---------|
-| Dataset | wikidata_5m |
+| Dataset | wikidata_5m (max_nodes=128, Optuna may override to [32,64,128]) |
 | Model | base (fixed) |
-| Steps/trial | 50,000 |
-| Trials | 30 |
+| Steps/trial | 20,000 |
+| Trials | 15 |
+| Batch | 4 × 8 accum = 32 effective |
 | Sampler | Optuna TPE |
 | Objective | minimize val/loss |
 | Seed | 42 (single seed during search) |
 | Config | `experiment=pretrain_search` + `sweep=pretrain` |
+| Est. time | ~10 days (1x H100, sequential) |
 
 #### Search Space
 
@@ -97,12 +104,12 @@ Phase 3: Ablation (independent, parallelizable)     Phase 3: Main + Scaling
 |---------------|-------------|-----------------|
 | training.lr | [5e-5, 1e-4, 3e-4, 5e-4] | 1e-4 |
 | training.curvature_lr | [1e-6, 5e-6, 1e-5, 5e-5] | 1e-5 |
-| training.warmup_steps | [5000, 10000, 20000] | 10000 |
+| training.warmup_steps | [2000, 4000, 8000] | 10000 |
 | training.lambda_disc | [0.1, 0.5, 1.0, 2.0] | 1.0 |
 | training.mu_align | [0.01, 0.05, 0.1, 0.5] | 0.1 |
 | training.temperature | [0.05, 0.07, 0.1, 0.2] | 0.07 |
 | training.weight_decay | [0.01, 0.05, 0.1] | 0.01 |
-| data.max_nodes | [32, 64, 128] | 256 |
+| data.max_nodes | [32, 64, 128] | 128 |
 
 **Not searched** (fixed by model size): num_layers, node_dim, edge_dim, num_heads, edge_heads.
 
@@ -226,25 +233,30 @@ Phase 3: Ablation (independent, parallelizable)     Phase 3: Main + Scaling
 
 ---
 
-## Compute Budget
+## Compute Budget (1x H100 80GB)
 
-| Phase | Experiment | Runs | Steps/run | Est. GPU-hours (A100) |
-|-------|-----------|------|-----------|----------------------|
-| 0 | Smoke test | 1 | 1k | < 0.5h |
-| 1 | Validation | 1 | 10k | ~2h |
-| 2 | HP search | 30 | 50k | ~60h |
-| 3 | E1 Main (3 seeds) | 3 | 500k | ~72h |
-| 3 | E2 Manifold (7 runs) | 7 | 500k | ~168h |
-| 3 | E3 Architecture (8 runs) | 8 | 500k | ~192h |
-| 3 | E4 Flow (3 runs) | 3 | 500k | ~72h |
-| 3 | E5 Scaling (3 sizes) | 3 | 500k | ~120h |
-| | **Total** | **56** | | **~687h (~28.5 GPU-days)** |
+Measured baseline: base model, max_nodes=128, batch=4, accum=1 → **0.82 s/step**.
+With accum=8: ~6.6 s/optimizer_step.
 
-### Scheduling (4x A100)
+| Phase | Experiment | Runs | Steps/run | Est. hours (1x H100) |
+|-------|-----------|------|-----------|---------------------|
+| 0 | Smoke test | 1 | 1k | < 0.1h |
+| 1 | Validation | 1 | 10k | ~18h |
+| 2 | HP search | 15 | 20k | ~240h (~10 days) |
+| 3 | E1 Main (3 seeds) | 3 | 500k | ~2,750h (~115 days) |
+| 3 | E2 Manifold (7 runs) | 7 | 500k | ~6,400h |
+| 3 | E3 Architecture (8 runs) | 8 | 500k | ~7,300h |
+| 3 | E4 Flow (3 runs) | 3 | 500k | ~2,750h |
+| 3 | E5 Scaling (3 sizes) | 3 | 500k | ~2,750h |
+
+> **Note**: Phase 3 (E1-E5) 的 500k 步在 1x H100 上不现实（单 run ~38 天）。
+> 正式实验需要多卡并行或缩减步数。Phase 0-2 可在 1x H100 上完成。
+
+### Scheduling (1x H100, sequential)
 
 ```
-Week 1 Day 1-2:   Phase 0 + 1 + 2 (HP search)           ~1.5 days
-Week 1-2 Day 2-5: E1 + E4 + E5 in parallel (9 runs)     ~2.5 days
-Week 2-3 Day 5-10: E2 + E3 in parallel (15 runs)         ~5 days
-                                                   Total: ~9-10 days
+Day 1:          Phase 0 (smoke test)              ~5 min
+Day 1-2:        Phase 1 (validation run)          ~18h
+Day 2-12:       Phase 2 (HP search, 15 trials)    ~10 days
+Day 12+:        Phase 3 requires multi-GPU or reduced steps
 ```
