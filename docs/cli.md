@@ -93,13 +93,26 @@ uv run python -m riemannfm.cli.pretrain experiment=validation_run
 
 ### Phase 2: HP Search（两阶段）
 
-#### Stage 1: 广搜（small 模型，20 trials x 10k steps，~4 天）
+#### Stage 1: 广搜（small 模型，20 trials x 10k steps）
 
 在 small 模型上搜索 loss 权重 + 学习率，找到让三路 loss 均有效下降的组合。
 
+单 GPU（~4 天）：
 ```bash
-uv run python -m riemannfm.cli.pretrain experiment=pretrain_search sweep=pretrain --multirun
+CUDA_VISIBLE_DEVICES=1 uv run python -m riemannfm.cli.pretrain experiment=pretrain_search sweep=pretrain --multirun
 ```
+
+多 GPU 并行（3 GPU ~1.3 天）——3 个终端同时启动，共享 Optuna SQLite study：
+```bash
+# Terminal 1
+CUDA_VISIBLE_DEVICES=1 uv run python -m riemannfm.cli.pretrain experiment=pretrain_search sweep=pretrain --multirun
+# Terminal 2
+CUDA_VISIBLE_DEVICES=2 uv run python -m riemannfm.cli.pretrain experiment=pretrain_search sweep=pretrain --multirun
+# Terminal 3
+CUDA_VISIBLE_DEVICES=3 uv run python -m riemannfm.cli.pretrain experiment=pretrain_search sweep=pretrain --multirun
+```
+
+三个进程共享 `hp_search_s1.db`，Optuna TPE 自动同步采样结果，总共仍是 20 trials。
 
 | 参数 | 值 |
 |------|----|
@@ -127,7 +140,7 @@ uv run python -m riemannfm.cli.pretrain experiment=pretrain_search sweep=pretrai
 
 搜索完成后，锁定 Stage 1 最优的 `lambda_disc`、`mu_align`、`temperature`。
 
-#### Stage 2: 精调（base 模型，6 trials x 10k steps，~2 天）
+#### Stage 2: 精调（base 模型，6 trials x 10k steps）
 
 在 base 模型上精调学习率（loss 权重从 Stage 1 锁定）。
 
@@ -140,9 +153,20 @@ training:
   temperature: ???   # Stage 1 最优值
 ```
 
+单 GPU（~2 天）：
 ```bash
-uv run python -m riemannfm.cli.pretrain experiment=pretrain_search_base sweep=pretrain_base --multirun
+CUDA_VISIBLE_DEVICES=1 uv run python -m riemannfm.cli.pretrain experiment=pretrain_search_base sweep=pretrain_base --multirun
 ```
+
+多 GPU 并行（3 GPU ~0.7 天）：
+```bash
+# Terminal 1/2/3 — 同上，各指定不同 CUDA_VISIBLE_DEVICES
+CUDA_VISIBLE_DEVICES=1 uv run python -m riemannfm.cli.pretrain experiment=pretrain_search_base sweep=pretrain_base --multirun
+CUDA_VISIBLE_DEVICES=2 uv run python -m riemannfm.cli.pretrain experiment=pretrain_search_base sweep=pretrain_base --multirun
+CUDA_VISIBLE_DEVICES=3 uv run python -m riemannfm.cli.pretrain experiment=pretrain_search_base sweep=pretrain_base --multirun
+```
+
+共享 `hp_search_s2.db`，总共仍是 6 trials。
 
 | 参数 | 值 |
 |------|----|
