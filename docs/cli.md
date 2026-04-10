@@ -23,83 +23,155 @@ uv run python -m riemannfm.cli.preprocess data=wikidata_5m_mini embedding=qwen3
 uv run python -m riemannfm.cli.preprocess data=wikidata_5m embedding=qwen3
 ```
 
+---
+
 ## 4. 预训练
 
 ### 硬件约束 (1x H100 80GB)
 
-所有实验基于单张 H100 80GB 调参。base 模型 + wikidata_5m 的关键约束：
-
 - `max_nodes=128`（256 会 OOM）
 - `batch_size=4`（8 会 OOM）
 - `gradient_accumulation_steps=8`（effective batch = 32）
-- 实测吞吐：base 模型 ~0.82 s/step（batch=4, accum=1, max_nodes=128）
 
-### 参数联动规则
+### 模型规模（实测参数量）
 
-缩短 `max_steps` 时，以下参数必须同步调整：
+| Config | Layers | node_dim | edge_dim | Heads | Arch Params | Total (wiki5m) |
+|--------|--------|----------|----------|-------|-------------|----------------|
+| small  | 6      | 384      | 128      | 6     | 22.5M       | 23.6M (mini) / 473M (full) |
+| base   | 10     | 512      | 192      | 8     | 66.9M       | 517.7M |
+| large  | 14     | 768      | 256      | 12    | 200.7M      | 651.4M |
 
-| 参数 | 经验比例 | Phase 0 (1k) | Phase 1 (10k) | Phase 2 (20k) | E1-E5 (500k) |
-|------|---------|:---:|:---:|:---:|:---:|
-| `warmup_steps` | 10-20% of max_steps | 200 | 1,000 | 2,000 | 10,000 (默认) |
-| `val_check_interval` | max_steps / 2~5 | 500 | 2,000 | 5,000 | 10,000 (默认) |
-| `gradient_accumulation_steps` | — | 1 | 8 | 8 | 8 |
+Entity embedding: 4,594,485 x 98 = 450.3M params (wikidata_5m), 7,833 x 98 = 0.8M (mini).
+
+---
 
 ### Phase 0: Smoke Test
 
-验证代码能跑通，loss 能下降。mini 数据 + small 模型，~4 分钟。
+验证代码能跑通、loss 三路都在下降。mini 数据 + small 模型，~5 min。
 
 ```bash
 uv run python -m riemannfm.cli.pretrain experiment=smoke_test
 ```
 
-等价 CLI 覆盖:
-```bash
-uv run python -m riemannfm.cli.pretrain \
-    model=small data=wikidata_5m_mini \
-    training.max_steps=1000 \
-    training.warmup_steps=200 \
-    training.val_check_interval=500 \
-    training.gradient_accumulation_steps=1
-```
+| 参数 | 值 |
+|------|----|
+| Model | small (6L/384d/128e, 22.5M) |
+| Data | wikidata_5m_mini (7,833 entities) |
+| max_nodes | 64 |
+| max_steps | 1,000 |
+| warmup_steps | 200 |
+| val_check_interval | 500 |
+| batch_size x accum | 8 x 1 = 8 |
+| lambda_disc / mu_align / tau | 10.0 / 0.5 / 0.07 |
 
-通过标准：无 NaN/Inf，loss 单调下降，单 GPU < 24GB。
+通过标准：无 NaN/Inf，L_disc < 0.5，L_align 有下降趋势，kappa 变化 > 0.01。
+
+---
 
 ### Phase 1: Validation Run
 
-验证完整 pipeline 在真实数据上的训练动态，~18 小时。
+全量数据 + base 模型，10k steps，~8h。
 
 ```bash
 uv run python -m riemannfm.cli.pretrain experiment=validation_run
 ```
 
-等价 CLI 覆盖:
+| 参数 | 值 |
+|------|----|
+| Model | base (10L/512d/192e, 66.9M) |
+| Data | wikidata_5m (4.6M entities) |
+| max_nodes | 128 |
+| max_steps | 10,000 |
+| warmup_steps | 500 |
+| val_check_interval | 500 |
+| batch_size x accum | 4 x 8 = 32 |
+| lambda_disc / mu_align / tau | 10.0 / 0.5 / 0.07 |
+
+通过标准：val_loss 稳定不回升，L_disc < 0.6，curvature 变化 > 0.05。
+
+---
+
+### Phase 2: HP Search（两阶段）
+
+#### Stage 1: 广搜（small 模型，20 trials x 10k steps，~4 天）
+
+在 small 模型上搜索 loss 权重 + 学习率，找到让三路 loss 均有效下降的组合。
+
 ```bash
-uv run python -m riemannfm.cli.pretrain \
-    model=base data=wikidata_5m \
-    data.max_nodes=128 \
-    training.max_steps=10000 \
-    training.warmup_steps=1000 \
-    training.val_check_interval=2000 \
-    training.batch_size=4 \
-    training.gradient_accumulation_steps=8
+uv run python -m riemannfm.cli.pretrain experiment=pretrain_search sweep=pretrain --multirun
 ```
 
-通过标准：multi-t val 稳定，L_cont/L_disc/L_align 比例合理，curvature 值在演化。
+| 参数 | 值 |
+|------|----|
+| Model | small (6L/384d/128e, 22.5M) |
+| Data | wikidata_5m |
+| max_nodes | 128 |
+| max_steps | 10,000 |
+| warmup_steps | 1,000 |
+| val_check_interval | 2,000 |
+| batch_size x accum | 4 x 8 = 32 |
+| Sampler | TPE, 20 trials, minimize val_loss |
 
-### Phase 2: HP Search
+搜索空间（8 个参数）：
 
-Optuna TPE 搜索最优超参，15 trials x 20k steps，~10 天。
+| 参数 | 范围 | 说明 |
+|------|------|------|
+| `training.lr` | 3e-5, 1e-4, 3e-4, 1e-3 | 主学习率，跨 1.5 个数量级 |
+| `training.curvature_lr` | 1e-5, 5e-5, 1e-4, 5e-4 | 曲率学习率，与 main lr 解耦 |
+| `training.lambda_disc` | 5, 10, 20, 50 | 离散 flow loss 权重（补偿 L_cont/L_disc ~40x 量级差） |
+| `training.mu_align` | 0.1, 0.5, 1.0, 2.0 | 对比对齐 loss 权重 |
+| `training.temperature` | 0.05, 0.07, 0.1, 0.2 | InfoNCE 温度 |
+| `training.weight_decay` | 0.01, 0.05, 0.1 | 权重衰减 |
+| `training.warmup_steps` | 500, 1000, 2000 | 学习率预热步数 |
+| `data.max_nodes` | 64, 128 | 子图最大节点数 |
 
-```bash
-uv run python -m riemannfm.cli.pretrain \
-    experiment=pretrain_search sweep=pretrain
+搜索完成后，锁定 Stage 1 最优的 `lambda_disc`、`mu_align`、`temperature`。
+
+#### Stage 2: 精调（base 模型，6 trials x 10k steps，~2 天）
+
+在 base 模型上精调学习率（loss 权重从 Stage 1 锁定）。
+
+运行前，将 Stage 1 最优结果填入 `configs/experiment/pretrain_search_base.yaml`:
+
+```yaml
+training:
+  lambda_disc: ???   # Stage 1 最优值
+  mu_align: ???      # Stage 1 最优值
+  temperature: ???   # Stage 1 最优值
 ```
 
-搜索完成后，将最优超参写入 `configs/training/pretrain.yaml` 或对应 experiment config。
+```bash
+uv run python -m riemannfm.cli.pretrain experiment=pretrain_search_base sweep=pretrain_base --multirun
+```
 
-### E1: Main Pretrain (3 seeds)
+| 参数 | 值 |
+|------|----|
+| Model | base (10L/512d/192e, 66.9M) |
+| Data | wikidata_5m |
+| max_nodes | 128 |
+| max_steps | 10,000 |
+| warmup_steps | 1,000 |
+| val_check_interval | 2,000 |
+| batch_size x accum | 4 x 8 = 32 |
+| Sampler | TPE, 6 trials, minimize val_loss |
 
-正式预训练，所有参数用默认值（或 HP search 最优结果）。
+搜索空间（3 个参数）：
+
+| 参数 | 范围 | 说明 |
+|------|------|------|
+| `training.lr` | 3e-5, 5e-5, 1e-4, 1.5e-4 | 围绕 Stage 1 最优值缩放 |
+| `training.warmup_steps` | 500, 1000, 2000 | 大模型可能需要更长 warmup |
+| `training.weight_decay` | 0.01, 0.05 | 微调正则化 |
+
+迁移原则：
+- **直接迁移**（loss 特性，与模型大小无关）：lambda_disc, mu_align, temperature, max_nodes
+- **需重新搜索**（与模型规模耦合）：lr, warmup_steps, weight_decay
+
+---
+
+### E1: Main Pretrain (base, 3 seeds x 100k steps)
+
+正式预训练。运行前将 Stage 2 最优 HP 填入 `configs/experiment/pretrain_wiki5m.yaml`。
 
 ```bash
 uv run python -m riemannfm.cli.pretrain experiment=pretrain_wiki5m seed=42
@@ -107,29 +179,126 @@ uv run python -m riemannfm.cli.pretrain experiment=pretrain_wiki5m seed=123
 uv run python -m riemannfm.cli.pretrain experiment=pretrain_wiki5m seed=456
 ```
 
-### E2: Manifold Ablation (7 runs)
+| 参数 | 值 |
+|------|----|
+| Model | base (10L/512d/192e, 66.9M) |
+| Data | wikidata_5m |
+| max_nodes | 128 |
+| max_steps | 100,000 |
+| warmup_steps | 2,000 |
+| val_check_interval | 2,000 |
+| batch_size x accum | 4 x 8 = 32 |
+| HP | Stage 2 最优（待填入） |
+| Est. time | ~3.5 days/seed (1x H100) |
+
+报告 3 seeds 的 mean +/- std: val/loss, val/L_cont, val/L_disc, val/L_align, kappa_h, kappa_s。
+
+---
+
+### E2: Manifold Ablation (small, 7 variants x 50k steps)
 
 ```bash
 uv run python -m riemannfm.cli.pretrain experiment=ablation_manifold --multirun
 ```
 
-### E3: Architecture Ablation (8 runs)
+| 参数 | 值 |
+|------|----|
+| Model | small (6L/384d/128e, 22.5M) |
+| max_steps | 50,000 |
+| warmup_steps | 1,000 |
+| val_check_interval | 2,000 |
+| batch_size x accum | 4 x 8 = 32 |
+| Est. time | ~2 days/variant |
+
+Multirun 变体（总维度 = 96，保持公平比较）：
+
+| Variant | H dim | S dim | E dim | Learnable curvature |
+|---------|-------|-------|-------|---------------------|
+| h_only | 96 | 0 | 0 | yes |
+| s_only | 0 | 96 | 0 | yes |
+| e_only | 0 | 0 | 96 | n/a |
+| h_e | 48 | 0 | 48 | yes |
+| s_e | 0 | 48 | 48 | yes |
+| product_h_s_e | 32 | 32 | 32 | yes |
+| fixed_curvature | 32 | 32 | 32 | **no** |
+
+---
+
+### E3: Architecture Ablation (small, 8 variants x 50k steps)
 
 ```bash
 uv run python -m riemannfm.cli.pretrain experiment=ablation_architecture --multirun
 ```
 
-### E4: Flow Ablation (3 runs)
+| 参数 | 值 |
+|------|----|
+| Model | small (6L/384d/128e) |
+| max_steps | 50,000 |
+| warmup / val_check | 1,000 / 2,000 |
+| Est. time | ~2 days/variant |
+
+Multirun 变体：
+
+| Variant | 移除的组件 |
+|---------|-----------|
+| full | 无（baseline） |
+| no_geok | Geodesic distance kernel |
+| no_mrope | Manifold RoPE |
+| no_mrope_geok | M-RoPE + Geodesic kernel |
+| no_ath | ATH-Norm（回退为 LayerNorm） |
+| no_edge_self | Edge self-update |
+| no_cross | Dual-stream cross-interaction |
+| no_text_cond | Text conditioning |
+
+---
+
+### E4: Flow Ablation (small, 3 variants x 50k steps)
 
 ```bash
 uv run python -m riemannfm.cli.pretrain experiment=ablation_loss --multirun
 ```
 
-### E5: Scaling (3 sizes)
+| 参数 | 值 |
+|------|----|
+| Model | small (6L/384d/128e) |
+| max_steps | 50,000 |
+| warmup / val_check | 1,000 / 2,000 |
+| Est. time | ~2 days/variant |
+
+Multirun 变体：
+
+| Variant | Continuous Flow | Discrete Flow |
+|---------|----------------|---------------|
+| joint | yes | yes |
+| continuous_only | yes | no |
+| discrete_only | no | yes |
+
+---
+
+### E5: Scaling (small/base/large, 100k steps)
 
 ```bash
 uv run python -m riemannfm.cli.pretrain experiment=scaling --multirun
 ```
+
+| 参数 | 值 |
+|------|----|
+| max_steps | 100,000 |
+| warmup_steps | 2,000 |
+| val_check_interval | 2,000 |
+| batch_size x accum | 4 x 8 = 32 |
+
+Multirun 变体：
+
+| Model | Arch Params | Layers | node_dim | edge_dim | Est. time |
+|-------|-------------|--------|----------|----------|-----------|
+| small | 22.5M | 6 | 384 | 128 | ~2 days |
+| base | 66.9M | 10 | 512 | 192 | ~3.5 days |
+| large | 200.7M | 14 | 768 | 256 | ~5.5 days |
+
+---
+
+## 5. 通用选项
 
 ### 从 Checkpoint 恢复训练
 
@@ -138,27 +307,43 @@ uv run python -m riemannfm.cli.pretrain \
     paths.ckpt_path=/path/to/outputs/<run_dir>/checkpoints/last.ckpt
 ```
 
-恢复内容包括：模型权重、优化器状态、lr scheduler、global_step、callbacks 状态。
-若原始 run 使用了 wandb，会自动检测 run id 并续接同一个 wandb run。
+恢复内容：模型权重、优化器状态、lr scheduler、global_step、callbacks。
+若原始 run 使用了 wandb，会自动检测 run id 并续接同一 wandb run。
 
 ### Logger 选择
 
 ```bash
-# default (wandb+csv) | wandb | csv (离线) | none
-uv run python -m riemannfm.cli.pretrain logger=default
+uv run python -m riemannfm.cli.pretrain logger=default   # wandb + csv (默认)
+uv run python -m riemannfm.cli.pretrain logger=wandb     # wandb only
+uv run python -m riemannfm.cli.pretrain logger=csv       # csv only (离线)
+uv run python -m riemannfm.cli.pretrain logger=none      # 不记录
 ```
 
-## 5. Experiment Config 总览
+### 指定 GPU
 
-所有 experiment configs 位于 `configs/experiment/`，每个实验封装了完整参数：
+```bash
+CUDA_VISIBLE_DEVICES=1 uv run python -m riemannfm.cli.pretrain experiment=validation_run
+```
 
-| Config | Phase | 用途 | 关键覆盖 |
-|--------|-------|------|---------|
-| `smoke_test` | 0 | 代码验证 | small, mini, 1k steps, accum=1 |
-| `validation_run` | 1 | 训练动态验证 | base, 10k steps, max_nodes=128 |
-| `pretrain_search` | 2 | HP 搜索 | base, 20k steps, 15 trials |
-| `pretrain_wiki5m` | E1 | 正式预训练 | base, 500k steps, 3 seeds |
-| `ablation_manifold` | E2 | 流形消融 | 7 manifold variants |
-| `ablation_architecture` | E3 | 架构消融 | 8 ablation flags |
-| `ablation_loss` | E4 | Flow 消融 | 3 flow configs |
-| `scaling` | E5 | 模型缩放 | small/base/large |
+---
+
+## 6. Experiment Config 总览（已验证）
+
+以下参数经 `uv run python -c` Hydra compose + 模型实例化测试确认：
+
+| Config | Phase | Model | Data | N_max | Steps | Warmup | ValInt | BS x Acc |
+|--------|-------|-------|------|-------|-------|--------|--------|----------|
+| `smoke_test` | P0 | 6L/384d | mini | 64 | 1k | 200 | 500 | 8 x 1 |
+| `validation_run` | P1 | 10L/512d | full | 128 | 10k | 500 | 500 | 4 x 8 |
+| `pretrain_search` | P2a | 6L/384d | full | 128 | 10k | 1k | 2k | 4 x 8 |
+| `pretrain_search_base` | P2b | 10L/512d | full | 128 | 10k | 1k | 2k | 4 x 8 |
+| `pretrain_wiki5m` | E1 | 10L/512d | full | 128 | 100k | 2k | 2k | 4 x 8 |
+| `ablation_manifold` | E2 | 6L/384d | full | 128 | 50k | 1k | 2k | 4 x 8 |
+| `ablation_architecture` | E3 | 6L/384d | full | 128 | 50k | 1k | 2k | 4 x 8 |
+| `ablation_loss` | E4 | 6L/384d | full | 128 | 50k | 1k | 2k | 4 x 8 |
+| `scaling` | E5 | all* | full | 128 | 100k | 2k | 2k | 4 x 8 |
+
+*scaling 默认 base，通过 `--multirun` 遍历 small / base / large。
+
+所有 experiment 共享 loss 权重默认值 (lambda_disc=10.0, mu_align=0.5, tau=0.07)，
+P2a/P2b 中由 Optuna sweep 覆盖，E1-E5 使用 HP search 最终结果。
