@@ -1,30 +1,32 @@
+# Stage 1: broad search on small model — find loss weights + lr.
+# Run with: experiment=pretrain_search sweep=pretrain --multirun
 sampler: tpe
-n_trials: 15
+n_trials: 20
 direction: minimize
 objective: val_loss
 
 search_space:
   training.lr:
     type: categorical
-    choices: [5.0e-5, 1.0e-4, 3.0e-4, 5.0e-4]
+    choices: [3.0e-5, 1.0e-4, 3.0e-4, 1.0e-3]
   training.curvature_lr:
     type: categorical
-    choices: [1.0e-6, 5.0e-6, 1.0e-5, 5.0e-5]
-  training.warmup_steps:
-    type: categorical
-    choices: [2000, 4000, 8000]
+    choices: [1.0e-5, 5.0e-5, 1.0e-4, 5.0e-4]
   training.lambda_disc:
     type: categorical
-    choices: [0.1, 0.5, 1.0, 2.0]
+    choices: [5.0, 10.0, 20.0, 50.0]
   training.mu_align:
     type: categorical
-    choices: [0.01, 0.05, 0.1, 0.5]
+    choices: [0.1, 0.5, 1.0, 2.0]
   training.temperature:
     type: categorical
     choices: [0.05, 0.07, 0.1, 0.2]
   training.weight_decay:
     type: categorical
     choices: [0.01, 0.05, 0.1]
+  training.warmup_steps:
+    type: categorical
+    choices: [500, 1000, 2000]
   data.max_nodes:
     type: categorical
-    choices: [32, 64, 128]
+    choices: [64, 128]

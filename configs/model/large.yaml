@@ -1,10 +1,10 @@
 _target_: riemannfm.models.riemannfm.RiemannFM
-num_layers: 24
-node_dim: 1024
-edge_dim: 384
-num_heads: 16
-edge_heads: 8
-rel_emb_dim: 128
+num_layers: 14
+node_dim: 768
+edge_dim: 256
+num_heads: 12
+edge_heads: 4
+rel_emb_dim: 64
 text_proj_dim: 512
 use_text_cross_attn: true
 text_cross_attn_every: 3
