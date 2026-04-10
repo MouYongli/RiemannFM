@@ -1,9 +1,12 @@
 # Stage 2: fine-tune lr on base model — loss weights locked from stage 1.
 # Run with: experiment=pretrain_search_base sweep=pretrain_base --multirun
+# Multi-GPU: launch on multiple GPUs with same study_name.
 sampler: tpe
 n_trials: 6
 direction: minimize
 objective: val_loss
+study_name: hp_search_s2
+storage: sqlite:///hp_search_s2.db
 
 search_space:
   training.lr:
