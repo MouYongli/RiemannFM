@@ -110,7 +110,8 @@ class RiemannFMBlock(nn.Module):
         else:
             self.norm1 = RiemannFMPreNorm(node_dim)
             self.norm2 = RiemannFMPreNorm(node_dim)
-        self.edge_norm = nn.LayerNorm(edge_dim)
+        self.edge_norm1 = nn.LayerNorm(edge_dim)
+        self.edge_norm2 = nn.LayerNorm(edge_dim)
 
         # [C] Edge self-update.
         self.use_edge_self_update = use_edge_self_update
@@ -172,7 +173,7 @@ class RiemannFMBlock(nn.Module):
 
         # [C] Edge self-update via factorized attention (Def 5.11).
         if self.use_edge_self_update:
-            g = self.edge_norm(self.edge_update(g))
+            g = g + self.edge_update(self.edge_norm1(g))
 
         # [D] Cross-interaction.
         if self.use_dual_stream_cross:
@@ -183,7 +184,7 @@ class RiemannFMBlock(nn.Module):
         # [E] Text cross-attention.
         if self.use_text_cross_attn and C_V is not None:
             h_normed = self.text_norm(h)
-            # Key mask for text: same as node_mask.
+            # key_padding_mask: True = ignore. ~node_mask masks virtual nodes.
             key_padding_mask = ~node_mask if node_mask is not None else None
             h_text, _ = self.text_cross_attn(
                 h_normed, C_V, C_V,
@@ -195,7 +196,7 @@ class RiemannFMBlock(nn.Module):
         # NOTE: Deviation from Def 5.15 — adds FFN after text cross-attention.
         # Standard Transformer practice for additional nonlinear capacity.
         h = h + self.ff_node(self.norm2(h, t_emb, node_mask))
-        g = g + self.ff_edge(self.edge_norm(g))
+        g = g + self.ff_edge(self.edge_norm2(g))
 
         # Mask virtual node hidden states.
         if node_mask is not None:

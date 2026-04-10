@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING
 import torch
 from torch import Tensor, nn
 
-from riemannfm.losses.contrastive_loss import contrastive_alignment_loss
 from riemannfm.losses.flow_matching_loss import (
     continuous_flow_loss,
     discrete_flow_loss,
@@ -18,6 +17,33 @@ from riemannfm.losses.flow_matching_loss import (
 
 if TYPE_CHECKING:
     from riemannfm.manifolds.product import RiemannFMProductManifold
+
+
+def _contrastive_loss_from_pairs(
+    g: Tensor, c: Tensor, temperature: float,
+) -> Tensor:
+    """Symmetric InfoNCE on pre-gathered valid node pairs.
+
+    Args:
+        g: Projected graph features for valid nodes, shape ``(M, d_a)``.
+        c: Projected text embeddings for valid nodes, shape ``(M, d_a)``.
+        temperature: InfoNCE temperature.
+
+    Returns:
+        Scalar contrastive loss.
+    """
+    import torch.nn.functional as F
+
+    if c.norm(dim=-1).max() < 1e-8:
+        return torch.tensor(0.0, device=g.device, dtype=g.dtype)
+
+    g_norm = F.normalize(g, dim=-1)
+    c_norm = F.normalize(c, dim=-1)
+    logits = g_norm @ c_norm.T / temperature
+    labels = torch.arange(logits.shape[0], device=logits.device)
+    loss_g2c = F.cross_entropy(logits, labels)
+    loss_c2g = F.cross_entropy(logits.T, labels)
+    return (loss_g2c + loss_c2g) / 2
 
 
 class RiemannFMCombinedLoss(nn.Module):
@@ -133,12 +159,22 @@ class RiemannFMCombinedLoss(nn.Module):
             and node_text is not None
             and node_text.shape[-1] > 0
         ):
-            g = self.proj_g(x_1)         # (B, N, d_a)
-            c = self.proj_c(node_text)    # (B, N, d_a)
-            l_align = contrastive_alignment_loss(
-                g, c, node_mask,
-                temperature=self.temperature,
-            )
+            # Project only valid (real) nodes to avoid zero-input gradient
+            # starvation on proj_c/proj_g weights from virtual node padding.
+            B, N, _ = x_1.shape
+            mask_flat = node_mask.reshape(-1)
+            valid_idx = mask_flat.nonzero(as_tuple=True)[0]
+
+            if valid_idx.numel() < 2:
+                l_align = torch.tensor(0.0, device=x_1.device, dtype=x_1.dtype)
+            else:
+                x_valid = x_1.reshape(B * N, -1)[valid_idx]  # (M, D)
+                t_valid = node_text.reshape(B * N, -1)[valid_idx]  # (M, d_c)
+                g_valid = self.proj_g(x_valid)  # (M, d_a)
+                c_valid = self.proj_c(t_valid)  # (M, d_a)
+                l_align = _contrastive_loss_from_pairs(
+                    g_valid, c_valid, self.temperature,
+                )
         else:
             l_align = torch.tensor(0.0, device=V_hat.device, dtype=V_hat.dtype)
 

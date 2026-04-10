@@ -126,7 +126,8 @@ class RiemannFMEdgeSelfUpdate(nn.Module):
         attn_tail = F.softmax(attn_tail, dim=-1)
         g_tail = torch.matmul(attn_tail, v_tail).permute(0, 2, 1, 3)  # (B, N, N, D)
 
-        # Residual update: MLP([g || g_head || g_tail]).
+        # MLP([g || g_head || g_tail]).
+        # Residual connection is applied externally by the caller (RieFormerBlock).
         combined = torch.cat([g, g_head, g_tail], dim=-1)  # (B, N, N, 3D)
-        result: Tensor = g + self.mlp(combined)
+        result: Tensor = self.mlp(combined)
         return result
