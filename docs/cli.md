@@ -196,11 +196,18 @@ CUDA_VISIBLE_DEVICES=3 uv run python -m riemannfm.cli.pretrain experiment=pretra
 ### E1: Main Pretrain (base, 3 seeds x 100k steps)
 
 正式预训练。运行前将 Stage 2 最优 HP 填入 `configs/experiment/pretrain_wiki5m.yaml`。
+每个 seed 单 GPU 单进程（base 模型峰值显存 <10GB，无需多卡 DDP）。
 
+单 seed 串行：
 ```bash
-uv run python -m riemannfm.cli.pretrain experiment=pretrain_wiki5m seed=42
-uv run python -m riemannfm.cli.pretrain experiment=pretrain_wiki5m seed=123
-uv run python -m riemannfm.cli.pretrain experiment=pretrain_wiki5m seed=456
+CUDA_VISIBLE_DEVICES=1 uv run python -m riemannfm.cli.pretrain experiment=pretrain_wiki5m seed=42
+```
+
+3 seeds 多 GPU 并行（3.5 天全部完成，而非串行 10.5 天）：
+```bash
+CUDA_VISIBLE_DEVICES=1 uv run python -m riemannfm.cli.pretrain experiment=pretrain_wiki5m seed=42 &
+CUDA_VISIBLE_DEVICES=2 uv run python -m riemannfm.cli.pretrain experiment=pretrain_wiki5m seed=123 &
+CUDA_VISIBLE_DEVICES=3 uv run python -m riemannfm.cli.pretrain experiment=pretrain_wiki5m seed=456 &
 ```
 
 | 参数 | 值 |
@@ -217,22 +224,27 @@ uv run python -m riemannfm.cli.pretrain experiment=pretrain_wiki5m seed=456
 
 报告 3 seeds 的 mean +/- std: val/loss, val/L_cont, val/L_disc, val/L_align, kappa_h, kappa_s。
 
+> 注：如需对单个 run 使用多卡 DDP 加速，可加 `accelerator=ddp`（4 GPU）：
+> ```bash
+> uv run python -m riemannfm.cli.pretrain experiment=pretrain_wiki5m accelerator=ddp
+> ```
+> 但当前 base 模型 + wikidata_5m 的规模下，单卡足够，多 seed 并行是更高效的策略。
+
 ---
 
-### E2: Manifold Ablation (small, 7 variants x 50k steps)
+### E2-E4: Ablation (small, 50k steps each)
+
+Multirun 变体串行执行。如有多 GPU，可将不同消融实验分配到不同 GPU 并行：
 
 ```bash
-uv run python -m riemannfm.cli.pretrain experiment=ablation_manifold --multirun
+CUDA_VISIBLE_DEVICES=1 uv run python -m riemannfm.cli.pretrain experiment=ablation_manifold --multirun &      # E2: 7 variants
+CUDA_VISIBLE_DEVICES=2 uv run python -m riemannfm.cli.pretrain experiment=ablation_architecture --multirun &   # E3: 8 variants
+CUDA_VISIBLE_DEVICES=3 uv run python -m riemannfm.cli.pretrain experiment=ablation_loss --multirun &           # E4: 3 variants
 ```
 
-| 参数 | 值 |
-|------|----|
-| Model | small (6L/384d/128e, 22.5M) |
-| max_steps | 50,000 |
-| warmup_steps | 1,000 |
-| val_check_interval | 2,000 |
-| batch_size x accum | 4 x 8 = 32 |
-| Est. time | ~2 days/variant |
+所有消融共享参数：small 模型 (22.5M)，50k steps，warmup 1k，val_check 2k，batch 4x8=32，~2 days/variant。
+
+#### E2: Manifold Ablation (7 variants)
 
 Multirun 变体（总维度 = 96，保持公平比较）：
 
@@ -248,18 +260,7 @@ Multirun 变体（总维度 = 96，保持公平比较）：
 
 ---
 
-### E3: Architecture Ablation (small, 8 variants x 50k steps)
-
-```bash
-uv run python -m riemannfm.cli.pretrain experiment=ablation_architecture --multirun
-```
-
-| 参数 | 值 |
-|------|----|
-| Model | small (6L/384d/128e) |
-| max_steps | 50,000 |
-| warmup / val_check | 1,000 / 2,000 |
-| Est. time | ~2 days/variant |
+#### E3: Architecture Ablation (8 variants)
 
 Multirun 变体：
 
@@ -276,18 +277,7 @@ Multirun 变体：
 
 ---
 
-### E4: Flow Ablation (small, 3 variants x 50k steps)
-
-```bash
-uv run python -m riemannfm.cli.pretrain experiment=ablation_loss --multirun
-```
-
-| 参数 | 值 |
-|------|----|
-| Model | small (6L/384d/128e) |
-| max_steps | 50,000 |
-| warmup / val_check | 1,000 / 2,000 |
-| Est. time | ~2 days/variant |
+#### E4: Flow Ablation (3 variants)
 
 Multirun 变体：
 
