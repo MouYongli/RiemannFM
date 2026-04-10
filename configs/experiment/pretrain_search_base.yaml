@@ -1,0 +1,26 @@
+# @package _global_
+# Phase 2b (Stage 2): Fine-tune lr on base model — loss weights from stage 1.
+# 6 trials x 10k steps on base model, ~2 days on 1x H100.
+# Before running: fill in best lambda_disc, mu_align, temperature from stage 1.
+defaults:
+  - override /model: base
+  - override /data: wikidata_5m
+  - override /training: pretrain
+  - _self_
+
+seed: 42
+run_name: hp_search_s2_${now:%Y%m%d_%H%M%S}
+
+data:
+  max_nodes: 128
+
+training:
+  max_steps: 10000
+  warmup_steps: 1000
+  val_check_interval: 2000
+  batch_size: 4
+  gradient_accumulation_steps: 8
+  # Fill in from stage 1 best trial:
+  # lambda_disc: ???
+  # mu_align: ???
+  # temperature: ???

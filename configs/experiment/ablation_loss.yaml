@@ -1,17 +1,22 @@
 # @package _global_
 # E4: Flow ablation — joint vs continuous-only vs discrete-only.
+# 3 variants × ~2 days each on small model (1x H100).
 defaults:
+  - override /model: small
   - override /data: wikidata_5m
   - override /training: pretrain
   - _self_
 
 seed: 42
-run_name: ablation_loss_${now:%Y%m%d_%H%M%S}
+run_name: abl_flow_${now:%Y%m%d_%H%M%S}
 
 data:
   max_nodes: 128
 
 training:
+  max_steps: 50000
+  warmup_steps: 1000
+  val_check_interval: 2000
   batch_size: 4
   gradient_accumulation_steps: 8
 

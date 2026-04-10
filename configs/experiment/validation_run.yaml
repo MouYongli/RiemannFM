@@ -15,7 +15,7 @@ data:
 
 training:
   max_steps: 10000
-  warmup_steps: 1000
-  val_check_interval: 2000
+  warmup_steps: 500
+  val_check_interval: 500
   batch_size: 4
   gradient_accumulation_steps: 8

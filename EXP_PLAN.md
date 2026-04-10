@@ -1,117 +1,128 @@
-# Experiment Plan — ISWC 2026 (Pretrain + Ablation)
+# Experiment Plan — RiemannFM Pretraining
 
 ## Core Claim
 
 Joint continuous-discrete flow matching on product Riemannian manifolds (H x S x E), with geodesic attention and text conditioning, learns high-quality generative representations for knowledge graphs.
 
+## Model Sizes
+
+| Config | Layers | node_dim | edge_dim | Heads | Arch Params | Use |
+|--------|--------|----------|----------|-------|-------------|-----|
+| small  | 6      | 384      | 128      | 6     | ~22M        | HP search, ablations |
+| base   | 10     | 512      | 192      | 8     | ~65M        | Main experiment (E1) |
+| large  | 14     | 768      | 256      | 12    | ~180M       | Scaling study (E5) |
+
+Entity embedding (4.6M x 97) = 446M params shared across all sizes.
+
 ## Experiment Overview
 
-| ID | RQ | Name | Purpose | Runs |
-|----|------|------|---------|------|
-| E1 | RQ1 | Main Pretrain | Full pretrain with 3 seeds | 3 |
-| E2 | RQ2 | Manifold Ablation | H x S x E vs single/dual manifolds vs fixed curvature | 7 |
-| E3 | RQ3 | Architecture Ablation | Remove one component at a time | 8 |
-| E4 | RQ4 | Flow Ablation | joint vs continuous-only vs discrete-only | 3 |
-| E5 | RQ5 | Scaling | small / base / large | 3 |
-| | | | **Total** | **24** |
+| ID | Name | Model | Runs | Steps | Est. Time (1xH100) |
+|----|------|-------|------|-------|---------------------|
+| P0 | Smoke Test | small (mini data) | 1 | 1k | 5 min |
+| P1 | Validation Run | base | 1 | 10k | 8h |
+| P2a | HP Search Stage 1 | small | 20 | 10k | 4 days |
+| P2b | HP Search Stage 2 | base | 6 | 10k | 2 days |
+| E1 | Main Pretrain | base | 3 (seeds) | 100k | 10 days |
+| E2 | Manifold Ablation | small | 7 | 50k | 14 days |
+| E3 | Architecture Ablation | small | 8 | 50k | 16 days |
+| E4 | Flow Ablation | small | 3 | 50k | 6 days |
+| E5 | Scaling | small/base/large | 3 | 100k | 11 days |
 
 ---
 
-## Experiment Dependencies & Execution Order
+## Execution Flow
 
 ```
-Phase 0: Smoke Test
-   |      wikidata_5m_mini + small, 1k steps
-   |      Pass criteria: no NaN, loss decreasing
+Phase 0: Smoke Test (mini data + small model, 1k steps, ~5 min)
+   |   Pass: no NaN, L_cont/L_disc/L_align all decreasing, kappa evolving
    v
-Phase 1: Validation Run
-   |      wikidata_5m + base, 10k steps
-   |      Pass criteria: multi-t val stable, loss components balanced, curvature evolving
+Phase 1: Validation Run (full data + base model, 10k steps, ~8h)
+   |   Pass: val_loss stable, L_disc < 0.6, L_align trending down
    v
-Phase 2: HP Search
-   |      wikidata_5m + base, 50k steps x 30 trials (Optuna TPE)
-   |      Output: best_hp = {lr, curvature_lr, warmup, lambda_disc, mu_align, tau, wd, max_nodes}
+Phase 2a: HP Search Stage 1 (small model, 20 trials x 10k steps, ~4 days)
+   |   Search: lr, curvature_lr, lambda_disc, mu_align, temperature,
+   |           weight_decay, warmup_steps, max_nodes
+   |   Lock: loss weights (lambda_disc, mu_align, temperature)
    v
-   |--- best_hp injected into ALL subsequent experiments ---|
-   v                                                        v
-Phase 3: Ablation (independent, parallelizable)     Phase 3: Main + Scaling
-   |                                                        |
-   |-- E2: Manifold Ablation   (7 runs)                     |-- E1: Main Pretrain (3 seeds)
-   |-- E3: Architecture Ablation (8 runs)                    |-- E5: Scaling       (3 sizes)
-   |-- E4: Flow Ablation       (3 runs)
+Phase 2b: HP Search Stage 2 (base model, 6 trials x 10k steps, ~2 days)
+   |   Search: lr, warmup_steps, weight_decay (loss weights locked from stage 1)
+   |   Output: final HP set for base model
+   v
+   |--------- best HP injected into all subsequent experiments ---------|
+   v                                                                    v
+Phase 3a: Ablations (small model, parallelizable)     Phase 3b: Main + Scaling
+   |                                                           |
+   |-- E2: Manifold     (7 variants x 50k)                    |-- E1: Main Pretrain (3 seeds x 100k)
+   |-- E3: Architecture (8 variants x 50k)                    |-- E5: Scaling (3 sizes x 100k)
+   |-- E4: Flow         (3 variants x 50k)
 ```
-
-### Dependency Table
-
-| Experiment | Depends on | Reason |
-|------------|-----------|--------|
-| Phase 0: Smoke test | none | First step, verify code |
-| Phase 1: Validation | Phase 0 pass | Confirm training dynamics |
-| Phase 2: HP search | Phase 1 pass | Pipeline must be stable before large-scale search |
-| E1: Main pretrain | HP search done | Use best HP |
-| E2: Manifold ablation | HP search done | Control variables: same HP, vary manifold only |
-| E3: Architecture ablation | HP search done | Control variables: same HP, vary architecture only |
-| E4: Flow ablation | HP search done | Control variables: same HP, vary flow only |
-| E5: Scaling | HP search done | Use best HP with lr scaling rule |
 
 ---
 
-## Development Phases (not in paper)
-
-### Phase 0: Smoke Test
+## Phase 0: Smoke Test
 
 | Item | Setting |
 |------|---------|
-| Dataset | wikidata_5m_mini (7.8k entities, 822 relations) |
-| Model | small (23.6M total) |
+| Dataset | wikidata_5m_mini (7.8k entities) |
+| Model | small (~22M arch params) |
 | Steps | 1,000 |
-| Config | `experiment=smoke_test` |
 | Command | `uv run python -m riemannfm.cli.pretrain experiment=smoke_test` |
-| Est. time | ~4 min (1x H100) |
-| Pass criteria | No NaN/Inf, loss monotonically decreasing, no OOM |
+| Pass criteria | No NaN/Inf, L_disc < 0.5 at end, L_align trending down, kappa shift > 0.01 |
 
-### Phase 1: Validation Run
+## Phase 1: Validation Run
 
 | Item | Setting |
 |------|---------|
 | Dataset | wikidata_5m (max_nodes=128) |
-| Model | base (625M total, incl. 450M entity_emb) |
-| Steps | 10,000 |
-| Batch | 4 × 8 accum = 32 effective |
-| Config | `experiment=validation_run` |
+| Model | base (~65M arch params) |
+| Steps | 10,000 (val every 500) |
+| Batch | 4 x 8 accum = 32 effective |
 | Command | `uv run python -m riemannfm.cli.pretrain experiment=validation_run` |
-| Est. time | ~18h (1x H100) |
-| Pass criteria | Multi-t val stable, L_cont/L_disc/L_align ratios reasonable, curvature values evolving |
+| Pass criteria | val_loss not increasing after step 2000, L_disc < 0.6, curvature shift > 0.05 |
 
-### Phase 2: HP Search
+## Phase 2: HP Search (Two-Stage)
+
+### Stage 1: Broad search on small model
 
 | Item | Setting |
 |------|---------|
-| Dataset | wikidata_5m (max_nodes=128, Optuna may override to [32,64,128]) |
-| Model | base (fixed) |
-| Steps/trial | 20,000 |
-| Trials | 15 |
-| Batch | 4 × 8 accum = 32 effective |
-| Sampler | Optuna TPE |
-| Objective | minimize val/loss |
-| Seed | 42 (single seed during search) |
-| Config | `experiment=pretrain_search` + `sweep=pretrain` |
-| Est. time | ~10 days (1x H100, sequential) |
+| Model | small (fast iteration) |
+| Steps/trial | 10,000 |
+| Trials | 20 (TPE) |
+| Command | `uv run python -m riemannfm.cli.pretrain experiment=pretrain_search sweep=pretrain --multirun` |
 
-#### Search Space
+Search space:
 
-| Hyperparameter | Search Space | Current Default |
-|---------------|-------------|-----------------|
-| training.lr | [5e-5, 1e-4, 3e-4, 5e-4] | 1e-4 |
-| training.curvature_lr | [1e-6, 5e-6, 1e-5, 5e-5] | 1e-5 |
-| training.warmup_steps | [2000, 4000, 8000] | 10000 |
-| training.lambda_disc | [0.1, 0.5, 1.0, 2.0] | 1.0 |
-| training.mu_align | [0.01, 0.05, 0.1, 0.5] | 0.1 |
-| training.temperature | [0.05, 0.07, 0.1, 0.2] | 0.07 |
-| training.weight_decay | [0.01, 0.05, 0.1] | 0.01 |
-| data.max_nodes | [32, 64, 128] | 128 |
+| Hyperparameter | Range | Rationale |
+|---------------|-------|-----------|
+| lr | [3e-5, 1e-4, 3e-4, 1e-3] | 1.5 orders of magnitude |
+| curvature_lr | [1e-5, 5e-5, 1e-4, 5e-4] | Independent from main lr |
+| lambda_disc | [5, 10, 20, 50] | Compensate L_cont/L_disc ~40x gap |
+| mu_align | [0.1, 0.5, 1.0, 2.0] | Post gradient-fix, can be larger |
+| temperature | [0.05, 0.07, 0.1, 0.2] | InfoNCE sharpness |
+| weight_decay | [0.01, 0.05, 0.1] | Regularization |
+| warmup_steps | [500, 1000, 2000] | Fraction of 10k budget |
+| max_nodes | [64, 128] | Subgraph size |
 
-**Not searched** (fixed by model size): num_layers, node_dim, edge_dim, num_heads, edge_heads.
+**Transfers well to base**: lambda_disc, mu_align, temperature, max_nodes (loss-level properties).
+**Needs re-tuning on base**: lr, warmup_steps, weight_decay (model-size-dependent).
+
+### Stage 2: lr fine-tune on base model
+
+| Item | Setting |
+|------|---------|
+| Model | base |
+| Steps/trial | 10,000 |
+| Trials | 6 (TPE) |
+| Command | `uv run python -m riemannfm.cli.pretrain experiment=pretrain_search_base sweep=pretrain_base --multirun` |
+
+Search space (loss weights locked from stage 1):
+
+| Hyperparameter | Range |
+|---------------|-------|
+| lr | [3e-5, 5e-5, 1e-4, 1.5e-4] |
+| warmup_steps | [500, 1000, 2000] |
+| weight_decay | [0.01, 0.05] |
 
 ---
 
@@ -119,104 +130,86 @@ Phase 3: Ablation (independent, parallelizable)     Phase 3: Main + Scaling
 
 ### E1: Main Pretrain
 
-> **RQ1**: Can RiemannFM pretrain stably on large-scale KGs with well-behaved loss dynamics?
+> **RQ1**: Can RiemannFM pretrain stably on large-scale KGs?
 
 | Item | Setting |
 |------|---------|
-| Dataset | wikidata_5m (4.8M entities, 822 relations) |
-| Model | base (174.7M) |
-| Steps | 500,000 |
+| Model | base (~65M arch) |
+| Steps | 100,000 |
 | Seeds | 42, 123, 456 |
-| HP | best from HP search |
+| HP | best from stage 2 |
+| Command | `uv run python -m riemannfm.cli.pretrain experiment=pretrain_wiki5m seed=42` |
 | Metrics | val/loss, val/L_cont, val/L_disc, val/L_align, kappa_h, kappa_s |
-| Config | `experiment=pretrain_wiki5m` |
 
 ### E2: Manifold Ablation
 
-> **RQ2**: How much does the product manifold H x S x E improve over single/dual manifolds? Does learnable curvature help?
+> **RQ2**: How much does product H x S x E improve over single/dual manifolds?
 
-| Run | Manifold | H dim | S dim | E dim | Learnable curvature |
-|-----|----------|-------|-------|-------|-------------------|
-| E2a | h_only | 96 | 0 | 0 | yes |
-| E2b | s_only | 0 | 96 | 0 | yes |
-| E2c | e_only | 0 | 0 | 96 | n/a |
-| E2d | h_e | 48 | 0 | 48 | yes |
-| E2e | s_e | 0 | 48 | 48 | yes |
-| E2f | product_h_s_e | 32 | 32 | 32 | yes |
-| E2g | fixed_curvature | 32 | 32 | 32 | **no** |
+| Variant | H dim | S dim | E dim | Learnable curvature |
+|---------|-------|-------|-------|---------------------|
+| h_only | 96 | 0 | 0 | yes |
+| s_only | 0 | 96 | 0 | yes |
+| e_only | 0 | 0 | 96 | n/a |
+| h_e | 48 | 0 | 48 | yes |
+| s_e | 0 | 48 | 48 | yes |
+| product_h_s_e | 32 | 32 | 32 | yes |
+| fixed_curvature | 32 | 32 | 32 | **no** |
 
 | Item | Setting |
 |------|---------|
-| Dataset | wikidata_5m |
-| Model | base |
-| Steps | 500,000 |
-| Seed | 42 (total ambient dim = 96 for fair comparison) |
-| HP | best from HP search |
-| Metrics | val/loss, val/L_cont, val/L_disc |
-| Config | `experiment=ablation_manifold` |
+| Model | small (7 variants x 50k steps) |
+| Command | `uv run python -m riemannfm.cli.pretrain experiment=ablation_manifold --multirun` |
 
 ### E3: Architecture Ablation
 
-> **RQ3**: How much does each architectural innovation contribute?
+> **RQ3**: How much does each architectural component contribute?
 
-| Run | Config | Component Removed |
-|-----|--------|------------------|
-| E3a | full | none (upper bound) |
-| E3b | no_geok | Geodesic distance kernel |
-| E3c | no_mrope | Manifold RoPE |
-| E3d | no_mrope_geok | M-RoPE + Geodesic kernel (both) |
-| E3e | no_ath | ATH-Norm (falls back to LayerNorm) |
-| E3f | no_edge_self | Edge self-update (Def 5.11) |
-| E3g | no_cross | Dual-stream cross-interaction (Def 5.13) |
-| E3h | no_text_cond | Text conditioning (globally disabled) |
+| Variant | Removed component |
+|---------|-------------------|
+| full | none (baseline) |
+| no_geok | Geodesic distance kernel |
+| no_mrope | Manifold RoPE |
+| no_mrope_geok | M-RoPE + geodesic kernel |
+| no_ath | ATH-Norm (fallback: LayerNorm) |
+| no_edge_self | Edge self-update |
+| no_cross | Dual-stream cross-interaction |
+| no_text_cond | Text conditioning |
 
 | Item | Setting |
 |------|---------|
-| Dataset | wikidata_5m |
-| Model | base |
-| Steps | 500,000 |
-| Seed | 42 |
-| HP | best from HP search |
-| Metrics | val/loss, val/L_cont, val/L_disc, delta% vs full |
-| Config | `experiment=ablation_architecture` |
+| Model | small (8 variants x 50k steps) |
+| Command | `uv run python -m riemannfm.cli.pretrain experiment=ablation_architecture --multirun` |
 
 ### E4: Flow Ablation
 
-> **RQ4**: Does joint flow matching outperform continuous-only or discrete-only?
+> **RQ4**: Does joint flow matching outperform single-mode flow?
 
-| Run | Flow config | Continuous | Discrete |
-|-----|------------|-----------|----------|
-| E4a | joint | yes | yes |
-| E4b | continuous_only | yes | no |
-| E4c | discrete_only | no | yes |
+| Variant | Continuous | Discrete |
+|---------|-----------|----------|
+| joint | yes | yes |
+| continuous_only | yes | no |
+| discrete_only | no | yes |
 
 | Item | Setting |
 |------|---------|
-| Dataset | wikidata_5m |
-| Model | base |
-| Steps | 500,000 |
-| Seed | 42 |
-| HP | best from HP search |
-| Metrics | val/loss, val/L_cont (E4a,b), val/L_disc (E4a,c) |
-| Config | `experiment=ablation_loss` |
+| Model | small (3 variants x 50k steps) |
+| Command | `uv run python -m riemannfm.cli.pretrain experiment=ablation_loss --multirun` |
 
 ### E5: Scaling
 
 > **RQ5**: Does scaling model capacity yield consistent improvement?
 
-| Run | Model | Params | Layers | node_dim |
-|-----|-------|--------|--------|----------|
-| E5a | small | 22.7M | 6 | 384 |
-| E5b | base | 174.7M | 12 | 768 |
-| E5c | large | 628M | 24 | 1024 |
+| Model | Arch Params | Layers | node_dim | edge_dim |
+|-------|-------------|--------|----------|----------|
+| small | ~22M | 6 | 384 | 128 |
+| base | ~65M | 10 | 512 | 192 |
+| large | ~180M | 14 | 768 | 256 |
 
 | Item | Setting |
 |------|---------|
-| Dataset | wikidata_5m |
-| Steps | 500,000 (same step budget) |
-| Seed | 42 |
-| HP | best from HP search, lr scaled per size: lr_s = lr_base * sqrt(params_base / params_s) |
-| Metrics | val/loss, val/L_cont, val/L_disc, throughput (samples/sec), peak GPU memory |
+| Steps | 100,000 (same budget for all sizes) |
+| Command | `uv run python -m riemannfm.cli.pretrain experiment=scaling --multirun` |
+| Metrics | val/loss, throughput (samples/sec), peak GPU memory |
 
 ---
 
@@ -224,39 +217,42 @@ Phase 3: Ablation (independent, parallelizable)     Phase 3: Main + Scaling
 
 | Output | Source | Content |
 |--------|--------|---------|
-| Table 1 | E1 | Main results: 3-seed mean +/- std for all metrics |
-| Table 2 | E2 | Manifold ablation: 7 rows, val/loss + learned curvatures |
-| Table 3 | E3 | Architecture ablation: 8 rows, val/loss + delta% vs full |
+| Table 1 | E1 | Main results: 3-seed mean +/- std |
+| Table 2 | E2 | Manifold ablation: 7 rows |
+| Table 3 | E3 | Architecture ablation: 8 rows, delta% vs full |
 | Table 4 | E4 | Flow ablation: 3 rows |
-| Figure 1 | E5 | Scaling curve: val/loss vs params (log-log) |
-| Figure 2 | E1 | Training dynamics: loss curves + curvature evolution over steps |
+| Figure 1 | E5 | Scaling curve: val/loss vs arch params |
+| Figure 2 | E1 | Training dynamics: loss + curvature over steps |
 
 ---
 
-## Compute Budget (1x H100 80GB)
+## Compute Budget (1x H100, sequential)
 
-Measured baseline: base model, max_nodes=128, batch=4, accum=1 → **0.82 s/step**.
-With accum=8: ~6.6 s/optimizer_step.
+| Phase | GPU-hours | Calendar (1 GPU) |
+|-------|-----------|-------------------|
+| P0 Smoke | < 0.1h | 5 min |
+| P1 Validation | 8h | 8h |
+| P2a HP Stage 1 | ~90h | 4 days |
+| P2b HP Stage 2 | ~47h | 2 days |
+| E1 Main (3 seeds) | ~234h | 10 days |
+| E2 Manifold (7) | ~156h | 6.5 days |
+| E3 Architecture (8) | ~178h | 7.4 days |
+| E4 Flow (3) | ~67h | 2.8 days |
+| E5 Scaling (3) | ~264h | 11 days |
+| **Total** | **~1044h** | **~52 days (1 GPU)** |
 
-| Phase | Experiment | Runs | Steps/run | Est. hours (1x H100) |
-|-------|-----------|------|-----------|---------------------|
-| 0 | Smoke test | 1 | 1k | < 0.1h |
-| 1 | Validation | 1 | 10k | ~18h |
-| 2 | HP search | 15 | 20k | ~240h (~10 days) |
-| 3 | E1 Main (3 seeds) | 3 | 500k | ~2,750h (~115 days) |
-| 3 | E2 Manifold (7 runs) | 7 | 500k | ~6,400h |
-| 3 | E3 Architecture (8 runs) | 8 | 500k | ~7,300h |
-| 3 | E4 Flow (3 runs) | 3 | 500k | ~2,750h |
-| 3 | E5 Scaling (3 sizes) | 3 | 500k | ~2,750h |
+With 2 GPUs (GPU 1 + GPU 3): **~26 days**, parallelizing E1/E5 with E2-E4.
 
-> **Note**: Phase 3 (E1-E5) 的 500k 步在 1x H100 上不现实（单 run ~38 天）。
-> 正式实验需要多卡并行或缩减步数。Phase 0-2 可在 1x H100 上完成。
-
-### Scheduling (1x H100, sequential)
+### Scheduling (2x H100)
 
 ```
-Day 1:          Phase 0 (smoke test)              ~5 min
-Day 1-2:        Phase 1 (validation run)          ~18h
-Day 2-12:       Phase 2 (HP search, 15 trials)    ~10 days
-Day 12+:        Phase 3 requires multi-GPU or reduced steps
+GPU 1                               GPU 3
+──────                               ──────
+Day 1:   P0 + P1 (9h)
+Day 2-5: P2a Stage 1 (4d)
+Day 6-7: P2b Stage 2 (2d)
+Day 8-17:  E1 seed=42 (3.5d)        E2 Manifold (6.5d)
+           E1 seed=123 (3.5d)       E3 Architecture (7.4d)
+           E1 seed=456 (3.5d)
+Day 18-28: E5 Scaling (11d)         E4 Flow (2.8d)
 ```

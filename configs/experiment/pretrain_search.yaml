@@ -1,20 +1,21 @@
 # @package _global_
-# Phase 2: HP search — Optuna TPE, 15 trials x 20k steps.
-# Target: ~10 days on 1x H100 (avg ~16h/trial with max_nodes in [32,64,128]).
+# Phase 2a (Stage 1): Broad HP search on small model — loss weights + lr.
+# 20 trials x 10k steps on small model, ~4 days on 1x H100.
 defaults:
+  - override /model: small
   - override /data: wikidata_5m
   - override /training: pretrain
   - _self_
 
 seed: 42
-run_name: pretrain_search_${now:%Y%m%d_%H%M%S}
+run_name: hp_search_s1_${now:%Y%m%d_%H%M%S}
 
 data:
-  max_nodes: 128       # default for search; Optuna may override to [32,64,128]
+  max_nodes: 128
 
 training:
-  max_steps: 20000
-  warmup_steps: 2000
-  val_check_interval: 5000
+  max_steps: 10000
+  warmup_steps: 1000
+  val_check_interval: 2000
   batch_size: 4
   gradient_accumulation_steps: 8

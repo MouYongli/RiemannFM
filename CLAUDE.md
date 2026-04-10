@@ -227,18 +227,23 @@ uv run python -m riemannfm.cli.pretrain experiment=smoke_test
 # Phase 1: Validation Run
 uv run python -m riemannfm.cli.pretrain experiment=validation_run
 
-# Phase 2: HP Search
-uv run python -m riemannfm.cli.pretrain experiment=pretrain_search sweep=pretrain
+# Phase 2a: HP Search — Stage 1 (small model, broad search)
+uv run python -m riemannfm.cli.pretrain experiment=pretrain_search sweep=pretrain --multirun
+
+# Phase 2b: HP Search — Stage 2 (base model, lr fine-tune)
+uv run python -m riemannfm.cli.pretrain experiment=pretrain_search_base sweep=pretrain_base --multirun
 
 # E1: Main Pretrain (3 seeds)
 uv run python -m riemannfm.cli.pretrain experiment=pretrain_wiki5m seed=42
 uv run python -m riemannfm.cli.pretrain experiment=pretrain_wiki5m seed=123
 uv run python -m riemannfm.cli.pretrain experiment=pretrain_wiki5m seed=456
 
-# E2–E5: Ablation & Scaling (--multirun)
+# E2–E4: Ablation (small model, --multirun)
 uv run python -m riemannfm.cli.pretrain experiment=ablation_manifold --multirun
 uv run python -m riemannfm.cli.pretrain experiment=ablation_architecture --multirun
 uv run python -m riemannfm.cli.pretrain experiment=ablation_loss --multirun
+
+# E5: Scaling (small/base/large, --multirun)
 uv run python -m riemannfm.cli.pretrain experiment=scaling --multirun
 
 # Logger: default (wandb+csv) | wandb | csv (offline) | none
