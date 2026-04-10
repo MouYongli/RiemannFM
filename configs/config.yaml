@@ -18,3 +18,7 @@ seed: 42
 project_name: riemannfm
 run_name: ${now:%Y%m%d_%H%M%S}
 device: ${accelerator.accelerator}
+
+hydra:
+  run:
+    dir: outputs/${run_name}
