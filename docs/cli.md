@@ -224,12 +224,6 @@ CUDA_VISIBLE_DEVICES=3 uv run python -m riemannfm.cli.pretrain experiment=pretra
 
 报告 3 seeds 的 mean +/- std: val/loss, val/L_cont, val/L_disc, val/L_align, kappa_h, kappa_s。
 
-> 注：如需对单个 run 使用多卡 DDP 加速，可加 `accelerator=ddp`（4 GPU）：
-> ```bash
-> uv run python -m riemannfm.cli.pretrain experiment=pretrain_wiki5m accelerator=ddp
-> ```
-> 但当前 base 模型 + wikidata_5m 的规模下，单卡足够，多 seed 并行是更高效的策略。
-
 ---
 
 ### E2-E4: Ablation (small, 50k steps each)
@@ -333,11 +327,32 @@ uv run python -m riemannfm.cli.pretrain logger=csv       # csv only (离线)
 uv run python -m riemannfm.cli.pretrain logger=none      # 不记录
 ```
 
-### 指定 GPU
+### 多 GPU 并行
+
+当前所有实验均为**单 GPU 单进程**（base 模型峰值显存 <10GB），通过 `CUDA_VISIBLE_DEVICES` 指定 GPU。
+多 GPU 加速的方式是**多进程并行**，而非单 run 多卡 DDP。
+
+| 场景 | 并行方式 | 原理 |
+|------|----------|------|
+| HP Search | 多进程共享 Optuna SQLite study | 同一 study_name + .db 文件，TPE 自动同步 |
+| E1 多 seed | 每个 seed 一个 GPU | 完全独立，run_name 含 seed 不冲突 |
+| E2-E4 消融 | 每个消融实验一个 GPU | 完全独立，不同 experiment config |
 
 ```bash
+# 查看可用 GPU
+nvidia-smi --query-gpu=index,memory.used,memory.total --format=csv,noheader
+
+# 指定单个 GPU
 CUDA_VISIBLE_DEVICES=1 uv run python -m riemannfm.cli.pretrain experiment=validation_run
+
+# 多进程后台并行（& 放入后台）
+CUDA_VISIBLE_DEVICES=1 uv run python -m riemannfm.cli.pretrain experiment=pretrain_wiki5m seed=42 &
+CUDA_VISIBLE_DEVICES=2 uv run python -m riemannfm.cli.pretrain experiment=pretrain_wiki5m seed=123 &
+CUDA_VISIBLE_DEVICES=3 uv run python -m riemannfm.cli.pretrain experiment=pretrain_wiki5m seed=456 &
 ```
+
+> 如需对单个 run 使用多卡 DDP：`uv run python -m riemannfm.cli.pretrain accelerator=ddp`（4 GPU）。
+> 但当前模型规模下单卡足够，多进程并行是更高效的策略。
 
 ---
 
