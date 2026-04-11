@@ -493,9 +493,9 @@ $$\mathrm{BCE}_{\mathrm{w}}(\hat{p}, y) = -\left[w_k^+ \cdot y \cdot \log(\hat{p
 
 正样本权重 $w_k^+ = \min\!\left(\frac{1 - \rho_k}{\rho_k},\, w_{\max}\right)$ 校正类别不平衡，$w_{\max} > 0$ 为截断上限，$\epsilon_p > 0$ 为数值稳定常数。
 
-**定义 6.9（图-文对比损失）。** 将数据端坐标投影到对齐空间：
-$$\mathbf{g}_i = \mathrm{MLP}_{\mathrm{proj}}(\pi(\mathbf{x}_{1,i})) \in \mathbb{R}^{d_\mathrm{a}}$$
-其中 $\mathrm{MLP}_{\mathrm{proj}}: \mathbb{R}^D \to \mathbb{R}^{d_\mathrm{a}}$，$d_\mathrm{a}$ 为对齐空间维度。
+**定义 6.9（图-文对比损失）。** 将数据端坐标投影到对齐空间。由于 Lorentz 模型中时间坐标 $x_0 = \sqrt{\|\mathbf{x}_{\mathrm{sp}}\|^2 + 1/|\kappa_h|}$ 是空间坐标的确定性函数（冗余维度），且在训练初期对所有实体近似为常数，会淹没实体间的区分信号，因此在投影前将其剔除：
+$$\mathbf{g}_i = \mathrm{MLP}_{\mathrm{proj}}\!\left(\pi_{\setminus x_0}(\mathbf{x}_{1,i})\right) \in \mathbb{R}^{d_\mathrm{a}}$$
+其中 $\pi_{\setminus x_0}$ 表示去除 Lorentz 时间坐标 $x_0$ 后的环境坐标切片（维度 $D - 1$），$\mathrm{MLP}_{\mathrm{proj}}: \mathbb{R}^{D-1} \to \mathbb{R}^{d_\mathrm{a}}$，$d_\mathrm{a}$ 为对齐空间维度。
 
 余弦相似度：$\mathrm{sim}(\mathbf{g}_i, \mathbf{c}_j) = \frac{\mathbf{g}_i^\top \mathbf{c}_j}{\|\mathbf{g}_i\|_2 \|\mathbf{c}_j\|_2}$
 

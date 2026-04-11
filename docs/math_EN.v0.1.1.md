@@ -482,9 +482,9 @@ $$\mathrm{BCE}_{\mathrm{w}}(\hat{p}, y) = -\left[w_k^+ \cdot y \cdot \log(\hat{p
 
 The positive sample weight $w_k^+ = \min\!\left(\frac{1 - \rho_k}{\rho_k},\, w_{\max}\right)$ corrects for class imbalance, $w_{\max} > 0$ is the truncation upper bound, and $\epsilon_p > 0$ is a numerical stability constant.
 
-**Definition 6.9 (Graph-Text Contrastive Loss).** Project data-end coordinates into the alignment space:
-$$\mathbf{g}_i = \mathrm{MLP}_{\mathrm{proj}}(\pi(\mathbf{x}_{1,i})) \in \mathbb{R}^{d_\mathrm{a}}$$
-where $\mathrm{MLP}_{\mathrm{proj}}: \mathbb{R}^D \to \mathbb{R}^{d_\mathrm{a}}$, and $d_\mathrm{a}$ is the alignment space dimension.
+**Definition 6.9 (Graph-Text Contrastive Loss).** Project data-end coordinates into the alignment space. Since the Lorentz time coordinate $x_0 = \sqrt{\|\mathbf{x}_{\mathrm{sp}}\|^2 + 1/|\kappa_h|}$ is a deterministic function of the spatial coordinates (a redundant dimension) and is approximately constant across all entities early in training, it would drown out inter-entity signal; it is therefore stripped before projection:
+$$\mathbf{g}_i = \mathrm{MLP}_{\mathrm{proj}}\!\left(\pi_{\setminus x_0}(\mathbf{x}_{1,i})\right) \in \mathbb{R}^{d_\mathrm{a}}$$
+where $\pi_{\setminus x_0}$ denotes the ambient coordinate slice with the Lorentz time coordinate $x_0$ removed (dimension $D - 1$), $\mathrm{MLP}_{\mathrm{proj}}: \mathbb{R}^{D-1} \to \mathbb{R}^{d_\mathrm{a}}$, and $d_\mathrm{a}$ is the alignment space dimension.
 
 Cosine similarity: $\mathrm{sim}(\mathbf{g}_i, \mathbf{c}_j) = \frac{\mathbf{g}_i^\top \mathbf{c}_j}{\|\mathbf{g}_i\|_2 \|\mathbf{c}_j\|_2}$
 
