@@ -31,10 +31,17 @@ def build_optimizer(
     weight_decay: float = 0.01,
     use_riemannian_optim: bool = True,
 ) -> torch.optim.Optimizer:
-    """Build optimizer with dual parameter groups.
+    """Build optimizer with three parameter groups.
 
-    Group 1: All non-curvature parameters (standard LR + weight decay).
+    Group 1: Main model parameters (standard LR + weight decay).
     Group 2: Curvature parameters (lower LR, no weight decay).
+    Group 3: Alignment projection layers (standard LR, no weight decay).
+
+    The alignment projections (proj_g, proj_c) are excluded from weight
+    decay because their gradients are small relative to the main model
+    and global gradient clipping reduces them further; weight decay
+    dominates and shrinks them toward zero, preventing L_align from
+    learning.
 
     Args:
         model: Full model (includes manifold as a sub-module).
@@ -54,20 +61,30 @@ def build_optimizer(
         if "curvature" in name.lower() or "kappa" in name.lower():
             curvature_params.add(id(param))
 
-    # Split into two groups.
+    # Identify alignment projection parameter IDs (proj_g, proj_c).
+    align_proj_params = set()
+    for name, param in model.named_parameters():
+        if "proj_g." in name or "proj_c." in name:
+            align_proj_params.add(id(param))
+
+    # Split into three groups.
     model_params = []
     curv_params = []
+    proj_params = []
     for param in model.parameters():
         if not param.requires_grad:
             continue
         if id(param) in curvature_params:
             curv_params.append(param)
+        elif id(param) in align_proj_params:
+            proj_params.append(param)
         else:
             model_params.append(param)
 
     param_groups = [
         {"params": model_params, "lr": lr, "weight_decay": weight_decay},
         {"params": curv_params, "lr": curvature_lr, "weight_decay": 0.0},
+        {"params": proj_params, "lr": lr, "weight_decay": 0.0},
     ]
 
     if use_riemannian_optim:

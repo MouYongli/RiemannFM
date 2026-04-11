@@ -53,7 +53,7 @@ class RiemannFMCombinedLoss(nn.Module):
 
     Contains learnable projection layers for the contrastive alignment
     loss (Definition 6.9):
-      - proj_g: R^D -> R^{d_a}  (manifold ambient coords -> alignment space)
+      - proj_g: R^{D-1} -> R^{d_a}  (manifold coords sans Lorentz x0 -> alignment space)
       - proj_c: R^{d_c} -> R^{d_a}  (text embeddings -> alignment space)
 
     Args:
@@ -86,14 +86,19 @@ class RiemannFMCombinedLoss(nn.Module):
         self.max_align_nodes = max_align_nodes
 
         # Projection layers for L_align (Def 6.9):
-        #   g_i = proj_g(pi(x_{1,i}))
+        #   g_i = proj_g(x_{1,i} without Lorentz x0)
         #   c_i = proj_c(text_emb_i)
+        # The Lorentz time coordinate x0 = sqrt(||x_spatial||^2 + 1/|kappa|)
+        # is a deterministic function of the spatial coordinates and nearly
+        # constant across entities at initialization, which drowns out the
+        # inter-entity signal that InfoNCE relies on.  We strip it here.
+        self._lorentz_x0_idx: int = 0  # index of x0 in ambient coords
         self.proj_g: nn.Sequential | None
         self.proj_c: nn.Sequential | None
         if mu_align > 0 and input_text_dim > 0:
-            D = manifold.ambient_dim
+            D_proj = manifold.ambient_dim - 1  # exclude Lorentz x0
             self.proj_g = nn.Sequential(
-                nn.Linear(D, d_a),
+                nn.Linear(D_proj, d_a),
                 nn.GELU(),
                 nn.Linear(d_a, d_a),
             )
@@ -172,8 +177,13 @@ class RiemannFMCombinedLoss(nn.Module):
                 l_align = torch.tensor(0.0, device=x_1.device, dtype=x_1.dtype)
             else:
                 x_valid = x_1.reshape(B * N, -1)[valid_idx]  # (M, D)
+                # Strip Lorentz x0 (redundant time coord) before projection.
+                idx = self._lorentz_x0_idx
+                x_proj = torch.cat(
+                    [x_valid[:, :idx], x_valid[:, idx + 1:]], dim=-1,
+                )  # (M, D-1)
                 t_valid = node_text.reshape(B * N, -1)[valid_idx]  # (M, d_c)
-                g_valid = self.proj_g(x_valid)  # (M, d_a)
+                g_valid = self.proj_g(x_proj)  # (M, d_a)
                 c_valid = self.proj_c(t_valid)  # (M, d_a)
                 l_align = _contrastive_loss_from_pairs(
                     g_valid, c_valid, self.temperature,
