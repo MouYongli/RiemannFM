@@ -8,6 +8,7 @@ aligned with math spec Definition 3.4:
 import random
 from collections import defaultdict
 
+import numpy as np
 import torch
 from torch import Tensor
 
@@ -104,13 +105,14 @@ class RiemannFMSubgraphSampler:
             for node in frontier:
                 neighbors = self.adj[node]
                 if self.importance_sample and neighbors:
-                    weights = [self.relation_weight.get(r, 1.0) for _, r in neighbors]
-                    total_w = sum(weights)
-                    weights = [w / total_w for w in weights]
+                    w = np.array(
+                        [self.relation_weight.get(r, 1.0) for _, r in neighbors],
+                    )
+                    w /= w.sum()
                     k = min(len(neighbors), self.max_nodes - len(visited))
                     if k > 0:
-                        indices = random.choices(range(len(neighbors)), weights=weights, k=k)
-                        selected = [neighbors[i] for i in set(indices)]
+                        indices = np.random.choice(len(neighbors), size=k, replace=True, p=w)
+                        selected = [neighbors[i] for i in set(indices.tolist())]
                     else:
                         selected = []
                 else:
@@ -135,8 +137,8 @@ class RiemannFMSubgraphSampler:
         This naturally supports multi-relational edges: if (i, r1, j) and
         (i, r2, j) both exist, then E[i,j,r1] = E[i,j,r2] = 1.
 
-        Uses the precomputed ``_edge_index`` for O(N^2) lookups instead of
-        scanning all triples.
+        Collects all (local_i, local_j, relation) triples and sets them
+        in one vectorized ``index_put_`` call.
 
         Args:
             node_list: Global entity IDs in the subgraph.
@@ -148,10 +150,32 @@ class RiemannFMSubgraphSampler:
         K = self.num_edge_types
         edge_types = torch.zeros(N, N, K, dtype=torch.float32)
 
+        # Map global node IDs to local indices for O(1) lookup.
+        global_to_local = {nid: idx for idx, nid in enumerate(node_list)}
+
+        # Collect all (local_i, local_j, r) in one pass over the subgraph.
+        rows: list[int] = []
+        cols: list[int] = []
+        rels: list[int] = []
         for i, ni in enumerate(node_list):
-            for j, nj in enumerate(node_list):
-                for r in self._edge_index.get((ni, nj), ()):
+            for nj, r_list in (
+                (nj, self._edge_index.get((ni, nj)))
+                for nj in node_list
+                if (ni, nj) in self._edge_index
+            ):
+                local_j = global_to_local[nj]
+                for r in r_list:  # type: ignore[union-attr]
                     if 0 <= r < K:
-                        edge_types[i, j, r] = 1.0
+                        rows.append(i)
+                        cols.append(local_j)
+                        rels.append(r)
+
+        if rows:
+            idx = (
+                torch.tensor(rows, dtype=torch.long),
+                torch.tensor(cols, dtype=torch.long),
+                torch.tensor(rels, dtype=torch.long),
+            )
+            edge_types.index_put_(idx, torch.tensor(1.0))
 
         return edge_types

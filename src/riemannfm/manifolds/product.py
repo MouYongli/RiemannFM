@@ -211,13 +211,10 @@ class RiemannFMProductManifold(nn.Module):
         """
         x_parts = self.split(x)
         y_parts = self.split(y)
-        d_sq = torch.zeros(
-            x.shape[:-1], device=x.device, dtype=x.dtype,
-        )
-        for name in self._component_names:
-            d_sq = d_sq + self._get(name).dist(
-                x_parts[name], y_parts[name],
-            ).pow(2)
+        d_sq = torch.stack([
+            self._get(name).dist(x_parts[name], y_parts[name]).pow(2)
+            for name in self._component_names
+        ], dim=0).sum(dim=0)
         return d_sq.sqrt()
 
     def proj_tangent(self, x: Tensor, v: Tensor) -> Tensor:
@@ -257,12 +254,12 @@ class RiemannFMProductManifold(nn.Module):
         x_parts = self.split(x)
         u_parts = self.split(u)
         v_parts = self.split(v)
-        total = torch.zeros(x.shape[:-1], device=x.device, dtype=x.dtype)
-        for name in self._component_names:
-            total = total + self._get(name).inner(
+        return torch.stack([
+            self._get(name).inner(
                 x_parts[name], u_parts[name], v_parts[name],
             )
-        return total
+            for name in self._component_names
+        ], dim=0).sum(dim=0)
 
     def tangent_norm(self, x: Tensor, v: Tensor) -> Tensor:
         """Product tangent norm (Def 4.6).
@@ -295,12 +292,10 @@ class RiemannFMProductManifold(nn.Module):
         """
         x_parts = self.split(x)
         v_parts = self.split(v)
-        norm_sq = torch.zeros(x.shape[:-1], device=x.device, dtype=x.dtype)
-        for name in self._component_names:
-            norm_sq = norm_sq + self._get(name).tangent_norm_sq(
-                x_parts[name], v_parts[name],
-            )
-        return norm_sq
+        return torch.stack([
+            self._get(name).tangent_norm_sq(x_parts[name], v_parts[name])
+            for name in self._component_names
+        ], dim=0).sum(dim=0)
 
     def origin(
         self,
