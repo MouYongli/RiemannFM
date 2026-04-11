@@ -34,13 +34,13 @@ CONFIG_GROUPS: dict[str, list[str]] = {
     "data": [
         "wikidata_5m",
         "wikidata_5m_mini",
-        "fb15k237",
+        "fb15k_237",
         "wn18rr",
         "codex_l",
         "yago3_10",
         "wiki27k",
     ],
-    "training": ["pretrain", "finetune"],
+    "training": ["pretrain"],
     "accelerator": ["auto", "gpu", "cpu", "mps", "ddp"],
     "ablation": [
         "full",
@@ -92,7 +92,6 @@ class TestDefaultComposition:
             "training",
             "ablation",
             "accelerator",
-            "eval",
             "download",
             "preprocess",
             "logger",
@@ -228,21 +227,17 @@ class TestDataParamsComplete:
 class TestExperimentConfigs:
     """Test that experiment configs compose successfully."""
 
-    @pytest.fixture(scope="class")
-    def experiment_files(self) -> list[str]:
-        exp_dir = Path(CONFIGS_DIR) / "experiment"
-        if not exp_dir.exists():
-            return []
-        return [f.stem for f in exp_dir.glob("*.yaml")]
+    _EXP_DIR = Path(CONFIGS_DIR) / "experiment"
+    _EXPERIMENTS = sorted(f.stem for f in _EXP_DIR.glob("*.yaml")) if _EXP_DIR.exists() else []
 
-    def test_experiments_compose(self, experiment_files: list[str]) -> None:
-        for exp in experiment_files:
-            with initialize_config_dir(config_dir=CONFIGS_DIR, version_base=None):
-                cfg = compose(
-                    config_name="config",
-                    overrides=[f"+experiment={exp}"],
-                )
-                assert cfg is not None, f"Experiment {exp} failed to compose"
+    @pytest.mark.parametrize("exp", _EXPERIMENTS)
+    def test_experiment_composes(self, exp: str) -> None:
+        with initialize_config_dir(config_dir=CONFIGS_DIR, version_base=None):
+            cfg = compose(
+                config_name="config",
+                overrides=[f"experiment={exp}"],
+            )
+            assert cfg is not None, f"Experiment {exp} failed to compose"
 
 
 class TestLoggerFilesExist:

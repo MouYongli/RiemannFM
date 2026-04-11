@@ -208,7 +208,7 @@ class TestPretrainDataset:
             num_edge_types=822,
             max_nodes=32,
             max_hops=2,
-            text_encoder="nomic-embed-text",
+            text_encoder="qwen3",
 
         )
         assert len(ds) > 0
@@ -225,7 +225,7 @@ class TestPretrainDataset:
             num_edge_types=822,
             max_nodes=32,
             max_hops=2,
-            text_encoder="nomic-embed-text",
+            text_encoder="qwen3",
 
         )
         sample = ds[0]
@@ -254,7 +254,7 @@ class TestPretrainDataset:
             num_edge_types=822,
             max_nodes=32,
             max_hops=2,
-            text_encoder="nomic-embed-text",
+            text_encoder="qwen3",
 
         )
         collator = RiemannFMGraphCollator(max_nodes=32, num_edge_types=822)
@@ -285,7 +285,7 @@ class TestDataModule:
         "max_nodes": 32,
         "max_hops": 2,
         "num_workers": 0,
-        "text_encoder": "nomic-embed-text",
+        "text_encoder": "qwen3",
         "val_epoch_size": 100,
         "test_epoch_size": 100,
         "batch_size": 4,
