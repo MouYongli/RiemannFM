@@ -17,9 +17,14 @@ mixed_precision: bf16
 # Loss weights
 lambda_disc: 10.0
 mu_align: 0.5
+nu_mask: 1.0
 temperature: 0.07
+mask_temperature: 0.07
 neg_ratio: 1.0
 max_align_nodes: 128
+
+# Masked node prediction
+mask_ratio: 0.15
 
 # Optimization
 use_riemannian_optim: true

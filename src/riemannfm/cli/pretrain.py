@@ -121,7 +121,11 @@ def main(cfg: DictConfig) -> None:
     L.seed_everything(cfg.seed, workers=True)
 
     # 1. Data — instantiate DataModule from cfg.data + batch_size.
-    dm = instantiate(cfg.data, batch_size=cfg.training.batch_size)
+    dm = instantiate(
+        cfg.data,
+        batch_size=cfg.training.batch_size,
+        mask_ratio=float(getattr(cfg.training, "mask_ratio", 0.0)),
+    )
     dm.setup("fit")
 
     num_edge_types = cfg.data.num_edge_types

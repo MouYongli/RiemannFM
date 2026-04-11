@@ -93,6 +93,13 @@ class RiemannFMPretrainModule(L.LightningModule):
             origin = manifold.origin(device=self.entity_emb.weight.device)  # (D,)
             self.entity_emb.weight.add_(origin)
 
+        # Learnable [MASK] token for masked node prediction.
+        # Same dimension as entity embeddings (ambient_dim D).
+        self.mask_emb = nn.Parameter(torch.zeros(D))
+        nn.init.normal_(self.mask_emb, std=0.01)
+        with torch.no_grad():
+            self.mask_emb.add_(origin)
+
     def _get_manifold_coords(
         self, node_ids: Tensor, node_mask: Tensor,
     ) -> Tensor:
@@ -120,6 +127,69 @@ class RiemannFMPretrainModule(L.LightningModule):
 
         return x_1
 
+    def _apply_mask_replacement(
+        self, x_1: Tensor, node_text: Tensor, mask_type: Tensor,
+    ) -> tuple[Tensor, Tensor, Tensor]:
+        """Apply BERT-style 80/10/10 replacement for masked nodes.
+
+        For masked nodes (mask_type == MASK_MASKED):
+          - 80%: replace entity embedding with learnable [MASK] token
+          - 10%: replace with a random entity's embedding
+          - 10%: keep unchanged (still a prediction target)
+        Text embeddings are zeroed for ALL masked nodes (no text leakage).
+
+        Args:
+            x_1: Original manifold coordinates, shape ``(B, N, D)``.
+            node_text: Text embeddings, shape ``(B, N, d_c)``.
+            mask_type: Node type labels, shape ``(B, N)``.
+
+        Returns:
+            Tuple of (x_1_masked, node_text_masked, true_entity_emb).
+            true_entity_emb holds the original x_1 for L_mask targets.
+        """
+        from riemannfm.data.collator import MASK_MASKED
+
+        # Save original embeddings as prediction targets (detached).
+        true_entity_emb = x_1.detach().clone()
+
+        is_masked = mask_type == MASK_MASKED  # (B, N)
+        if not is_masked.any():
+            return x_1, node_text, true_entity_emb
+
+        # Draw per-node random for 80/10/10 split.
+        rand = torch.rand_like(mask_type, dtype=x_1.dtype)
+        replace_mask = is_masked & (rand < 0.8)       # → [MASK] token
+        random_mask = is_masked & (rand >= 0.8) & (rand < 0.9)  # → random entity
+        # remaining 10%: keep unchanged
+
+        x_1 = x_1.clone()
+
+        # 80% → learnable [MASK] embedding projected onto manifold.
+        if replace_mask.any():
+            with torch.amp.autocast(device_type=self.device.type, enabled=False):
+                mask_coord = self.manifold.proj_manifold(
+                    self.mask_emb.float(),
+                ).to(x_1.dtype)
+            x_1[replace_mask] = mask_coord
+
+        # 10% → random entity embedding.
+        if random_mask.any():
+            n_random = int(random_mask.sum().item())
+            rand_ids = torch.randint(
+                0, self.entity_emb.num_embeddings, (n_random,),
+                device=x_1.device,
+            )
+            rand_emb = self.entity_emb(rand_ids)
+            with torch.amp.autocast(device_type=self.device.type, enabled=False):
+                rand_coord = self.manifold.proj_manifold(rand_emb.float())
+            x_1[random_mask] = rand_coord.to(x_1.dtype)
+
+        # Zero text for ALL masked nodes (prevent text leakage).
+        node_text = node_text.clone()
+        node_text[is_masked] = 0.0
+
+        return x_1, node_text, true_entity_emb
+
     def _shared_step(
         self, batch: dict[str, Any], t_override: Tensor | None = None,
     ) -> tuple[Tensor, dict[str, Tensor]]:
@@ -137,9 +207,17 @@ class RiemannFMPretrainModule(L.LightningModule):
         node_text = batch["node_text"]   # (B, N, input_text_dim)
         node_mask = batch["node_mask"]   # (B, N)
         node_ids = batch["node_ids"]     # (B, N)
+        mask_type = batch.get("mask_type")  # (B, N) or None
 
         # 1. Get data manifold coordinates from entity embeddings.
         x_1 = self._get_manifold_coords(node_ids, node_mask)
+
+        # 1b. Apply masked node replacement (BERT 80/10/10).
+        true_entity_emb = None
+        if mask_type is not None and self.loss_fn.nu_mask > 0:
+            x_1, node_text, true_entity_emb = self._apply_mask_replacement(
+                x_1, node_text, mask_type,
+            )
 
         # 2. Flow matching: sample noise, time, interpolate.
         #    Force fp32 — geodesic interpolation is numerically sensitive.
@@ -201,6 +279,8 @@ class RiemannFMPretrainModule(L.LightningModule):
                 node_mask=node_mask,
                 h=h if h.dtype == _f32 else h.float(),
                 node_text=node_text,
+                mask_type=mask_type,
+                true_entity_emb=true_entity_emb,
             )
 
         return total_loss, metrics
@@ -225,6 +305,7 @@ class RiemannFMPretrainModule(L.LightningModule):
         self.log("train/L_cont", metrics["loss/cont"], sync_dist=True, batch_size=B, on_step=True, on_epoch=False)
         self.log("train/L_disc", metrics["loss/disc"], sync_dist=True, batch_size=B, on_step=True, on_epoch=False)
         self.log("train/L_align", metrics["loss/align"], sync_dist=True, batch_size=B, on_step=True, on_epoch=False)
+        self.log("train/L_mask", metrics["loss/mask"], sync_dist=True, batch_size=B, on_step=True, on_epoch=False)
 
         # Log curvatures.
         if self.manifold.hyperbolic is not None:
@@ -433,10 +514,15 @@ class RiemannFMPretrainModule(L.LightningModule):
             manifold=manifold,
             lambda_disc=training_cfg.lambda_disc,
             mu_align=training_cfg.mu_align,
+            nu_mask=float(getattr(training_cfg, "nu_mask", 0.0)),
             neg_ratio=float(getattr(training_cfg, "neg_ratio", 1.0)),
             temperature=training_cfg.temperature,
+            mask_temperature=float(
+                getattr(training_cfg, "mask_temperature", 0.07),
+            ),
             input_text_dim=input_text_dim,
             node_dim=model_cfg.node_dim,
+            entity_emb_dim=manifold.ambient_dim,
             d_a=int(getattr(model_cfg, "text_proj_dim", 256)),
             max_align_nodes=int(getattr(training_cfg, "max_align_nodes", 128)),
         )
