@@ -45,13 +45,13 @@ _DOWNLOAD_REGISTRY: dict[str, DownloadMeta] = {
         alias_url="https://www.dropbox.com/s/lnbhc8yuhit4wm5/wikidata5m_alias.tar.gz?dl=1",
     ),
     "fb15k_237": DownloadMeta(
-        download_url="https://raw.githubusercontent.com/villmow/datasets_knowledge_embedding/master/FB15k-237.tar.gz",
-        download_format="tar.gz",
-        text_url="https://raw.githubusercontent.com/wangbo9719/StAR_KGC/main/data/FB15k-237/entity2textlong.txt",
+        download_url="https://raw.githubusercontent.com/villmow/datasets_knowledge_embedding/master/FB15k-237",
+        download_format="github_files",
+        text_url="https://raw.githubusercontent.com/wangbo9719/StAR_KGC/master/StAR/data/FB15k-237/entity2textlong.txt",
     ),
     "wn18rr": DownloadMeta(
-        download_url="https://raw.githubusercontent.com/villmow/datasets_knowledge_embedding/master/WN18RR.tar.gz",
-        download_format="tar.gz",
+        download_url="https://raw.githubusercontent.com/villmow/datasets_knowledge_embedding/master/WN18RR/original",
+        download_format="github_files",
         text_url=None,
     ),
     "codex_l": DownloadMeta(
@@ -59,14 +59,16 @@ _DOWNLOAD_REGISTRY: dict[str, DownloadMeta] = {
         download_format="codex",
         text_url="https://raw.githubusercontent.com/tsafavi/codex/master/data/entities/en/entities.json",
     ),
+    # Wiki27K: from THU-KEG/PKGC (Lv et al., ACL Findings 2022).
+    # Google Drive hosts the full dataset zip containing Wiki27K/ and FB15K-237-N/.
     "wiki27k": DownloadMeta(
-        download_url=None,
-        download_format="zip",
+        download_url="https://drive.google.com/uc?id=1waE2QeVepwntuTDYNncBa6y94EPDn69C",
+        download_format="wiki27k",
         text_url=None,
     ),
     "yago3_10": DownloadMeta(
-        download_url=None,
-        download_format="tar.gz",
+        download_url="https://raw.githubusercontent.com/DeepGraphLearning/KnowledgeGraphEmbedding/master/data/YAGO3-10",
+        download_format="github_files",
         text_url=None,
     ),
 }
@@ -137,6 +139,10 @@ def download_graph(
         _download_codex(slug, raw_dir)
     elif meta.download_format == "zip":
         _download_zip(slug, meta, raw_dir)
+    elif meta.download_format == "github_files":
+        _download_github_files(slug, meta, raw_dir)
+    elif meta.download_format == "wiki27k":
+        _download_wiki27k(slug, meta, raw_dir)
     else:
         logger.warning(f"[{slug}] Unknown download format: {meta.download_format}")
 
@@ -243,6 +249,150 @@ def _download_zip(slug: str, meta: DownloadMeta, raw_dir: Path) -> None:
     logger.info(f"[{slug}] Graph files downloaded to {raw_dir}/")
 
 
+def _download_github_files(slug: str, meta: DownloadMeta, raw_dir: Path) -> None:
+    """Download individual files from a GitHub raw directory URL.
+
+    Expects ``meta.download_url`` to be a raw.githubusercontent.com directory base,
+    e.g. ``https://raw.githubusercontent.com/owner/repo/branch/path/to/dir``.
+    Downloads ``train.txt``, ``valid.txt``, ``test.txt`` and optional dict files.
+    """
+    if meta.download_url is None:
+        logger.warning(f"[{slug}] No download URL configured. Please manually place graph files in {raw_dir}/")
+        return
+
+    base_url = meta.download_url.rstrip("/")
+    files_to_try = [
+        "train.txt",
+        "valid.txt",
+        "test.txt",
+        "entities.dict",
+        "relations.dict",
+        "entity2wikidata.json",
+    ]
+
+    logger.info(f"[{slug}] Downloading files from {base_url}/...")
+    for fname in files_to_try:
+        url = f"{base_url}/{fname}"
+        dest = raw_dir / fname
+        try:
+            urlretrieve(url, str(dest))
+            logger.info(f"[{slug}]   ✓ {fname}")
+        except Exception:
+            if fname in ("train.txt", "valid.txt", "test.txt"):
+                logger.warning(f"[{slug}]   ✗ {fname} (required file missing!)")
+            # Optional files (dicts, json) — silently skip.
+
+    logger.info(f"[{slug}] Graph files downloaded to {raw_dir}/")
+
+
+def _download_wiki27k(slug: str, meta: DownloadMeta, raw_dir: Path) -> None:
+    """Download Wiki27K from Google Drive via gdown.
+
+    The PKGC dataset zip contains ``dataset/Wiki27K/{train,valid,test}.txt``
+    plus ``entity2label.txt``, ``entity2definition.txt``, ``relation2label.json``.
+    Triples and text metadata are extracted; entity/relation texts are built
+    from label + definition files.
+    """
+    if meta.download_url is None:
+        logger.warning(f"[{slug}] No download URL. Place files in {raw_dir}/ manually.")
+        return
+
+    try:
+        import gdown
+    except ImportError:
+        logger.warning(f"[{slug}] gdown not installed. Run: pip install gdown")
+        return
+
+    logger.info(f"[{slug}] Downloading PKGC dataset from Google Drive...")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        zip_path = Path(tmpdir) / "dataset.zip"
+        gdown.download(meta.download_url, str(zip_path), quiet=False)
+
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            prefix = "dataset/Wiki27K/"
+            for member in zf.namelist():
+                if member.startswith(prefix) and not member.endswith("/"):
+                    fname = member[len(prefix):]
+                    with zf.open(member) as fin, open(raw_dir / fname, "wb") as fout:
+                        shutil.copyfileobj(fin, fout)
+
+    # Build entity_texts.tsv from label + definition.
+    _build_wiki27k_entity_texts(raw_dir)
+    # Build relation_texts.tsv from relation2label.json.
+    _build_wiki27k_relation_texts(raw_dir)
+
+    logger.info(f"[{slug}] Graph files downloaded to {raw_dir}/")
+
+
+def _build_wiki27k_entity_texts(raw_dir: Path) -> None:
+    """Build entity_texts.tsv from entity2label.txt and entity2definition.txt."""
+    labels: dict[str, str] = {}
+    label_path = raw_dir / "entity2label.txt"
+    if label_path.exists():
+        with open(label_path) as f:
+            for line in f:
+                parts = line.strip().split("\t", 1)
+                if len(parts) == 2:
+                    labels[parts[0]] = parts[1]
+
+    defs: dict[str, str] = {}
+    def_path = raw_dir / "entity2definition.txt"
+    if def_path.exists():
+        with open(def_path) as f:
+            for line in f:
+                parts = line.strip().split("\t", 1)
+                if len(parts) == 2:
+                    defs[parts[0]] = parts[1]
+
+    entities: set[str] = set()
+    for name in ("train.txt", "valid.txt", "test.txt"):
+        path = raw_dir / name
+        if path.exists():
+            with open(path) as f:
+                for line in f:
+                    parts = line.strip().split("\t")
+                    if len(parts) >= 3:
+                        entities.add(parts[0])
+                        entities.add(parts[2])
+
+    output = raw_dir / "entity_texts.tsv"
+    with open(output, "w") as f:
+        for eid in sorted(entities):
+            label = labels.get(eid, eid)
+            defn = defs.get(eid, "")
+            text = f"{label}: {defn}" if defn else label
+            f.write(f"{eid}\t{text}\n")
+
+    logger.info(f"[wiki27k] Wrote {len(entities)} entity texts to {output}")
+
+
+def _build_wiki27k_relation_texts(raw_dir: Path) -> None:
+    """Build relation_texts.tsv from relation2label.json."""
+    label_path = raw_dir / "relation2label.json"
+    rel_labels: dict[str, str] = {}
+    if label_path.exists():
+        with open(label_path) as f:
+            rel_labels = json.load(f)
+
+    relations: set[str] = set()
+    for name in ("train.txt", "valid.txt", "test.txt"):
+        path = raw_dir / name
+        if path.exists():
+            with open(path) as f:
+                for line in f:
+                    parts = line.strip().split("\t")
+                    if len(parts) >= 3:
+                        relations.add(parts[1])
+
+    output = raw_dir / "relation_texts.tsv"
+    with open(output, "w") as f:
+        for rid in sorted(relations):
+            text = rel_labels.get(rid, rid)
+            f.write(f"{rid}\t{text}\n")
+
+    logger.info(f"[wiki27k] Wrote {len(relations)} relation texts to {output}")
+
+
 # ─── Stage 2: Extract entity texts → raw/entity_texts.tsv ────────────────────
 
 
@@ -283,6 +433,8 @@ def extract_entity_texts(
         _extract_texts_wikidata_description(raw_dir, output_path, meta.text_url)
     elif text_source == "wikipedia":
         _extract_texts_wikipedia(raw_dir, output_path)
+    elif text_source == "entity_name":
+        _extract_texts_entity_name(raw_dir, output_path)
     else:
         logger.warning(f"[{slug}] Unknown text source: {text_source}")
 
@@ -290,7 +442,13 @@ def extract_entity_texts(
 
 
 def _extract_texts_wordnet(raw_dir: Path, output_path: Path) -> None:
-    """Extract texts from WordNet synset definitions for WN18RR."""
+    """Extract texts from WordNet synset definitions for WN18RR.
+
+    Supports two entity formats:
+    - Synset names (e.g. ``land_reform.n.01``) from ``entities.dict``
+    - Numeric offsets (e.g. ``00260881``) from ``original/`` triples,
+      resolved via a parallel ``text/`` download from the same repo.
+    """
     import nltk
 
     nltk.download("wordnet", quiet=True)
@@ -298,16 +456,27 @@ def _extract_texts_wordnet(raw_dir: Path, output_path: Path) -> None:
     from nltk.corpus import wordnet as wn
 
     entity2id = _load_entity_mapping(raw_dir)
+
     if not entity2id:
-        logger.warning("[wn18rr] No entities.dict found, cannot extract texts.")
-        return
+        # No entities.dict — entities are numeric offsets.
+        # Build offset→synset mapping from the text/ triples variant.
+        entity2id, offset_to_synset = _build_wn18rr_offset_mapping(raw_dir)
+        if not entity2id:
+            logger.warning("[wn18rr] Cannot resolve entity offsets, cannot extract texts.")
+            return
+    else:
+        offset_to_synset = None
 
     logger.info(f"[wn18rr] Extracting WordNet definitions for {len(entity2id)} entities...")
     with open(output_path, "w") as f:
         for entity_name in tqdm(entity2id, desc="Extracting WordNet texts"):
-            synset_name = entity_name.strip("_").lstrip("_")
-            while synset_name.startswith("_"):
-                synset_name = synset_name[1:]
+            # Resolve synset name from offset if needed.
+            if offset_to_synset is not None:
+                synset_name = offset_to_synset.get(entity_name, entity_name)
+            else:
+                synset_name = entity_name.strip("_").lstrip("_")
+                while synset_name.startswith("_"):
+                    synset_name = synset_name[1:]
 
             text = ""
             try:
@@ -316,11 +485,77 @@ def _extract_texts_wordnet(raw_dir: Path, output_path: Path) -> None:
                 lemmas = ", ".join(lem.name().replace("_", " ") for lem in synset.lemmas())
                 text = f"{lemmas}: {definition}"
             except Exception:
-                text = entity_name.replace("_", " ").strip()
+                text = synset_name.replace("_", " ").replace(".", " ").strip()
 
             f.write(f"{entity_name}\t{text}\n")
 
     logger.info(f"[wn18rr] Wrote {len(entity2id)} entity texts to {output_path}")
+
+
+def _build_wn18rr_offset_mapping(
+    raw_dir: Path,
+) -> tuple[dict[str, int], dict[str, str]]:
+    """Build offset→synset mapping for WN18RR by downloading text/ triples.
+
+    The ``original/`` triples use numeric offsets (e.g. ``00260881``),
+    while the ``text/`` triples use synset names (e.g. ``land_reform.n.01``).
+    Both variants share the same triple ordering, enabling a 1-to-1 mapping.
+
+    Returns:
+        (entity2id, offset_to_synset) — entity2id maps offset strings to
+        dummy integer IDs; offset_to_synset maps offset to synset name.
+    """
+    _WN_TEXT_BASE = (
+        "https://raw.githubusercontent.com/villmow/datasets_knowledge_embedding"
+        "/master/WN18RR/text"
+    )
+
+    logger.info("[wn18rr] Building offset→synset mapping from text/ triples...")
+
+    offset_to_synset: dict[str, str] = {}
+    offsets: set[str] = set()
+
+    # Collect all offsets from the original triples.
+    for split in ("train.txt", "valid.txt", "test.txt"):
+        path = raw_dir / split
+        if not path.exists():
+            continue
+        with open(path) as f:
+            for line in f:
+                parts = line.strip().split("\t")
+                if len(parts) >= 3:
+                    offsets.add(parts[0])
+                    offsets.add(parts[2])
+
+    # Download text triples and pair with original triples.
+    for split in ("train.txt", "valid.txt", "test.txt"):
+        orig_path = raw_dir / split
+        if not orig_path.exists():
+            continue
+        url = f"{_WN_TEXT_BASE}/{split}"
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".txt", delete=False, mode="w") as tmp:
+                tmp_path = Path(tmp.name)
+            urlretrieve(url, str(tmp_path))
+
+            with open(orig_path) as f_orig, open(tmp_path) as f_text:
+                for orig_line, text_line in zip(f_orig, f_text):
+                    orig_parts = orig_line.strip().split("\t")
+                    text_parts = text_line.strip().split("\t")
+                    if len(orig_parts) >= 3 and len(text_parts) >= 3:
+                        offset_to_synset[orig_parts[0]] = text_parts[0]
+                        offset_to_synset[orig_parts[2]] = text_parts[2]
+        except Exception as e:
+            logger.warning(f"[wn18rr] Failed to download text/{split}: {e}")
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+    if not offset_to_synset:
+        return {}, {}
+
+    logger.info(f"[wn18rr] Mapped {len(offset_to_synset)} offsets to synset names.")
+    entity2id = {offset: i for i, offset in enumerate(sorted(offsets))}
+    return entity2id, offset_to_synset
 
 
 def _extract_texts_wikipedia_mapping(raw_dir: Path, output_path: Path, text_url: str | None) -> None:
@@ -431,6 +666,47 @@ def _extract_texts_wikipedia(raw_dir: Path, output_path: Path) -> None:
                     count += 1
 
         logger.info(f"[wikidata_5m] Wrote {count} entity texts to {output_path}")
+
+
+def _extract_texts_entity_name(raw_dir: Path, output_path: Path) -> None:
+    """Generate entity texts by cleaning up entity name strings.
+
+    Converts entity identifiers to human-readable text:
+      - ``Albert_Einstein`` → ``Albert Einstein``
+      - ``/m/012345`` → ``m 012345``
+
+    Used for datasets (e.g. YAGO3-10) where no external text source is available.
+    """
+    entity2id = _load_entity_mapping(raw_dir)
+    if not entity2id:
+        # Fall back to collecting entity IDs from triple files.
+        entities: set[str] = set()
+        for name in ("train.txt", "train_triples.txt"):
+            path = raw_dir / name
+            if path.exists():
+                with open(path) as f:
+                    for line in f:
+                        parts = line.strip().split("\t")
+                        if len(parts) >= 3:
+                            entities.add(parts[0])
+                            entities.add(parts[2])
+                break
+        entity_names = sorted(entities)
+    else:
+        entity_names = list(entity2id.keys())
+
+    logger.info(f"[entity_name] Generating text for {len(entity_names)} entities from names...")
+
+    with open(output_path, "w") as f:
+        for name in tqdm(entity_names, desc="Cleaning entity names"):
+            cleaned = name.replace("_", " ").replace("/", " ").strip()
+            # Remove leading dots or special chars.
+            cleaned = cleaned.lstrip(". ")
+            if not cleaned:
+                cleaned = name
+            f.write(f"{name}\t{cleaned}\n")
+
+    logger.info(f"[entity_name] Wrote {len(entity_names)} entity texts to {output_path}")
 
 
 def _load_entity_mapping(raw_dir: Path) -> dict[str, int]:
