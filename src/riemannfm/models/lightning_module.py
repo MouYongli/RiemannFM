@@ -186,17 +186,20 @@ class RiemannFMPretrainModule(L.LightningModule):
             C_R=self.C_R,
         )
 
-        # 4. Compute loss (fp32 — manifold distances are numerically sensitive).
+        # 4. Compute loss (fp32 for manifold norms; cast only what needs it).
+        #    V_hat, u_t, x_t need fp32 for Riemannian tangent norm in L_cont.
+        #    P_hat, E_1 stay in native dtype — BCE is numerically stable.
+        _f32 = torch.float32
         with torch.amp.autocast(device_type=self.device.type, enabled=False):
             total_loss, metrics = self.loss_fn(
-                V_hat=V_hat.float(),
-                u_t=sample.u_t.float(),
-                x_t=sample.x_t.float(),
-                P_hat=P_hat.float(),
-                E_1=sample.E_1.float(),
+                V_hat=V_hat if V_hat.dtype == _f32 else V_hat.float(),
+                u_t=sample.u_t if sample.u_t.dtype == _f32 else sample.u_t.float(),
+                x_t=sample.x_t if sample.x_t.dtype == _f32 else sample.x_t.float(),
+                P_hat=P_hat,
+                E_1=sample.E_1,
                 node_mask=node_mask,
-                x_1=x_1.float(),
-                node_text=node_text.float(),
+                x_1=x_1 if x_1.dtype == _f32 else x_1.float(),
+                node_text=node_text,
             )
 
         return total_loss, metrics
@@ -373,14 +376,12 @@ class RiemannFMPretrainModule(L.LightningModule):
             manifold=manifold,
             lambda_disc=training_cfg.lambda_disc,
             mu_align=training_cfg.mu_align,
-            avg_edge_density=getattr(flow_cfg, "avg_edge_density", 0.05),
-            w_max=getattr(training_cfg, "w_max", 10.0),
+            neg_ratio=float(getattr(training_cfg, "neg_ratio", 1.0)),
             temperature=training_cfg.temperature,
             input_text_dim=input_text_dim,
             d_a=int(getattr(model_cfg, "text_proj_dim", 256)),
+            max_align_nodes=int(getattr(training_cfg, "max_align_nodes", 128)),
         )
-        # Share per-relation edge density from flow to loss (Def 6.8).
-        loss_fn.rho_k = flow.rho_k
 
         return cls(
             manifold=manifold,

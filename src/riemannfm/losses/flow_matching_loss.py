@@ -64,60 +64,61 @@ def discrete_flow_loss(
     P_hat: Tensor,
     E_1: Tensor,
     node_mask: Tensor,
-    rho_k: Tensor | None = None,
-    avg_edge_density: float = 0.05,
-    w_max: float = 10.0,
+    neg_ratio: float = 1.0,
 ) -> Tensor:
-    """Discrete flow matching loss L_disc (Def 6.8).
+    """Discrete flow matching loss L_disc (Def 6.8) with negative sampling.
 
-    Weighted binary cross-entropy per relation:
-        L_disc = sum_k BCE(P_hat_k, E_1_k, weight=w_k)
-
-    Per-relation positive class weight:
-        w_k+ = min( (1 - rho_k) / rho_k, w_max )
+    Instead of computing BCE over all N*N*K elements (dominated by trivial
+    negatives), we gather only positive node pairs + sampled negative pairs,
+    then compute BCE on the gathered subset. This is both faster (smaller
+    tensors) and produces stronger gradient signal for edge prediction.
 
     Args:
         P_hat: Predicted edge logits (pre-sigmoid), shape ``(B, N, N, K)``.
         E_1: Target edge types, shape ``(B, N, N, K)``.
-        node_mask: Bool mask, shape ``(B, N)``.
-        rho_k: Per-relation edge density, shape ``(K,)``.
-            When provided, computes per-relation weights (Def 6.8).
-            Falls back to uniform ``avg_edge_density`` when None.
-        avg_edge_density: Fallback uniform edge density when ``rho_k`` is None.
-        w_max: Maximum positive class weight cap.
+        node_mask: Bool mask, shape ``(B, N)``. True = real node.
+        neg_ratio: Ratio of negative to positive pairs to sample.
 
     Returns:
-        Scalar loss (mean over real node pairs and relations).
+        Scalar loss (mean over sampled pairs and relations).
     """
-    K = E_1.shape[-1]
-
-    # Per-relation positive class weights (Def 6.8).
-    if rho_k is not None:
-        rho = rho_k.to(device=E_1.device, dtype=E_1.dtype).clamp(min=1e-6)
-        w_pos = ((1.0 - rho) / rho).clamp(max=w_max)  # (K,)
-    else:
-        rho_scalar = max(avg_edge_density, 1e-6)
-        w_pos = torch.full(
-            (K,), min((1.0 - rho_scalar) / rho_scalar, w_max),
-            device=E_1.device, dtype=E_1.dtype,
-        )
-
-    # Mask: only real node pairs.
+    # Valid node pairs only.
     pair_mask = node_mask.unsqueeze(2) & node_mask.unsqueeze(1)  # (B, N, N)
 
-    # Per-element BCE with logits (numerically stable).
-    bce = F.binary_cross_entropy_with_logits(
-        P_hat, E_1, reduction="none",
-    )  # (B, N, N, K)
+    # Positive pairs: (i, j) where at least one relation is active.
+    has_edge = E_1.sum(dim=-1) > 0.5  # (B, N, N)
+    pos_mask = has_edge & pair_mask  # (B, N, N)
 
-    # Apply per-relation positive class weighting: scale losses where E_1=1.
-    # w_pos shape (K,) broadcasts over (B, N, N, K).
-    weight = torch.where(E_1 > 0.5, w_pos, torch.ones_like(w_pos))
-    bce_weighted = bce * weight  # (B, N, N, K)
+    # Flatten to (B*N*N,) for indexing.
+    pos_flat = pos_mask.reshape(-1)  # (L,)
+    pos_idx = pos_flat.nonzero(as_tuple=False).squeeze(1)  # (P,)
 
-    # Mask virtual nodes and average.
-    mask_expanded = pair_mask.unsqueeze(-1)  # (B, N, N, 1)
-    num_elements = mask_expanded.sum().clamp(min=1) * K
-    loss = (bce_weighted * mask_expanded).sum() / num_elements
+    if pos_idx.numel() == 0:
+        return torch.tensor(0.0, device=P_hat.device, dtype=P_hat.dtype)
+
+    # Negative pool: valid pairs with no edge.
+    neg_flat = ((~has_edge) & pair_mask).reshape(-1).float()  # (L,)
+
+    # Sample negatives via multinomial.
+    num_pos = pos_idx.shape[0]
+    num_neg_pool = int(neg_flat.sum().item())
+    n_neg = min(int(num_pos * neg_ratio), num_neg_pool)
+
+    if n_neg > 0:
+        neg_idx = torch.multinomial(neg_flat, n_neg, replacement=False)
+        sample_idx = torch.cat([pos_idx, neg_idx], dim=0)
+    else:
+        sample_idx = pos_idx
+
+    # Gather only sampled pairs — avoids BCE on full (B, N, N, K).
+    K = E_1.shape[-1]
+    P_flat = P_hat.reshape(-1, K)  # (L, K)
+    E_flat = E_1.reshape(-1, K)    # (L, K)
+
+    P_sampled = P_flat[sample_idx]  # (S, K)
+    E_sampled = E_flat[sample_idx]  # (S, K)
+
+    # BCE on the compact gathered tensor.
+    loss = F.binary_cross_entropy_with_logits(P_sampled, E_sampled)
 
     return loss

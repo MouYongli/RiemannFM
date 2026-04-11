@@ -17,7 +17,8 @@ mixed_precision: bf16
 lambda_disc: 10.0
 mu_align: 0.5
 temperature: 0.07
-w_max: 10.0
+neg_ratio: 1.0
+max_align_nodes: 128
 
 # Optimization
 use_riemannian_optim: true

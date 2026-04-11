@@ -60,8 +60,7 @@ class RiemannFMCombinedLoss(nn.Module):
         manifold: Product manifold for tangent norm in L_cont.
         lambda_disc: Weight for discrete flow loss.
         mu_align: Weight for contrastive alignment loss.
-        avg_edge_density: Edge density for L_disc class weights.
-        w_max: Maximum positive class weight for L_disc.
+        neg_ratio: Ratio of negative to positive pairs for L_disc sampling.
         temperature: InfoNCE temperature for L_align.
         input_text_dim: Raw text embedding dimension d_c (0 to disable alignment).
         d_a: Alignment space dimension for projection layers.
@@ -72,20 +71,19 @@ class RiemannFMCombinedLoss(nn.Module):
         manifold: RiemannFMProductManifold,
         lambda_disc: float = 1.0,
         mu_align: float = 0.1,
-        avg_edge_density: float = 0.05,
-        w_max: float = 10.0,
+        neg_ratio: float = 1.0,
         temperature: float = 0.07,
         input_text_dim: int = 0,
         d_a: int = 256,
+        max_align_nodes: int = 128,
     ) -> None:
         super().__init__()
         self.manifold = manifold
         self.lambda_disc = lambda_disc
         self.mu_align = mu_align
-        self.avg_edge_density = avg_edge_density
-        self.w_max = w_max
+        self.neg_ratio = neg_ratio
         self.temperature = temperature
-        self.rho_k: Tensor | None = None
+        self.max_align_nodes = max_align_nodes
 
         # Projection layers for L_align (Def 6.9):
         #   g_i = proj_g(pi(x_{1,i}))
@@ -142,12 +140,10 @@ class RiemannFMCombinedLoss(nn.Module):
             self.manifold, V_hat, u_t, x_t, node_mask,
         )
 
-        # L_disc: discrete flow matching loss (Def 6.8).
+        # L_disc: discrete flow matching loss (Def 6.8) with negative sampling.
         l_disc = discrete_flow_loss(
             P_hat, E_1, node_mask,
-            rho_k=self.rho_k,
-            avg_edge_density=self.avg_edge_density,
-            w_max=self.w_max,
+            neg_ratio=self.neg_ratio,
         )
 
         # L_align: contrastive alignment loss (Def 6.9).
@@ -164,6 +160,13 @@ class RiemannFMCombinedLoss(nn.Module):
             B, N, _ = x_1.shape
             mask_flat = node_mask.reshape(-1)
             valid_idx = mask_flat.nonzero(as_tuple=True)[0]
+
+            # Subsample to cap contrastive matrix size.
+            if valid_idx.numel() > self.max_align_nodes:
+                perm = torch.randperm(
+                    valid_idx.numel(), device=valid_idx.device,
+                )[:self.max_align_nodes]
+                valid_idx = valid_idx[perm]
 
             if valid_idx.numel() < 2:
                 l_align = torch.tensor(0.0, device=x_1.device, dtype=x_1.dtype)

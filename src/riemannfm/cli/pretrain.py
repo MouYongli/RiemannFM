@@ -158,11 +158,11 @@ def main(cfg: DictConfig) -> None:
         manifold=manifold,
         lambda_disc=cfg.training.lambda_disc,
         mu_align=cfg.training.mu_align,
-        avg_edge_density=cfg.flow.avg_edge_density,
-        w_max=cfg.training.w_max,
+        neg_ratio=float(getattr(cfg.training, "neg_ratio", 1.0)),
         temperature=cfg.training.temperature,
         input_text_dim=input_text_dim,
         d_a=int(getattr(cfg.model, "text_proj_dim", 256)),
+        max_align_nodes=int(getattr(cfg.training, "max_align_nodes", 128)),
     )
 
     # 6. LitModule — pass all pre-built objects.
