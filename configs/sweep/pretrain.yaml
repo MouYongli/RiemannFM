@@ -17,7 +17,10 @@ search_space:
     choices: [1.0e-5, 5.0e-5, 1.0e-4, 5.0e-4]
   training.lambda_disc:
     type: categorical
-    choices: [5.0, 10.0, 20.0, 50.0]
+    choices: [10.0, 50.0, 100.0, 200.0]
+  training.neg_ratio:
+    type: categorical
+    choices: [1.0, 2.0, 5.0]
   training.mu_align:
     type: categorical
     choices: [0.1, 0.5, 1.0, 2.0]
