@@ -7,6 +7,7 @@ defaults:
   - data: wikidata_5m
   - training: pretrain
   - ablation: full
+  - optional task: null
   - accelerator: gpu
   - download: default
   - preprocess: default
