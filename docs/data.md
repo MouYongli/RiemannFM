@@ -10,11 +10,11 @@
 |--------|------|--------|--------|----------|------|
 | WikiData5M | `wikidata_5m` | 4,594,485 | 822 | Wikipedia 首段描述 | 预训练 / 同域 KGC / T2G / GAD |
 | WikiData5M Mini | `wikidata_5m_mini` | ~7,800 | 822 | 同上 (子集) | 工程验证 (dataset / model / loss / trainer) |
-| FB15k-237 | `fb15k_237` | 14,541 | 237 | Freebase → Wikipedia 映射 | 跨域 KGC |
-| WN18RR | `wn18rr` | 40,943 | 11 | WordNet synset 定义 + 同义词 | 跨域 KGC |
-| CoDEx-L | `codex_l` | 77,951 | 69 | WikiData 标签 + 描述 | 跨域 KGC |
-| Wiki27K | `wiki27k` | ~27,000 | 214 | WikiData 标签 + 描述 | 跨域 KGC |
-| YAGO3-10 | `yago3_10` | 123,182 | 37 | Wikipedia 映射 | 跨域 KGC |
+| FB15k-237 | `fb15k_237` | 14,541 | 237 | Freebase → Wikipedia 映射 | 跨域 KGC（主实验） |
+| CoDEx-L | `codex_l` | 77,951 | 69 | WikiData 标签 + 描述 | 跨域 KGC（主实验） |
+| YAGO3-10 | `yago3_10` | 123,182 | 37 | 实体名清洗 | 跨域 KGC（主实验） |
+| WN18RR | `wn18rr` | 40,943 | 11 | WordNet synset 定义 + 同义词 | 跨域 KGC（附录） |
+| Wiki27K | `wiki27k` | 27,112 | 62 | WikiData 标签 + 描述 | 跨域 KGC（附录） |
 
 ---
 
@@ -94,9 +94,20 @@ download 负责获取图结构和实体/关系文本，写入 `raw/`。不需要
 ### 4.1 调用方式
 
 ```bash
+# 预训练数据集
 uv run python -m riemannfm.cli.download data=wikidata_5m
-uv run python -m riemannfm.cli.download data=fb15k237
-uv run python -m riemannfm.cli.download download.all=true       # 下载全部数据集
+
+# 下游 KGC 数据集
+uv run python -m riemannfm.cli.download data=fb15k_237
+uv run python -m riemannfm.cli.download data=wn18rr
+uv run python -m riemannfm.cli.download data=codex_l
+uv run python -m riemannfm.cli.download data=yago3_10
+uv run python -m riemannfm.cli.download data=wiki27k              # Google Drive via gdown
+
+# 下载全部数据集
+uv run python -m riemannfm.cli.download download.all=true
+
+# 强制重新下载
 uv run python -m riemannfm.cli.download data=wn18rr download.force=true
 ```
 
@@ -115,9 +126,10 @@ uv run python -m riemannfm.cli.download data=wn18rr download.force=true
 | 数据集 | 来源 |
 |--------|------|
 | WikiData5M | Dropbox `wikidata5m_transductive.tar.gz` |
-| FB15k-237, WN18RR | GitHub `villmow/datasets_knowledge_embedding` tar.gz |
+| FB15k-237, WN18RR | GitHub `villmow/datasets_knowledge_embedding` 逐文件下载 |
 | CoDEx-L | GitHub `tsafavi/codex` 逐 split 下载 |
-| Wiki27K, YAGO3-10 | 需手动放置文件 |
+| YAGO3-10 | GitHub `DeepGraphLearning/KnowledgeGraphEmbedding` 逐文件下载 |
+| Wiki27K | Google Drive (THU-KEG/PKGC, gdown) |
 
 跳过条件：`raw/train.txt` 或 `raw/train_triples.txt` 已存在。
 
@@ -126,9 +138,10 @@ uv run python -m riemannfm.cli.download data=wn18rr download.force=true
 | 数据集 | 策略 |
 |--------|------|
 | WikiData5M | 下载 `wikidata5m_text.txt.gz`，取每个实体的首句 |
-| FB15k-237, YAGO3-10 | 下载 `entity2textlong.txt` 映射文件 |
+| FB15k-237 | 下载 `entity2textlong.txt` 映射文件 |
 | WN18RR | NLTK WordNet synset 定义 + 同义词 |
 | CoDEx-L, Wiki27K | WikiData 实体描述 JSON |
+| YAGO3-10 | 实体名清洗（`Albert_Einstein` → `Albert Einstein`） |
 
 **Stage 3 — 提取关系文本** → `raw/relation_texts.tsv`（`relation_id<TAB>text`）
 
@@ -185,10 +198,19 @@ preprocess 读取 `raw/` 产出两类文件到 `processed/`：
 ### 6.1 调用方式
 
 ```bash
+# 预训练数据集
 uv run python -m riemannfm.cli.preprocess data=wikidata_5m_mini embedding=sbert
 uv run python -m riemannfm.cli.preprocess data=wikidata_5m embedding=sbert
-uv run python -m riemannfm.cli.preprocess data=fb15k237 embedding=sbert
-uv run python -m riemannfm.cli.preprocess data=wikidata_5m embedding=none   # 只做 ID 映射
+
+# 下游 KGC 数据集
+uv run python -m riemannfm.cli.preprocess data=fb15k_237 embedding=sbert
+uv run python -m riemannfm.cli.preprocess data=wn18rr embedding=sbert
+uv run python -m riemannfm.cli.preprocess data=codex_l embedding=sbert
+uv run python -m riemannfm.cli.preprocess data=yago3_10 embedding=sbert
+uv run python -m riemannfm.cli.preprocess data=wiki27k embedding=sbert
+
+# 只做 ID 映射（不做文本嵌入）
+uv run python -m riemannfm.cli.preprocess data=wikidata_5m embedding=none
 
 # 强制重新处理
 uv run python -m riemannfm.cli.preprocess data=wikidata_5m embedding=sbert preprocess.force=true
@@ -256,27 +278,26 @@ uv run python -m riemannfm.cli.preprocess data=wikidata_5m preprocess.build_mini
 
 # 3. 对 mini 做预处理（ID 映射 + 文本嵌入）
 uv run python -m riemannfm.cli.preprocess data=wikidata_5m_mini embedding=sbert
-
-# 4. 用 mini 做快速训练验证
-uv run python -m riemannfm.cli.pretrain data=wikidata_5m_mini embedding=sbert
 ```
 
-### 完整预训练
+### 全量下载 + 预处理
 
 ```bash
 # 1. 下载全部数据集
 uv run python -m riemannfm.cli.download download.all=true
 
 # 2. 预处理 WikiData5M
-uv run python -m riemannfm.cli.preprocess data=wikidata_5m embedding=sbert
-
-# 3. 追加其他编码器（ID 映射不重复，只追加嵌入文件）
 uv run python -m riemannfm.cli.preprocess data=wikidata_5m embedding=qwen3
 
-# 4. 预处理下游数据集
-uv run python -m riemannfm.cli.preprocess data=fb15k237 embedding=sbert
-uv run python -m riemannfm.cli.preprocess data=wn18rr embedding=sbert
+# 3. 追加其他编码器（ID 映射不重复，只追加嵌入文件）
+uv run python -m riemannfm.cli.preprocess data=wikidata_5m embedding=sbert
 
-# 5. 预训练
-uv run python -m riemannfm.cli.pretrain data=wikidata_5m embedding=sbert
+# 4. 预处理全部下游数据集
+uv run python -m riemannfm.cli.preprocess data=fb15k_237 embedding=qwen3
+uv run python -m riemannfm.cli.preprocess data=wn18rr embedding=qwen3
+uv run python -m riemannfm.cli.preprocess data=codex_l embedding=qwen3
+uv run python -m riemannfm.cli.preprocess data=yago3_10 embedding=qwen3
+uv run python -m riemannfm.cli.preprocess data=wiki27k embedding=qwen3
 ```
+
+> 预训练和微调命令见 [cli.md](cli.md)。

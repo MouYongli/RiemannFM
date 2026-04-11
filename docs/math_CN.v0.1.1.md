@@ -469,7 +469,10 @@ $$\mathbf{E}_{t,ij} = z_{ij} \cdot \mathbf{E}_{1,ij} + (1 - z_{ij}) \cdot \mathb
 **定义 6.5（条件向量场目标）。** 对每个节点 $i \in [N]$：
 $$\mathbf{u}_{t,i} = \frac{1}{1-t}\log_{\mathbf{x}_{t,i}}(\mathbf{x}_{1,i}) \in T_{\mathbf{x}_{t,i}}\mathcal{M}$$
 
-即从当前位置 $\mathbf{x}_{t,i}$ 指向数据点 $\mathbf{x}_{1,i}$ 的切向量，按剩余时间 $1 - t$ 缩放为速度：沿此速度走 $1 - t$ 时间恰好到达 $\mathbf{x}_{1,i}$。训练时 $t \sim \mathrm{Uniform}(0, 1 - \epsilon_t)$，$\epsilon_t > 0$ 为小常数，避免 $t \to 1$ 时的奇异性。
+即从当前位置 $\mathbf{x}_{t,i}$ 指向数据点 $\mathbf{x}_{1,i}$ 的切向量，按剩余时间 $1 - t$ 缩放为速度：沿此速度走 $1 - t$ 时间恰好到达 $\mathbf{x}_{1,i}$。训练时 $t$ 的采样分布可选：
+
+- **均匀分布**（默认）：$t \sim \mathrm{Uniform}(0, 1 - \epsilon_t)$，$\epsilon_t > 0$ 为小常数，避免 $t \to 1$ 时的奇异性；
+- **Logit-Normal 分布**：$t = \sigma(\mu_{\mathrm{LN}} + \sigma_{\mathrm{LN}} \cdot z)$，$z \sim \mathcal{N}(0, 1)$，其中 $\sigma(\cdot)$ 为 sigmoid 函数。该分布将采样密度集中于 $t \approx 0.5$，指数级降低 $t \to 0$ 和 $t \to 1$ 极端区域的采样概率，从而抑制 $1/(1-t)$ 缩放因子引起的梯度方差。
 
 **定义 6.6（边类型目标）。** 对每对 $(i, j) \in [N]^2$ 和每个关系类型 $k \in [K]$：
 $$\mathbf{E}_{1,ij}^{(k)} \in \{0,1\}$$
@@ -496,7 +499,7 @@ $$\mathbf{g}_i = \mathrm{MLP}_{\mathrm{proj}}(\pi(\mathbf{x}_{1,i})) \in \mathbb
 
 余弦相似度：$\mathrm{sim}(\mathbf{g}_i, \mathbf{c}_j) = \frac{\mathbf{g}_i^\top \mathbf{c}_j}{\|\mathbf{g}_i\|_2 \|\mathbf{c}_j\|_2}$
 
-设 $\mathcal{B} \subseteq [N]$ 为 mini-batch 中的节点索引集，对称对比损失：
+设 $\mathcal{B} \subseteq [N]$ 为 mini-batch 中的节点索引集。当 $|\mathcal{B}|$ 较大时（如 $BN_{\max}$ 量级），从中均匀随机子采样至多 $M_{\mathrm{align}}$ 个节点以控制 $|\mathcal{B}| \times |\mathcal{B}|$ 相似度矩阵的规模并降低 InfoNCE 任务难度。对称对比损失：
 $$\mathcal{L}_{\mathrm{align}} = \frac{1}{2}\left(\mathcal{L}_{\mathrm{align}}^{g \to c} + \mathcal{L}_{\mathrm{align}}^{c \to g}\right)$$
 其中：
 $$\mathcal{L}_{\mathrm{align}}^{g \to c} = -\frac{1}{|\mathcal{B}|}\sum_{i \in \mathcal{B}} \log \frac{\exp(\mathrm{sim}(\mathbf{g}_i, \mathbf{c}_i) / \tau)}{\sum_{j \in \mathcal{B}} \exp(\mathrm{sim}(\mathbf{g}_i, \mathbf{c}_j) / \tau)}$$
@@ -513,7 +516,7 @@ $$\mathcal{L} = \mathcal{L}_{\mathrm{cont}} + \lambda\,\mathcal{L}_{\mathrm{disc
 **输入**：训练子图 $(\mathbf{X}_1, \mathbf{E}_1, \mathbf{C}_\mathcal{V}, \mathbf{C}_\mathcal{R}, \mathbf{m})$，参数 $\theta$
 **输出**：损失 $\mathcal{L}$
 
-1. 采样 $t \sim \mathrm{Uniform}(0, 1 - \epsilon_t)$
+1. 采样 $t \sim p_t$（$p_t$ 为 Uniform 或 Logit-Normal，见定义 6.5 注释）
 2. 对 $i \in [N]$：采样 $\mathbf{x}_{0,i} \sim p_0^{\mathcal{M}}$（定义 6.1）
 3. 对 $(i, j) \in [N]^2$，$k \in [K]$：采样 $\mathbf{E}_{0,ij}^{(k)} \sim \mathrm{Bernoulli}(\rho_k)$（定义 6.2）
 4. 对 $i \in [N]$：$\mathbf{x}_{t,i} = \exp_{\mathbf{x}_{0,i}}(t \cdot \log_{\mathbf{x}_{0,i}}(\mathbf{x}_{1,i}))$（定义 6.3）
@@ -732,6 +735,8 @@ $$S_i = \frac{1}{|\mathcal{N}_i|}\sum_{j \in \mathcal{N}_i} \max_{k:\,\mathbf{E}
 | $w_{\max}$ | 标量 | $\mathbb{R}_{>0}$ | 正样本权重截断上限 |
 | $\mathcal{S}$ | 集合 | $\subseteq [N]^2$ | 边损失采样集 |
 | $\mathcal{B}$ | 集合 | $\subseteq [N]$ | 对比损失 mini-batch 索引 |
+| $M_{\mathrm{align}}$ | 标量 | $\mathbb{Z}_{>0}$ | 对比损失最大节点子采样数 |
+| $\mu_{\mathrm{LN}}, \sigma_{\mathrm{LN}}$ | 标量 | $\mathbb{R}, \mathbb{R}_{>0}$ | Logit-Normal 时间分布参数 |
 | $\epsilon_t, \epsilon_p, \epsilon_\kappa$ | 标量 | $\mathbb{R}_{>0}$ | 数值稳定/截断常数 |
 
 ### 下游任务

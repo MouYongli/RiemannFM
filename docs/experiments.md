@@ -22,7 +22,7 @@ WikiData5M 全部训练三元组（~2061 万），通过在线子图采样训练
 ### 论文中需明确声明
 1. 预训练目标是子图的生成分布（流匹配），不是记忆具体三元组
 2. WikiData5M 官方 test 三元组从未在预训练中作为监督信号
-3. 跨域数据集（FB15k-237, WN18RR 等）提供了真正的迁移能力验证
+3. 跨域数据集（FB15k-237, CoDEx-L, YAGO3-10 等）提供了真正的迁移能力验证
 
 ---
 
@@ -34,10 +34,10 @@ WikiData5M 全部训练三元组（~2061 万），通过在线子图采样训练
 |--------|--------|--------|------|------|------|---------|------|
 | WikiData5M | 4,594,485 | 822 | 20,614,279 | 5,163 | 5,133 | ✓ (Wikipedia) | 预训练 + 同域 KGC/T2G/GAD |
 | CoDEx-L | 77,951 | 69 | 551,193 | 30,622 | 30,622 | ✓ (WikiData 描述) | 跨域 KGC |
-| Wiki27K | ~27,000 | 214 | ~167,000 | — | — | ✓ (WikiData 描述) | 跨域 KGC |
+| Wiki27K | 27,112 | 62 | 74,793 | 10,121 | 10,122 | ✓ (WikiData 描述) | 跨域 KGC |
 | FB15k-237 | 14,541 | 237 | 272,115 | 17,535 | 20,466 | 需映射 | 跨域 KGC（经典 benchmark） |
-| WN18RR | 40,943 | 11 | 86,835 | 3,034 | 3,134 | ✓ (WordNet 定义) | 跨域 KGC（层次结构） |
-| YAGO3-10 | 123,182 | 37 | 1,079,040 | 5,000 | 5,000 | 部分 | 跨域 KGC（补充） |
+| WN18RR | 40,943 | 11 | 86,835 | 3,034 | 3,134 | ✓ (WordNet 定义) | 跨域 KGC（附录） |
+| YAGO3-10 | 123,182 | 37 | 1,079,040 | 5,000 | 5,000 | 部分 | 跨域 KGC（主实验） |
 
 ### 1.2 文本获取策略
 
@@ -136,11 +136,13 @@ $$\mathcal{L}_{\mathrm{val}} = \mathcal{L}_{\mathrm{cont}} + \lambda\,\mathcal{L
 | 数据集 | 设定 | 论文位置 |
 |--------|------|---------|
 | WikiData5M (transductive) | 同域评估 | 主实验 |
-| CoDEx-L | 跨域迁移（有文本） | 主实验 |
-| FB15k-237 | 跨域迁移（经典） | 主实验 |
-| WN18RR | 跨域迁移（层次结构） | 主实验 |
-| YAGO3-10 | 跨域迁移（补充） | 附录 |
-| Wiki27K | 跨域迁移（补充） | 附录 |
+| FB15k-237 | 跨域迁移（经典 benchmark） | 主实验 |
+| CoDEx-L | 跨域迁移（WikiData 生态） | 主实验 |
+| YAGO3-10 | 跨域迁移（Wikipedia 衍生） | 主实验 |
+| WN18RR | 跨域迁移（词汇语义网络） | 附录 |
+| Wiki27K | 跨域迁移（WikiData 子集） | 附录 |
+
+> **设计理由**：主实验的四个数据集形成清晰的迁移梯度——同域 → 不同 KB（Freebase）→ WikiData 子集 → WikiData/Wikipedia 衍生。WN18RR 作为词汇语义网络（仅 11 种关系，层次结构为主），与百科知识图谱的域差距过大，放入附录作为补充验证。
 
 ### 3.3 微调配置
 
@@ -240,6 +242,8 @@ $$\mathcal{L}_{\mathrm{val}} = \mathcal{L}_{\mathrm{cont}} + \lambda\,\mathcal{L
 |--------|---------|
 | WikiData5M | 主实验 |
 | FB15k-237 | 主实验 |
+| CoDEx-L | 主实验 |
+| YAGO3-10 | 附录 |
 | WN18RR | 附录 |
 
 ### 4.4 微调配置
@@ -524,8 +528,8 @@ $$\mathcal{L}_{\mathrm{val}} = \mathcal{L}_{\mathrm{cont}} + \lambda\,\mathcal{L
 
 | 编号 | 类型 | 内容 |
 |------|------|------|
-| 表 1 | 主结果 | KGC-LP：WikiData5M + CoDEx-L + FB15k-237 + WN18RR，所有 baselines |
-| 表 2 | 主结果 | KGC-RP：WikiData5M + FB15k-237 |
+| 表 1 | 主结果 | KGC-LP：WikiData5M + FB15k-237 + CoDEx-L + YAGO3-10，所有 baselines |
+| 表 2 | 主结果 | KGC-RP：WikiData5M + FB15k-237 + CoDEx-L |
 | 表 3 | 主结果 | T2G：按难度分层 + 总体，所有 baselines |
 | 表 4 | 主结果 | GAD：按异常类型 × 异常比例，边级 + 节点级 |
 | 表 5 | 消融 | 流形几何消融（A1） |
@@ -538,8 +542,8 @@ $$\mathcal{L}_{\mathrm{val}} = \mathcal{L}_{\mathrm{cont}} + \lambda\,\mathcal{L
 
 | 内容 |
 |------|
-| YAGO3-10, Wiki27K 上的 KGC-LP 结果 |
-| WN18RR 上的 KGC-RP 结果 |
+| WN18RR, Wiki27K 上的 KGC-LP 结果 |
+| YAGO3-10, WN18RR 上的 KGC-RP 结果 |
 | 训练目标消融（A3）完整结果 |
 | 子图大小消融完整结果 |
 | T2G 更多定性案例（5–10 个） |
@@ -554,9 +558,10 @@ $$\mathcal{L}_{\mathrm{val}} = \mathcal{L}_{\mathrm{cont}} + \lambda\,\mathcal{L
 
 | 可能质疑 | 应对策略 |
 |---------|---------|
-| "预训练和 KGC 评估用同一个 WikiData5M，有数据泄露吗？" | 官方 test 三元组从未在预训练中出现。预训练学的是子图生成分布，不记忆三元组。另有 4 个跨域数据集验证泛化。 |
+| "预训练和 KGC 评估用同一个 WikiData5M，有数据泄露吗？" | 官方 test 三元组从未在预训练中出现。预训练学的是子图生成分布，不记忆三元组。另有 5 个跨域数据集验证泛化（主实验 3 个 + 附录 2 个）。 |
 | "这是 ML 论文，和语义网有什么关系？" | (1) 在 WikiData 上预训练，(2) 保留多关系 KG 语义结构，(3) 文本条件利用实体/关系描述，(4) T2G 直接服务于知识图谱构建，(5) GAD 服务于 KG 质量保证。 |
 | "T2G 和 GAD 数据集是自建的" | 公开发布数据集 + 评估脚本。T2G 数据集本身是一个资源贡献。所有 baselines 用完全相同的数据和协议。 |
 | "为什么不做 inductive KGC？" | 可在 WikiData5M inductive split 上补充。但 transductive 已是主流评估方式，且跨域迁移实验已展示泛化能力。 |
 | "关系预测是否多余？" | LP 和 RP 考察模型不同维度的能力。LP 看实体排序，RP 看关系分类。我们的模型天然输出 $\hat{\mathbf{P}}_{ij}^{(k)}$，报告 RP 几乎零额外成本。 |
 | "和 LLM-based KGC 方法比如何？" | 将 GPT-4 作为 T2G baseline。LLM-based KGC 方法（如 AgREE）作为 KGC-LP 的参考（注意它们调用外部 API，不完全可比）。 |
+| "为什么 WN18RR 不在主实验？" | WN18RR 是词汇语义网络（仅 11 种关系，层次结构为主），与百科知识图谱的域差距过大。主实验聚焦于知识图谱域内的迁移梯度（同域 → 不同 KB → WikiData 衍生），WN18RR 结果在附录中完整报告。 |
