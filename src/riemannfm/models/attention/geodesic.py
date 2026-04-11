@@ -146,7 +146,7 @@ class RiemannFMGeodesicAttention(nn.Module):
 
         # M-RoPE attention logits (Def 5.6 / 5.8).
         # theta_{ij,l} = omega_l * d_M(x_i, x_j)  — (B, N, N, half)
-        theta = dist.unsqueeze(-1) * self.rope_freq  # type: ignore[arg-type]
+        theta = dist.unsqueeze(-1) * self.rope_freq  # type: ignore[operator]
         cos_t = theta.cos().unsqueeze(1)  # (B, 1, N, N, half)
         sin_t = theta.sin().unsqueeze(1)  # (B, 1, N, N, half)
 

@@ -72,6 +72,7 @@ class RiemannFMKGDataset(Dataset[RiemannFMGraphData]):
         self.dim_text_emb = 0
 
         # Use pre-loaded embeddings if provided, otherwise load from disk.
+        self.entity_emb: Tensor | None
         if entity_emb is not None:
             self.entity_emb = entity_emb
             self.dim_text_emb = entity_emb.shape[-1]
