@@ -162,9 +162,15 @@ def main(cfg: DictConfig) -> None:
         manifold=manifold,
         lambda_disc=cfg.training.lambda_disc,
         mu_align=cfg.training.mu_align,
+        nu_mask=float(getattr(cfg.training, "nu_mask", 0.0)),
         neg_ratio=float(getattr(cfg.training, "neg_ratio", 1.0)),
         temperature=cfg.training.temperature,
+        mask_temperature=float(
+            getattr(cfg.training, "mask_temperature", 0.07),
+        ),
         input_text_dim=input_text_dim,
+        node_dim=cfg.model.node_dim,
+        entity_emb_dim=manifold.ambient_dim,
         d_a=int(getattr(cfg.model, "text_proj_dim", 256)),
         max_align_nodes=int(getattr(cfg.training, "max_align_nodes", 128)),
     )
