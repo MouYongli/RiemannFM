@@ -99,18 +99,30 @@ def sample_time(
     device: torch.device | None = None,
     dtype: torch.dtype | None = None,
     generator: torch.Generator | None = None,
+    distribution: str = "uniform",
+    logit_normal_mu: float = 0.0,
+    logit_normal_sigma: float = 1.0,
 ) -> Tensor:
-    """Sample time steps uniformly from [0, 1).
+    """Sample time steps from the specified distribution.
 
     Args:
         batch_size: Number of time steps to sample.
         device: Target device.
         dtype: Target dtype.
         generator: Optional RNG.
+        distribution: ``"uniform"`` or ``"logit_normal"``.
+        logit_normal_mu: Mean of the normal in logit space (logit_normal only).
+        logit_normal_sigma: Std of the normal in logit space (logit_normal only).
 
     Returns:
         Time steps, shape ``(B,)``.
     """
+    if distribution == "logit_normal":
+        z = torch.randn(
+            batch_size, device=device, dtype=dtype, generator=generator,
+        )
+        return torch.sigmoid(logit_normal_mu + logit_normal_sigma * z)
+    # Default: uniform [0, 1).
     return torch.rand(
         batch_size, device=device, dtype=dtype, generator=generator,
     )

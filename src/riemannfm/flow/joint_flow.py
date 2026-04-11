@@ -65,6 +65,9 @@ class RiemannFMJointFlow:
         disable_discrete: If True, skip discrete flow (E_t = E_1).
         radius_h: Geodesic radius for hyperbolic noise.
         sigma_e: Std for Euclidean noise.
+        time_distribution: ``"uniform"`` or ``"logit_normal"``.
+        logit_normal_mu: Mean of normal in logit space (logit_normal only).
+        logit_normal_sigma: Std of normal in logit space (logit_normal only).
     """
 
     def __init__(
@@ -77,6 +80,9 @@ class RiemannFMJointFlow:
         disable_discrete: bool = False,
         radius_h: float = 5.0,
         sigma_e: float = 1.0,
+        time_distribution: str = "uniform",
+        logit_normal_mu: float = 0.0,
+        logit_normal_sigma: float = 1.0,
         **kwargs: Any,
     ) -> None:
         self.manifold = manifold
@@ -87,6 +93,9 @@ class RiemannFMJointFlow:
         self.disable_discrete = disable_discrete
         self.radius_h = radius_h
         self.sigma_e = sigma_e
+        self.time_distribution = time_distribution
+        self.logit_normal_mu = logit_normal_mu
+        self.logit_normal_sigma = logit_normal_sigma
 
     @classmethod
     def from_config(
@@ -101,6 +110,9 @@ class RiemannFMJointFlow:
             t_max=getattr(cfg, "t_max", 0.999),
             disable_continuous=getattr(cfg, "disable_continuous", False),
             disable_discrete=getattr(cfg, "disable_discrete", False),
+            time_distribution=getattr(cfg, "time_distribution", "uniform"),
+            logit_normal_mu=getattr(cfg, "logit_normal_mu", 0.0),
+            logit_normal_sigma=getattr(cfg, "logit_normal_sigma", 1.0),
         )
 
     def sample(
@@ -129,7 +141,12 @@ class RiemannFMJointFlow:
         dtype = x_1.dtype
 
         # Sample time.
-        t = sample_time(B, device=device, dtype=dtype, generator=generator)
+        t = sample_time(
+            B, device=device, dtype=dtype, generator=generator,
+            distribution=self.time_distribution,
+            logit_normal_mu=self.logit_normal_mu,
+            logit_normal_sigma=self.logit_normal_sigma,
+        )
 
         # Continuous flow.
         if self.disable_continuous:
