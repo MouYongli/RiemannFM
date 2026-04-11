@@ -58,6 +58,7 @@ class RiemannFMPretrainModule(L.LightningModule):
         C_R: Tensor | None = None,
         lr: float = 1e-4,
         curvature_lr: float = 1e-5,
+        align_lr: float | None = None,
         weight_decay: float = 0.01,
         warmup_steps: int = 10000,
         max_steps: int = 500_000,
@@ -231,6 +232,14 @@ class RiemannFMPretrainModule(L.LightningModule):
         if self.manifold.spherical is not None:
             self.log("curvature/kappa_s", self.manifold.spherical.curvature.detach(), batch_size=B, on_step=True, on_epoch=False)
 
+        # Log learning rates on the same CSV row as training metrics.
+        # LearningRateMonitor logs on separate rows, making CSV analysis hard.
+        opts = self.optimizers()
+        if opts is not None:
+            opt = opts if isinstance(opts, torch.optim.Optimizer) else opts[0]  # type: ignore[index]
+            for i, pg in enumerate(opt.param_groups):
+                self.log(f"lr/pg{i}", pg["lr"], batch_size=B, on_step=True, on_epoch=False)
+
         return total_loss
 
     def validation_step(
@@ -291,10 +300,49 @@ class RiemannFMPretrainModule(L.LightningModule):
                 p.grad.nan_to_num_(nan=0.0, posinf=0.0, neginf=0.0)
         project_curvatures(self.manifold)
 
+    def configure_gradient_clipping(
+        self,
+        optimizer: torch.optim.Optimizer,
+        gradient_clip_val: float | int | None = None,
+        gradient_clip_algorithm: str | None = None,
+    ) -> None:
+        """Per-group gradient clipping to protect alignment projections.
+
+        Global clipping starves proj_g/proj_c (0.15% of params) when
+        backbone gradients from L_cont dominate the global norm.
+        Clip each group independently so alignment projections get
+        their own gradient norm budget.
+        """
+        if not gradient_clip_val:
+            return
+
+        clip_val = float(gradient_clip_val)
+
+        # Group 1: alignment projection parameters (proj_g, proj_c).
+        align_params = [p for p in self.loss_fn.parameters() if p.grad is not None]
+        if align_params:
+            torch.nn.utils.clip_grad_norm_(align_params, clip_val)
+
+        # Group 2: everything else (backbone, entity_emb, curvature).
+        align_ids = {id(p) for p in self.loss_fn.parameters()}
+        other_params = [
+            p for p in self.parameters()
+            if p.grad is not None and id(p) not in align_ids
+        ]
+        if other_params:
+            torch.nn.utils.clip_grad_norm_(other_params, clip_val)
+
     def configure_optimizers(self) -> dict[str, Any]:  # type: ignore[override]
-        """Build optimizer with linear warmup + cosine annealing."""
+        """Build optimizer with linear warmup + cosine annealing.
+
+        Param groups pg0 (backbone) and pg1 (curvature) use linear
+        warmup followed by cosine annealing.  pg2 (alignment
+        projections) skips warmup and starts at full ``align_lr``
+        with cosine-only decay, so L_align can learn from step 0.
+        """
         lr: float = self.hparams["lr"]
         curvature_lr: float = self.hparams["curvature_lr"]
+        align_lr: float | None = self.hparams.get("align_lr")
         weight_decay: float = self.hparams["weight_decay"]
         use_riemannian_optim: bool = self.hparams["use_riemannian_optim"]
         warmup: int = self.hparams["warmup_steps"]
@@ -305,18 +353,27 @@ class RiemannFMPretrainModule(L.LightningModule):
             manifold=self.manifold,
             lr=lr,
             curvature_lr=curvature_lr,
+            align_lr=align_lr,
             weight_decay=weight_decay,
             use_riemannian_optim=use_riemannian_optim,
         )
 
-        def lr_lambda(step: int) -> float:
+        def warmup_cosine(step: int) -> float:
+            """Linear warmup + cosine annealing (pg0, pg1)."""
             if step < warmup:
                 return step / max(warmup, 1)
-            # Cosine annealing after warmup.
             progress = (step - warmup) / max(total_steps - warmup, 1)
             return 0.5 * (1.0 + math.cos(math.pi * progress))
 
-        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+        def cosine_only(step: int) -> float:
+            """Cosine annealing without warmup (pg2 — alignment)."""
+            progress = step / max(total_steps, 1)
+            return 0.5 * (1.0 + math.cos(math.pi * progress))
+
+        # Per-group lambdas: pg0, pg1 get warmup; pg2 skips warmup.
+        scheduler = torch.optim.lr_scheduler.LambdaLR(
+            optimizer, [warmup_cosine, warmup_cosine, cosine_only],
+        )
 
         return {
             "optimizer": optimizer,
@@ -393,6 +450,8 @@ class RiemannFMPretrainModule(L.LightningModule):
             C_R=C_R,
             lr=training_cfg.lr,
             curvature_lr=training_cfg.curvature_lr,
+            align_lr=float(getattr(training_cfg, "align_lr", 0))
+            or None,
             weight_decay=training_cfg.weight_decay,
             warmup_steps=training_cfg.warmup_steps,
             max_steps=max_steps,

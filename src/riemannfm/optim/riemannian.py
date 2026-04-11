@@ -28,6 +28,7 @@ def build_optimizer(
     manifold: RiemannFMProductManifold,
     lr: float = 1e-4,
     curvature_lr: float = 1e-5,
+    align_lr: float | None = None,
     weight_decay: float = 0.01,
     use_riemannian_optim: bool = True,
 ) -> torch.optim.Optimizer:
@@ -35,7 +36,7 @@ def build_optimizer(
 
     Group 1: Main model parameters (standard LR + weight decay).
     Group 2: Curvature parameters (lower LR, no weight decay).
-    Group 3: Alignment projection layers (standard LR, no weight decay).
+    Group 3: Alignment projection layers (align_lr, no weight decay).
 
     The alignment projections (proj_g, proj_c) are excluded from weight
     decay because their gradients are small relative to the main model
@@ -48,6 +49,8 @@ def build_optimizer(
         manifold: Product manifold to identify curvature params.
         lr: Base learning rate for model parameters.
         curvature_lr: Learning rate for curvature parameters.
+        align_lr: Learning rate for alignment projections (proj_g,
+            proj_c).  Defaults to ``lr`` when None.
         weight_decay: Weight decay for model parameters.
         use_riemannian_optim: Use geoopt RiemannianAdam (True) or
             standard AdamW (False).
@@ -81,10 +84,11 @@ def build_optimizer(
         else:
             model_params.append(param)
 
+    _align_lr = align_lr if align_lr is not None else lr
     param_groups = [
         {"params": model_params, "lr": lr, "weight_decay": weight_decay},
         {"params": curv_params, "lr": curvature_lr, "weight_decay": 0.0},
-        {"params": proj_params, "lr": lr, "weight_decay": 0.0},
+        {"params": proj_params, "lr": _align_lr, "weight_decay": 0.0},
     ]
 
     if use_riemannian_optim:
