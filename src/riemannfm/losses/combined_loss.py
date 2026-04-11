@@ -99,15 +99,20 @@ class RiemannFMCombinedLoss(nn.Module):
         self.proj_g: nn.Sequential | None
         self.proj_c: nn.Sequential | None
         if mu_align > 0 and input_text_dim > 0:
+            # Bias-free projections: randomly-initialised bias creates a
+            # large shared offset that, after L2-normalisation in InfoNCE,
+            # collapses all embeddings to cos-sim > 0.99 and makes the
+            # contrastive loss degenerate (loss = log M).  Without bias
+            # the MLP preserves input diversity (cos-sim stays ~0.17).
             self.proj_g = nn.Sequential(
-                nn.Linear(node_dim, d_a),
+                nn.Linear(node_dim, d_a, bias=False),
                 nn.GELU(),
-                nn.Linear(d_a, d_a),
+                nn.Linear(d_a, d_a, bias=False),
             )
             self.proj_c = nn.Sequential(
-                nn.Linear(input_text_dim, d_a),
+                nn.Linear(input_text_dim, d_a, bias=False),
                 nn.GELU(),
-                nn.Linear(d_a, d_a),
+                nn.Linear(d_a, d_a, bias=False),
             )
         else:
             self.proj_g = None

@@ -266,3 +266,71 @@ class TestCombinedLoss:
         assert loss_fn.proj_c[0].weight.grad is not None
         # Gradient flows back to backbone hidden states.
         assert h.grad is not None
+
+    def test_per_group_gradient_clipping(self) -> None:
+        """Alignment proj grads survive clipping independently of backbone."""
+        manifold = _make_manifold()
+        D = manifold.ambient_dim
+        d_c = 16
+        node_dim = 32
+        loss_fn = RiemannFMCombinedLoss(
+            manifold, mu_align=1.0, input_text_dim=d_c,
+            node_dim=node_dim, d_a=8,
+        )
+
+        # Create a mock backbone param with large gradients.
+        backbone_param = torch.nn.Parameter(torch.randn(512, 512))
+
+        x_t = manifold.sample_noise(B, N, radius_h=1.0)
+        h = torch.randn(B, N, node_dim, requires_grad=True)
+        V_hat = torch.randn(B, N, D, requires_grad=True)
+        u_t = torch.randn(B, N, D)
+        P_hat = torch.randn(B, N, N, K, requires_grad=True)
+        E_1 = torch.randint(0, 2, (B, N, N, K)).float()
+        node_text = torch.randn(B, N, d_c)
+        mask = torch.ones(B, N, dtype=torch.bool)
+
+        total, _ = loss_fn(
+            V_hat, u_t, x_t, P_hat, E_1, mask,
+            h=h, node_text=node_text,
+        )
+        # Add a large fake backbone loss to simulate L_cont dominance.
+        fake_backbone_loss = (backbone_param ** 2).sum() * 1000
+        (total + fake_backbone_loss).backward()
+
+        # Before clipping: backbone gradient norm dwarfs proj gradient norm.
+        align_params = list(loss_fn.parameters())
+        align_norm_before = torch.nn.utils.clip_grad_norm_(
+            align_params, float("inf"),
+        )
+
+        backbone_norm = backbone_param.grad.norm()
+        assert backbone_norm > 100 * align_norm_before, (
+            "Test setup: backbone grads should dominate"
+        )
+
+        # Re-run backward for a fresh set of gradients.
+        loss_fn.zero_grad()
+        backbone_param.grad = None
+        total2, _ = loss_fn(
+            V_hat.detach().requires_grad_(), u_t, x_t,
+            P_hat.detach().requires_grad_(), E_1, mask,
+            h=h.detach().requires_grad_(), node_text=node_text,
+        )
+        fake2 = (backbone_param ** 2).sum() * 1000
+        (total2 + fake2).backward()
+
+        # Per-group clipping: clip alignment and backbone independently.
+        clip_val = 1.0
+        torch.nn.utils.clip_grad_norm_(align_params, clip_val)
+        torch.nn.utils.clip_grad_norm_([backbone_param], clip_val)
+
+        # After per-group clipping, alignment grads should be at clip_val.
+        align_norm_after = torch.cat(
+            [p.grad.flatten() for p in align_params if p.grad is not None],
+        ).norm()
+        # The alignment norm should be close to clip_val (not near-zero).
+        assert align_norm_after > 0.5 * clip_val, (
+            f"Per-group clipping should preserve alignment grad norm, "
+            f"got {align_norm_after:.4f}"
+        )
