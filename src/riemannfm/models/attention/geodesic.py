@@ -80,6 +80,40 @@ class RiemannFMGeodesicAttention(nn.Module):
 
         self.attn_dropout = nn.Dropout(dropout)
 
+    def _compute_pairwise_geometry(
+        self, x: Tensor,
+    ) -> tuple[Tensor, dict[str, Tensor], dict[str, Tensor], dict[str, Tensor]]:
+        """Compute pairwise manifold geometry once, shared by M-RoPE and kernel.
+
+        Args:
+            x: Manifold coordinates, shape ``(B, N, D)``.
+
+        Returns:
+            Tuple of:
+              - dist: Product distance, shape ``(B, N, N)``.
+              - comp_dists: Per-component distances, dict[str, ``(B*N*N,)``].
+              - x_i_parts: Per-component coords for x_i, dict[str, ``(B*N*N, d)``].
+              - x_j_parts: Per-component coords for x_j, dict[str, ``(B*N*N, d)``].
+        """
+        B, N, _ = x.shape
+        x_f32 = x.float()
+
+        x_i_flat = x_f32.unsqueeze(2).expand(B, N, N, -1).reshape(B * N * N, -1)
+        x_j_flat = x_f32.unsqueeze(1).expand(B, N, N, -1).reshape(B * N * N, -1)
+
+        with torch.amp.autocast(device_type=x.device.type, enabled=False):
+            comp_dists = self.manifold.component_dists(x_i_flat, x_j_flat)
+            # Product distance from component distances (avoids recomputation).
+            d_sq = torch.stack(
+                [d.pow(2) for d in comp_dists.values()], dim=0,
+            ).sum(dim=0)
+            dist = d_sq.sqrt().view(B, N, N)
+
+        x_i_parts = self.manifold.split(x_i_flat)
+        x_j_parts = self.manifold.split(x_j_flat)
+
+        return dist, comp_dists, x_i_parts, x_j_parts
+
     def forward(
         self,
         h: Tensor,
@@ -107,14 +141,10 @@ class RiemannFMGeodesicAttention(nn.Module):
         K = self._reshape_heads(self.W_k(h))
         V = self._reshape_heads(self.W_v(h))
 
-        # M-RoPE attention logits (Def 5.6 / 5.8).
-        # Compute pairwise product-manifold distances for RoPE angles.
-        x_f32 = x.float()
-        with torch.amp.autocast(device_type=x.device.type, enabled=False):
-            x_i_rope = x_f32.unsqueeze(2).expand(B, N, N, -1).reshape(B * N * N, -1)
-            x_j_rope = x_f32.unsqueeze(1).expand(B, N, N, -1).reshape(B * N * N, -1)
-            dist = self.manifold.dist(x_i_rope, x_j_rope).view(B, N, N)
+        # Compute pairwise geometry ONCE — shared by M-RoPE and geodesic kernel.
+        dist, comp_dists, x_i_parts, x_j_parts = self._compute_pairwise_geometry(x)
 
+        # M-RoPE attention logits (Def 5.6 / 5.8).
         # theta_{ij,l} = omega_l * d_M(x_i, x_j)  — (B, N, N, half)
         theta = dist.unsqueeze(-1) * self.rope_freq  # type: ignore[arg-type]
         cos_t = theta.cos().unsqueeze(1)  # (B, 1, N, N, half)
@@ -134,7 +164,9 @@ class RiemannFMGeodesicAttention(nn.Module):
 
         # Geodesic distance kernel (Def 5.7) with beta scaling (Def 5.8).
         if self.use_geodesic_kernel:
-            geo_bias = self._geodesic_kernel(x)  # (B, H, N, N)
+            geo_bias = self._geodesic_kernel_from_cache(
+                x, comp_dists, x_i_parts, x_j_parts,
+            )
             beta = self.beta[None, :, None, None]  # (1, H, 1, 1)
             attn = attn + beta * geo_bias
 
@@ -162,51 +194,38 @@ class RiemannFMGeodesicAttention(nn.Module):
         B, N, _ = x.shape
         return x.view(B, N, self.num_heads, self.head_dim).transpose(1, 2)
 
-    def _geodesic_kernel(self, x: Tensor) -> Tensor:
-        """Compute geodesic distance kernel bias (Def 5.7).
+    def _geodesic_kernel_from_cache(
+        self,
+        x: Tensor,
+        comp_dists: dict[str, Tensor],
+        x_i_parts: dict[str, Tensor],
+        x_j_parts: dict[str, Tensor],
+    ) -> Tensor:
+        """Compute geodesic kernel from pre-computed pairwise geometry.
 
-        Per-component kernel functions tailored to geometry:
-          - Hyperbolic: kappa_H(a, b) = -d_H(a, b)
-          - Spherical:  kappa_S(a, b) = kappa_s * a^T b
-          - Euclidean:  kappa_R(a, b) = -||a - b||^2
-
-        Weighted sum: kernel^(s) = sum_c w_c^(s) * kappa_c
+        Reuses component distances and split coordinates already computed
+        for M-RoPE, avoiding redundant manifold.dist() calls.
 
         Args:
             x: Manifold coordinates, shape ``(B, N, D)``.
+            comp_dists: Per-component distances, dict[str, ``(B*N*N,)``].
+            x_i_parts: Per-component coords for x_i, dict[str, ``(B*N*N, d)``].
+            x_j_parts: Per-component coords for x_j, dict[str, ``(B*N*N, d)``].
 
         Returns:
             Kernel bias, shape ``(B, num_heads, N, N)``.
         """
         B, N, _ = x.shape
-        # Force float32 for manifold distance (arccosh/arccos unstable in fp16/bf16).
-        x_f32 = x.float()
-
-        # Compute pairwise flattened coordinates.
-        x_i = x_f32.unsqueeze(2)  # (B, N, 1, D)
-        x_j = x_f32.unsqueeze(1)  # (B, 1, N, D)
-        x_i_flat = x_i.expand(B, N, N, -1).reshape(B * N * N, -1)
-        x_j_flat = x_j.expand(B, N, N, -1).reshape(B * N * N, -1)
-
-        with torch.amp.autocast(device_type=x.device.type, enabled=False):
-            comp_dists = self.manifold.component_dists(
-                x_i_flat, x_j_flat,
-            )  # dict[str, (B*N*N,)]
-            x_i_parts = self.manifold.split(x_i_flat)
-            x_j_parts = self.manifold.split(x_j_flat)
 
         # Build per-component kernels (Def 5.7).
         kernels: list[Tensor] = []
         for name in self.manifold._component_names:
             if name == "hyperbolic":
-                # kappa_H = -d_H(a, b)
                 kernels.append(-comp_dists[name])
             elif name == "spherical":
-                # kappa_S = kappa_s * a^T b
                 ks = self.manifold.spherical.curvature  # type: ignore[union-attr]
                 kernels.append(ks * (x_i_parts[name] * x_j_parts[name]).sum(-1))
             elif name == "euclidean":
-                # kappa_R = -||a - b||^2
                 kernels.append(-comp_dists[name].pow(2))
 
         # Stack and reshape: (B*N*N, C) -> (B, N, N, C).

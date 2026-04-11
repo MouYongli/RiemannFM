@@ -71,7 +71,7 @@ class RiemannFMPretrainModule(L.LightningModule):
         )
 
         self.manifold = manifold
-        self.model = model
+        self.model = torch.compile(model)
         self.flow = flow
         self.loss_fn = loss_fn
 
