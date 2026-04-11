@@ -493,9 +493,9 @@ $$\mathrm{BCE}_{\mathrm{w}}(\hat{p}, y) = -\left[w_k^+ \cdot y \cdot \log(\hat{p
 
 正样本权重 $w_k^+ = \min\!\left(\frac{1 - \rho_k}{\rho_k},\, w_{\max}\right)$ 校正类别不平衡，$w_{\max} > 0$ 为截断上限，$\epsilon_p > 0$ 为数值稳定常数。
 
-**定义 6.9（图-文对比损失）。** 将数据端坐标投影到对齐空间。由于 Lorentz 模型中时间坐标 $x_0 = \sqrt{\|\mathbf{x}_{\mathrm{sp}}\|^2 + 1/|\kappa_h|}$ 是空间坐标的确定性函数（冗余维度），且在训练初期对所有实体近似为常数，会淹没实体间的区分信号，因此在投影前将其剔除：
-$$\mathbf{g}_i = \mathrm{MLP}_{\mathrm{proj}}\!\left(\pi_{\setminus x_0}(\mathbf{x}_{1,i})\right) \in \mathbb{R}^{d_\mathrm{a}}$$
-其中 $\pi_{\setminus x_0}$ 表示去除 Lorentz 时间坐标 $x_0$ 后的环境坐标切片（维度 $D - 1$），$\mathrm{MLP}_{\mathrm{proj}}: \mathbb{R}^{D-1} \to \mathbb{R}^{d_\mathrm{a}}$，$d_\mathrm{a}$ 为对齐空间维度。
+**定义 6.9（图-文对比损失）。** 将 backbone 隐藏状态投影到对齐空间。直接使用数据端流形坐标 $\mathbf{x}_{1,i}$ 会导致对比损失退化：实体嵌入从流形原点附近初始化，训练初期所有实体方向高度一致（余弦相似度 $> 0.99$），使得 InfoNCE 无法区分不同节点（损失恒为 $\log M$）。因此，我们使用 RieFormer backbone 的最终隐藏状态 $\mathbf{h}_i$ 作为图侧输入——$\mathbf{h}_i$ 融合了加噪坐标、边类型和文本交叉注意力，从训练伊始即具有充分的样本间差异性：
+$$\mathbf{g}_i = \mathrm{MLP}_{\mathrm{proj}}(\mathbf{h}_i) \in \mathbb{R}^{d_\mathrm{a}}$$
+其中 $\mathbf{h}_i \in \mathbb{R}^{d_{\mathrm{node}}}$ 为 backbone 输出的节点隐藏状态（定义 5.1），$\mathrm{MLP}_{\mathrm{proj}}: \mathbb{R}^{d_{\mathrm{node}}} \to \mathbb{R}^{d_\mathrm{a}}$，$d_\mathrm{a}$ 为对齐空间维度。
 
 余弦相似度：$\mathrm{sim}(\mathbf{g}_i, \mathbf{c}_j) = \frac{\mathbf{g}_i^\top \mathbf{c}_j}{\|\mathbf{g}_i\|_2 \|\mathbf{c}_j\|_2}$
 
@@ -521,7 +521,7 @@ $$\mathcal{L} = \mathcal{L}_{\mathrm{cont}} + \lambda\,\mathcal{L}_{\mathrm{disc
 3. 对 $(i, j) \in [N]^2$，$k \in [K]$：采样 $\mathbf{E}_{0,ij}^{(k)} \sim \mathrm{Bernoulli}(\rho_k)$（定义 6.2）
 4. 对 $i \in [N]$：$\mathbf{x}_{t,i} = \exp_{\mathbf{x}_{0,i}}(t \cdot \log_{\mathbf{x}_{0,i}}(\mathbf{x}_{1,i}))$（定义 6.3）
 5. 对 $(i, j) \in [N]^2$：采样 $z_{ij} \sim \mathrm{Bernoulli}(t)$，$\mathbf{E}_{t,ij} = z_{ij} \mathbf{E}_{1,ij} + (1 - z_{ij}) \mathbf{E}_{0,ij}$（定义 6.4）
-6. $(\hat{\mathbf{V}}, \hat{\mathbf{P}}) = f_\theta(\mathbf{X}_t, \mathbf{E}_t, t, \mathbf{C}_\mathcal{V}, \mathbf{C}_\mathcal{R}, \mathbf{m})$（定义 5.1）
+6. $(\hat{\mathbf{V}}, \hat{\mathbf{P}}, \mathbf{H}) = f_\theta(\mathbf{X}_t, \mathbf{E}_t, t, \mathbf{C}_\mathcal{V}, \mathbf{C}_\mathcal{R}, \mathbf{m})$（定义 5.1），其中 $\mathbf{H}$ 为 backbone 隐藏状态，用于 $\mathcal{L}_{\mathrm{align}}$
 7. 对 $i \in [N]$：$\mathbf{u}_{t,i} = \frac{1}{1-t}\log_{\mathbf{x}_{t,i}}(\mathbf{x}_{1,i})$（定义 6.5）
 8. 计算 $\mathcal{L} = \mathcal{L}_{\mathrm{cont}} + \lambda\,\mathcal{L}_{\mathrm{disc}} + \mu\,\mathcal{L}_{\mathrm{align}}$（定义 6.10）
 9. Riemannian Adam 更新 $\theta$：对欧氏参数用标准 Adam，对曲率参数用黎曼梯度

@@ -215,11 +215,13 @@ class TestCombinedLoss:
         D = manifold.ambient_dim
         d_c = 16
         d_a = 8
+        node_dim = 32
         loss_fn = RiemannFMCombinedLoss(
-            manifold, mu_align=0.1, input_text_dim=d_c, d_a=d_a,
+            manifold, mu_align=0.1, input_text_dim=d_c,
+            node_dim=node_dim, d_a=d_a,
         )
         x_t = manifold.sample_noise(B, N, radius_h=1.0)
-        x_1 = manifold.sample_noise(B, N, radius_h=1.0)
+        h = torch.randn(B, N, node_dim)
         V_hat = torch.randn(B, N, D)
         u_t = torch.randn(B, N, D)
         P_hat = torch.randn(B, N, N, K)
@@ -229,7 +231,7 @@ class TestCombinedLoss:
 
         total, metrics = loss_fn(
             V_hat, u_t, x_t, P_hat, E_1, mask,
-            x_1=x_1, node_text=node_text,
+            h=h, node_text=node_text,
         )
         assert torch.isfinite(total)
         assert metrics["loss/align"] > 0.0
@@ -238,11 +240,13 @@ class TestCombinedLoss:
         manifold = _make_manifold()
         D = manifold.ambient_dim
         d_c = 16
+        node_dim = 32
         loss_fn = RiemannFMCombinedLoss(
-            manifold, mu_align=0.1, input_text_dim=d_c, d_a=8,
+            manifold, mu_align=0.1, input_text_dim=d_c,
+            node_dim=node_dim, d_a=8,
         )
         x_t = manifold.sample_noise(B, N, radius_h=1.0)
-        x_1 = manifold.sample_noise(B, N, radius_h=1.0)
+        h = torch.randn(B, N, node_dim, requires_grad=True)
         V_hat = torch.randn(B, N, D, requires_grad=True)
         u_t = torch.randn(B, N, D)
         P_hat = torch.randn(B, N, N, K, requires_grad=True)
@@ -252,7 +256,7 @@ class TestCombinedLoss:
 
         total, _ = loss_fn(
             V_hat, u_t, x_t, P_hat, E_1, mask,
-            x_1=x_1, node_text=node_text,
+            h=h, node_text=node_text,
         )
         total.backward()
         assert V_hat.grad is not None
@@ -260,3 +264,5 @@ class TestCombinedLoss:
         # Projection layers should also have gradients.
         assert loss_fn.proj_g[0].weight.grad is not None
         assert loss_fn.proj_c[0].weight.grad is not None
+        # Gradient flows back to backbone hidden states.
+        assert h.grad is not None

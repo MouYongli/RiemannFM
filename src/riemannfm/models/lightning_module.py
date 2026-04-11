@@ -177,7 +177,7 @@ class RiemannFMPretrainModule(L.LightningModule):
             sample.t = t_override
 
         # 3. Forward pass through model.
-        V_hat, P_hat, _h = self.model(
+        V_hat, P_hat, h = self.model(
             x_t=sample.x_t,
             E_t=sample.E_t,
             t=sample.t,
@@ -198,7 +198,7 @@ class RiemannFMPretrainModule(L.LightningModule):
                 P_hat=P_hat,
                 E_1=sample.E_1,
                 node_mask=node_mask,
-                x_1=x_1 if x_1.dtype == _f32 else x_1.float(),
+                h=h if h.dtype == _f32 else h.float(),
                 node_text=node_text,
             )
 
@@ -379,6 +379,7 @@ class RiemannFMPretrainModule(L.LightningModule):
             neg_ratio=float(getattr(training_cfg, "neg_ratio", 1.0)),
             temperature=training_cfg.temperature,
             input_text_dim=input_text_dim,
+            node_dim=model_cfg.node_dim,
             d_a=int(getattr(model_cfg, "text_proj_dim", 256)),
             max_align_nodes=int(getattr(training_cfg, "max_align_nodes", 128)),
         )

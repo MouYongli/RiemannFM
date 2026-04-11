@@ -482,9 +482,9 @@ $$\mathrm{BCE}_{\mathrm{w}}(\hat{p}, y) = -\left[w_k^+ \cdot y \cdot \log(\hat{p
 
 The positive sample weight $w_k^+ = \min\!\left(\frac{1 - \rho_k}{\rho_k},\, w_{\max}\right)$ corrects for class imbalance, $w_{\max} > 0$ is the truncation upper bound, and $\epsilon_p > 0$ is a numerical stability constant.
 
-**Definition 6.9 (Graph-Text Contrastive Loss).** Project data-end coordinates into the alignment space. Since the Lorentz time coordinate $x_0 = \sqrt{\|\mathbf{x}_{\mathrm{sp}}\|^2 + 1/|\kappa_h|}$ is a deterministic function of the spatial coordinates (a redundant dimension) and is approximately constant across all entities early in training, it would drown out inter-entity signal; it is therefore stripped before projection:
-$$\mathbf{g}_i = \mathrm{MLP}_{\mathrm{proj}}\!\left(\pi_{\setminus x_0}(\mathbf{x}_{1,i})\right) \in \mathbb{R}^{d_\mathrm{a}}$$
-where $\pi_{\setminus x_0}$ denotes the ambient coordinate slice with the Lorentz time coordinate $x_0$ removed (dimension $D - 1$), $\mathrm{MLP}_{\mathrm{proj}}: \mathbb{R}^{D-1} \to \mathbb{R}^{d_\mathrm{a}}$, and $d_\mathrm{a}$ is the alignment space dimension.
+**Definition 6.9 (Graph-Text Contrastive Loss).** Project backbone hidden states into the alignment space. Using raw data-end manifold coordinates $\mathbf{x}_{1,i}$ directly causes degenerate contrastive loss: entity embeddings initialise near the manifold origin and remain directionally collapsed (cosine similarity $> 0.99$) during early training, making InfoNCE unable to distinguish nodes (loss $\equiv \log M$). We therefore use the final hidden state $\mathbf{h}_i$ from the RieFormer backbone as the graph-side input — $\mathbf{h}_i$ integrates noised coordinates, edge types, and text cross-attention, providing sufficient inter-sample variance from the start:
+$$\mathbf{g}_i = \mathrm{MLP}_{\mathrm{proj}}(\mathbf{h}_i) \in \mathbb{R}^{d_\mathrm{a}}$$
+where $\mathbf{h}_i \in \mathbb{R}^{d_{\mathrm{node}}}$ is the node hidden state output by the backbone (Definition 5.1), $\mathrm{MLP}_{\mathrm{proj}}: \mathbb{R}^{d_{\mathrm{node}}} \to \mathbb{R}^{d_\mathrm{a}}$, and $d_\mathrm{a}$ is the alignment space dimension.
 
 Cosine similarity: $\mathrm{sim}(\mathbf{g}_i, \mathbf{c}_j) = \frac{\mathbf{g}_i^\top \mathbf{c}_j}{\|\mathbf{g}_i\|_2 \|\mathbf{c}_j\|_2}$
 
@@ -510,7 +510,7 @@ where $\lambda, \mu > 0$ are loss weight hyperparameters.
 3. For $(i, j) \in [N]^2$, $k \in [K]$: sample $\mathbf{E}_{0,ij}^{(k)} \sim \mathrm{Bernoulli}(\rho_k)$ (Definition 6.2)
 4. For $i \in [N]$: $\mathbf{x}_{t,i} = \exp_{\mathbf{x}_{0,i}}(t \cdot \log_{\mathbf{x}_{0,i}}(\mathbf{x}_{1,i}))$ (Definition 6.3)
 5. For $(i, j) \in [N]^2$: sample $z_{ij} \sim \mathrm{Bernoulli}(t)$, $\mathbf{E}_{t,ij} = z_{ij} \mathbf{E}_{1,ij} + (1 - z_{ij}) \mathbf{E}_{0,ij}$ (Definition 6.4)
-6. $(\hat{\mathbf{V}}, \hat{\mathbf{P}}) = f_\theta(\mathbf{X}_t, \mathbf{E}_t, t, \mathbf{C}_{\mathcal{V}}, \mathbf{C}_{\mathcal{R}}, \mathbf{m})$ (Definition 5.1)
+6. $(\hat{\mathbf{V}}, \hat{\mathbf{P}}, \mathbf{H}) = f_\theta(\mathbf{X}_t, \mathbf{E}_t, t, \mathbf{C}_{\mathcal{V}}, \mathbf{C}_{\mathcal{R}}, \mathbf{m})$ (Definition 5.1), where $\mathbf{H}$ is the backbone hidden state used for $\mathcal{L}_{\mathrm{align}}$
 7. For $i \in [N]$: $\mathbf{u}_{t,i} = \frac{1}{1-t}\log_{\mathbf{x}_{t,i}}(\mathbf{x}_{1,i})$ (Definition 6.5)
 8. Compute $\mathcal{L} = \mathcal{L}_{\mathrm{cont}} + \lambda\,\mathcal{L}_{\mathrm{disc}} + \mu\,\mathcal{L}_{\mathrm{align}}$ (Definition 6.10)
 9. Riemannian Adam update for $\theta$: standard Adam for Euclidean parameters, Riemannian gradient for curvature parameters

@@ -63,6 +63,7 @@ class RiemannFMCombinedLoss(nn.Module):
         neg_ratio: Ratio of negative to positive pairs for L_disc sampling.
         temperature: InfoNCE temperature for L_align.
         input_text_dim: Raw text embedding dimension d_c (0 to disable alignment).
+        node_dim: Backbone hidden state dimension for graph-side projection.
         d_a: Alignment space dimension for projection layers.
     """
 
@@ -74,6 +75,7 @@ class RiemannFMCombinedLoss(nn.Module):
         neg_ratio: float = 1.0,
         temperature: float = 0.07,
         input_text_dim: int = 0,
+        node_dim: int = 512,
         d_a: int = 256,
         max_align_nodes: int = 128,
     ) -> None:
@@ -86,19 +88,19 @@ class RiemannFMCombinedLoss(nn.Module):
         self.max_align_nodes = max_align_nodes
 
         # Projection layers for L_align (Def 6.9):
-        #   g_i = proj_g(x_{1,i} without Lorentz x0)
-        #   c_i = proj_c(text_emb_i)
-        # The Lorentz time coordinate x0 = sqrt(||x_spatial||^2 + 1/|kappa|)
-        # is a deterministic function of the spatial coordinates and nearly
-        # constant across entities at initialization, which drowns out the
-        # inter-entity signal that InfoNCE relies on.  We strip it here.
-        self._lorentz_x0_idx: int = 0  # index of x0 in ambient coords
+        #   g_i = proj_g(h_i)       — backbone hidden state -> alignment space
+        #   c_i = proj_c(text_emb_i) — raw text embedding -> alignment space
+        # We use the backbone hidden state h instead of raw manifold
+        # coordinates x_1 because entity embeddings initialise near the
+        # manifold origin and remain directionally collapsed (cosine
+        # sim > 0.99) during early training, making InfoNCE degenerate
+        # (loss = log(M)).  h has rich inter-sample variance from the
+        # start thanks to diverse text cross-attention and noise inputs.
         self.proj_g: nn.Sequential | None
         self.proj_c: nn.Sequential | None
         if mu_align > 0 and input_text_dim > 0:
-            D_proj = manifold.ambient_dim - 1  # exclude Lorentz x0
             self.proj_g = nn.Sequential(
-                nn.Linear(D_proj, d_a),
+                nn.Linear(node_dim, d_a),
                 nn.GELU(),
                 nn.Linear(d_a, d_a),
             )
@@ -119,7 +121,7 @@ class RiemannFMCombinedLoss(nn.Module):
         P_hat: Tensor,
         E_1: Tensor,
         node_mask: Tensor,
-        x_1: Tensor | None = None,
+        h: Tensor | None = None,
         node_text: Tensor | None = None,
     ) -> tuple[Tensor, dict[str, Tensor]]:
         """Compute combined loss.
@@ -131,7 +133,7 @@ class RiemannFMCombinedLoss(nn.Module):
             P_hat: Predicted edge logits, shape ``(B, N, N, K)``.
             E_1: Target edge types, shape ``(B, N, N, K)``.
             node_mask: Bool mask, shape ``(B, N)``.
-            x_1: Data-end manifold coordinates for L_align, shape ``(B, N, D)``.
+            h: Backbone hidden states for L_align, shape ``(B, N, node_dim)``.
                 None to skip L_align.
             node_text: Raw text embeddings for L_align, shape ``(B, N, d_c)``.
                 None to skip L_align.
@@ -156,13 +158,13 @@ class RiemannFMCombinedLoss(nn.Module):
             self.mu_align > 0
             and self.proj_g is not None
             and self.proj_c is not None
-            and x_1 is not None
+            and h is not None
             and node_text is not None
             and node_text.shape[-1] > 0
         ):
             # Project only valid (real) nodes to avoid zero-input gradient
             # starvation on proj_c/proj_g weights from virtual node padding.
-            B, N, _ = x_1.shape
+            B, N, _ = h.shape
             mask_flat = node_mask.reshape(-1)
             valid_idx = mask_flat.nonzero(as_tuple=True)[0]
 
@@ -174,16 +176,11 @@ class RiemannFMCombinedLoss(nn.Module):
                 valid_idx = valid_idx[perm]
 
             if valid_idx.numel() < 2:
-                l_align = torch.tensor(0.0, device=x_1.device, dtype=x_1.dtype)
+                l_align = torch.tensor(0.0, device=h.device, dtype=h.dtype)
             else:
-                x_valid = x_1.reshape(B * N, -1)[valid_idx]  # (M, D)
-                # Strip Lorentz x0 (redundant time coord) before projection.
-                idx = self._lorentz_x0_idx
-                x_proj = torch.cat(
-                    [x_valid[:, :idx], x_valid[:, idx + 1:]], dim=-1,
-                )  # (M, D-1)
+                h_valid = h.reshape(B * N, -1)[valid_idx]  # (M, node_dim)
                 t_valid = node_text.reshape(B * N, -1)[valid_idx]  # (M, d_c)
-                g_valid = self.proj_g(x_proj)  # (M, d_a)
+                g_valid = self.proj_g(h_valid)  # (M, d_a)
                 c_valid = self.proj_c(t_valid)  # (M, d_a)
                 l_align = _contrastive_loss_from_pairs(
                     g_valid, c_valid, self.temperature,
