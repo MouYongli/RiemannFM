@@ -483,7 +483,7 @@ class TestCombinedLossWithMask:
         D = manifold.ambient_dim
         node_dim = 32
         loss_fn = RiemannFMCombinedLoss(
-            manifold, nu_mask=1.0, entity_emb_dim=D,
+            manifold, nu_mask=1.0, input_text_dim=D,
             node_dim=node_dim,
         )
         x_t = manifold.sample_noise(B, N, radius_h=1.0)
@@ -515,7 +515,7 @@ class TestCombinedLossWithMask:
         D = manifold.ambient_dim
         node_dim = 32
         loss_fn = RiemannFMCombinedLoss(
-            manifold, nu_mask=1.0, entity_emb_dim=D,
+            manifold, nu_mask=1.0, input_text_dim=D,
             node_dim=node_dim, lambda_disc=0.0, mu_align=0.0,
         )
 
@@ -553,7 +553,7 @@ class TestCombinedLossWithMask:
         D = manifold.ambient_dim
         node_dim = 32
         loss_fn = RiemannFMCombinedLoss(
-            manifold, nu_mask=1.0, entity_emb_dim=D,
+            manifold, nu_mask=1.0, input_text_dim=D,
             node_dim=node_dim, mu_align=0.0, lambda_disc=0.0,
         )
         x_t = manifold.sample_noise(B, N, radius_h=1.0)
@@ -574,7 +574,7 @@ class TestCombinedLossWithMask:
             true_entity_emb=true_entity_emb,
         )
         total.backward()
-        # proj_mask should have gradients.
-        assert loss_fn.proj_mask[0].weight.grad is not None
+        # proj_mask should have gradients (index 1 = first Linear after LayerNorm).
+        assert loss_fn.proj_mask[1].weight.grad is not None
         # Gradient flows back to backbone hidden states.
         assert h.grad is not None

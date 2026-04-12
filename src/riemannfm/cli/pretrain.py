@@ -170,7 +170,6 @@ def main(cfg: DictConfig) -> None:
         ),
         input_text_dim=input_text_dim,
         node_dim=cfg.model.node_dim,
-        entity_emb_dim=manifold.ambient_dim,
         d_a=int(getattr(cfg.model, "text_proj_dim", 256)),
         max_align_nodes=int(getattr(cfg.training, "max_align_nodes", 128)),
     )

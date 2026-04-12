@@ -102,9 +102,9 @@ class RiemannFMCombinedLoss(nn.Module):
         neg_ratio: Ratio of negative to positive pairs for L_disc sampling.
         temperature: InfoNCE temperature for L_align.
         mask_temperature: InfoNCE temperature for L_mask.
-        input_text_dim: Raw text embedding dimension d_c (0 to disable alignment).
+        input_text_dim: Raw text embedding dimension d_c (0 to disable
+            alignment and masking).
         node_dim: Backbone hidden state dimension for graph-side projection.
-        entity_emb_dim: Entity embedding dimension D for proj_mask.
         d_a: Alignment space dimension for projection layers.
         max_align_nodes: Maximum nodes for L_align contrastive matrix.
     """
@@ -120,7 +120,6 @@ class RiemannFMCombinedLoss(nn.Module):
         mask_temperature: float = 0.07,
         input_text_dim: int = 0,
         node_dim: int = 512,
-        entity_emb_dim: int = 0,
         d_a: int = 256,
         max_align_nodes: int = 128,
     ) -> None:
@@ -143,14 +142,22 @@ class RiemannFMCombinedLoss(nn.Module):
         # sim > 0.99) during early training, making InfoNCE degenerate
         # (loss = log(M)).  h has rich inter-sample variance from the
         # start thanks to diverse text cross-attention and noise inputs.
-        self.proj_g: nn.Sequential | None
-        self.proj_c: nn.Sequential | None
+        # LayerNorm before each projection normalises the input scale
+        # (backbone h norm ~4 vs text norm ~0.1), preventing gradient
+        # starvation of the smaller-norm branch and reducing
+        # intra-modal collapse in proj_g.
+        self.ln_g: nn.LayerNorm | None = None
+        self.ln_c: nn.LayerNorm | None = None
+        self.proj_g: nn.Sequential | None = None
+        self.proj_c: nn.Sequential | None = None
         if mu_align > 0 and input_text_dim > 0:
             # Bias-free projections: randomly-initialised bias creates a
             # large shared offset that, after L2-normalisation in InfoNCE,
             # collapses all embeddings to cos-sim > 0.99 and makes the
             # contrastive loss degenerate (loss = log M).  Without bias
             # the MLP preserves input diversity (cos-sim stays ~0.17).
+            self.ln_g = nn.LayerNorm(node_dim)
+            self.ln_c = nn.LayerNorm(input_text_dim)
             self.proj_g = nn.Sequential(
                 nn.Linear(node_dim, d_a, bias=False),
                 nn.GELU(),
@@ -161,17 +168,19 @@ class RiemannFMCombinedLoss(nn.Module):
                 nn.GELU(),
                 nn.Linear(d_a, d_a, bias=False),
             )
-        else:
-            self.proj_g = None
-            self.proj_c = None
 
-        # Projection head for L_mask: h_masked -> entity embedding space.
+        # Projection head for L_mask: h_masked -> text embedding space.
+        # Targets are text embeddings (d_c), NOT manifold coordinates.
+        # Entity embeddings cluster near the manifold origin (cos-sim
+        # > 0.998) making manifold-coordinate targets indistinguishable;
+        # text embeddings have healthy diversity (cos-sim ~0.20).
         self.proj_mask: nn.Sequential | None
-        if nu_mask > 0 and entity_emb_dim > 0:
+        if nu_mask > 0 and input_text_dim > 0:
             self.proj_mask = nn.Sequential(
+                nn.LayerNorm(node_dim),
                 nn.Linear(node_dim, node_dim, bias=False),
                 nn.GELU(),
-                nn.Linear(node_dim, entity_emb_dim, bias=False),
+                nn.Linear(node_dim, input_text_dim, bias=False),
             )
         else:
             self.proj_mask = None
@@ -255,8 +264,9 @@ class RiemannFMCombinedLoss(nn.Module):
             else:
                 h_valid = h.reshape(B * N, -1)[valid_idx]  # (M, node_dim)
                 t_valid = node_text.reshape(B * N, -1)[valid_idx]  # (M, d_c)
-                g_valid = self.proj_g(h_valid)  # (M, d_a)
-                c_valid = self.proj_c(t_valid)  # (M, d_a)
+                assert self.ln_g is not None and self.ln_c is not None
+                g_valid = self.proj_g(self.ln_g(h_valid))  # (M, d_a)
+                c_valid = self.proj_c(self.ln_c(t_valid))  # (M, d_a)
                 l_align = _contrastive_loss_from_pairs(
                     g_valid, c_valid, self.temperature,
                 )

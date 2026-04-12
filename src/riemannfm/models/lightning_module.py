@@ -144,17 +144,22 @@ class RiemannFMPretrainModule(L.LightningModule):
             mask_type: Node type labels, shape ``(B, N)``.
 
         Returns:
-            Tuple of (x_1_masked, node_text_masked, true_entity_emb).
-            true_entity_emb holds the original x_1 for L_mask targets.
+            Tuple of (x_1_masked, node_text_masked, true_text_emb).
+            true_text_emb holds the original text embeddings for L_mask
+            targets.  Text embeddings are used instead of manifold
+            coordinates because entity embeddings cluster near the
+            manifold origin (cos-sim > 0.998), making in-batch
+            contrastive L_mask degenerate.
         """
         from riemannfm.data.collator import MASK_MASKED
 
-        # Save original embeddings as prediction targets (detached).
-        true_entity_emb = x_1.detach().clone()
+        # Save original text embeddings as L_mask prediction targets.
+        # Using text (cos-sim ~0.20) instead of manifold coords (cos-sim ~1.0).
+        true_text_emb = node_text.detach().clone()
 
         is_masked = mask_type == MASK_MASKED  # (B, N)
         if not is_masked.any():
-            return x_1, node_text, true_entity_emb
+            return x_1, node_text, true_text_emb
 
         # Draw per-node random for 80/10/10 split.
         rand = torch.rand_like(mask_type, dtype=x_1.dtype)
@@ -188,7 +193,7 @@ class RiemannFMPretrainModule(L.LightningModule):
         node_text = node_text.clone()
         node_text[is_masked] = 0.0
 
-        return x_1, node_text, true_entity_emb
+        return x_1, node_text, true_text_emb
 
     def _shared_step(
         self, batch: dict[str, Any], t_override: Tensor | None = None,
@@ -213,9 +218,9 @@ class RiemannFMPretrainModule(L.LightningModule):
         x_1 = self._get_manifold_coords(node_ids, node_mask)
 
         # 1b. Apply masked node replacement (BERT 80/10/10).
-        true_entity_emb = None
+        true_text_emb = None
         if mask_type is not None and self.loss_fn.nu_mask > 0:
-            x_1, node_text, true_entity_emb = self._apply_mask_replacement(
+            x_1, node_text, true_text_emb = self._apply_mask_replacement(
                 x_1, node_text, mask_type,
             )
 
@@ -280,7 +285,7 @@ class RiemannFMPretrainModule(L.LightningModule):
                 h=h if h.dtype == _f32 else h.float(),
                 node_text=node_text,
                 mask_type=mask_type,
-                true_entity_emb=true_entity_emb,
+                true_entity_emb=true_text_emb,
             )
 
         return total_loss, metrics
@@ -522,7 +527,6 @@ class RiemannFMPretrainModule(L.LightningModule):
             ),
             input_text_dim=input_text_dim,
             node_dim=model_cfg.node_dim,
-            entity_emb_dim=manifold.ambient_dim,
             d_a=int(getattr(model_cfg, "text_proj_dim", 256)),
             max_align_nodes=int(getattr(training_cfg, "max_align_nodes", 128)),
         )
