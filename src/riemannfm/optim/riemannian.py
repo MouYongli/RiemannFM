@@ -36,21 +36,21 @@ def build_optimizer(
 
     Group 1: Main model parameters (standard LR + weight decay).
     Group 2: Curvature parameters (lower LR, no weight decay).
-    Group 3: Alignment projection layers (align_lr, no weight decay).
+    Group 3: InfoNCE projection heads (align_lr, no weight decay).
 
-    The alignment projections (proj_g, proj_c) are excluded from weight
-    decay because their gradients are small relative to the main model
-    and global gradient clipping reduces them further; weight decay
-    dominates and shrinks them toward zero, preventing L_align from
-    learning.
+    The InfoNCE projection heads (proj_g, proj_c, proj_mask_c) are excluded
+    from weight decay because their gradients are small relative to the
+    main model and global gradient clipping reduces them further; weight
+    decay dominates and shrinks them toward zero, preventing the
+    contrastive losses from learning.
 
     Args:
         model: Full model (includes manifold as a sub-module).
         manifold: Product manifold to identify curvature params.
         lr: Base learning rate for model parameters.
         curvature_lr: Learning rate for curvature parameters.
-        align_lr: Learning rate for alignment projections (proj_g,
-            proj_c).  Defaults to ``lr`` when None.
+        align_lr: Learning rate for InfoNCE projections (proj_g, proj_c,
+            proj_mask_c).  Defaults to ``lr`` when None.
         weight_decay: Weight decay for model parameters.
         use_riemannian_optim: Use geoopt RiemannianAdam (True) or
             standard AdamW (False).
@@ -64,10 +64,15 @@ def build_optimizer(
         if "curvature" in name.lower() or "kappa" in name.lower():
             curvature_params.add(id(param))
 
-    # Identify alignment projection parameter IDs (proj_g, proj_c).
+    # Identify InfoNCE projection head IDs.
+    # All InfoNCE heads (proj_g / proj_c for L_align, proj_mask_c for
+    # L_mask_c) share identical optimization needs: warmup-free, wd=0,
+    # higher LR.  Missing any silently routes it to the backbone group
+    # and stalls its learning (seen with proj_mask pre-2026-04-12).
+    align_head_prefixes = ("proj_g.", "proj_c.", "proj_mask_c.")
     align_proj_params = set()
     for name, param in model.named_parameters():
-        if "proj_g." in name or "proj_c." in name:
+        if any(p in name for p in align_head_prefixes):
             align_proj_params.add(id(param))
 
     # Split into three groups.
@@ -83,6 +88,21 @@ def build_optimizer(
             proj_params.append(param)
         else:
             model_params.append(param)
+
+    # Regression guard: every ``proj_*`` head under ``loss_fn`` must be
+    # routed to the alignment group.  Catches the case where a new
+    # InfoNCE head is added but ``align_head_prefixes`` is not updated.
+    for name, param in model.named_parameters():
+        if (
+            name.startswith("loss_fn.proj_")
+            and param.requires_grad
+            and id(param) not in align_proj_params
+        ):
+            raise RuntimeError(
+                f"InfoNCE head parameter '{name}' is not routed to the "
+                f"alignment group; update `align_head_prefixes` in "
+                f"riemannfm.optim.riemannian.build_optimizer."
+            )
 
     _align_lr = align_lr if align_lr is not None else lr
     param_groups = [

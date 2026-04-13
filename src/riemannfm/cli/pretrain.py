@@ -124,7 +124,8 @@ def main(cfg: DictConfig) -> None:
     dm = instantiate(
         cfg.data,
         batch_size=cfg.training.batch_size,
-        mask_ratio=float(getattr(cfg.training, "mask_ratio", 0.0)),
+        mask_ratio_c=float(getattr(cfg.training, "mask_ratio_c", 0.0)),
+        mask_ratio_x=float(getattr(cfg.training, "mask_ratio_x", 0.0)),
     )
     dm.setup("fit")
 
@@ -162,11 +163,12 @@ def main(cfg: DictConfig) -> None:
         manifold=manifold,
         lambda_disc=cfg.training.lambda_disc,
         mu_align=cfg.training.mu_align,
-        nu_mask=float(getattr(cfg.training, "nu_mask", 0.0)),
+        nu_mask_c=float(getattr(cfg.training, "nu_mask_c", 0.0)),
+        nu_mask_x=float(getattr(cfg.training, "nu_mask_x", 0.0)),
         neg_ratio=float(getattr(cfg.training, "neg_ratio", 1.0)),
         temperature=cfg.training.temperature,
-        mask_temperature=float(
-            getattr(cfg.training, "mask_temperature", 0.07),
+        mask_c_temperature=float(
+            getattr(cfg.training, "mask_c_temperature", 0.07),
         ),
         input_text_dim=input_text_dim,
         node_dim=cfg.model.node_dim,
@@ -182,6 +184,7 @@ def main(cfg: DictConfig) -> None:
         flow=flow,
         loss_fn=loss_fn,
         num_entities=num_entities,
+        input_text_dim=input_text_dim,
         C_R=C_R,
     )
 

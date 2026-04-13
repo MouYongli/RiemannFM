@@ -17,14 +17,18 @@ mixed_precision: bf16
 # Loss weights
 lambda_disc: 10.0
 mu_align: 0.5
-nu_mask: 1.0
+nu_mask_c: 1.0          # semantic masked-node identification (L_mask_c)
+nu_mask_x: 1.0          # geometric masked-node reconstruction (L_mask_x)
 temperature: 0.07
-mask_temperature: 0.07
+mask_c_temperature: 0.07
 neg_ratio: 1.0
 max_align_nodes: 128
 
-# Masked node prediction
-mask_ratio: 0.15
+# Node-partition mask ratios (Def 6.9a).  Disjoint; REAL anchors get the
+# remainder.  M_c: text ← mask_emb, geometry kept (t=1).
+#                  M_x: geometry ← noise at t=0, text kept.
+mask_ratio_c: 0.15
+mask_ratio_x: 0.05
 
 # Optimization
 use_riemannian_optim: true

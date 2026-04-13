@@ -1,6 +1,15 @@
 """Combined loss for RiemannFM pretraining.
 
-L_total = L_cont + lambda_disc * L_disc + mu_align * L_align + nu_mask * L_mask
+L_total = L_cont
+        + lambda_disc * L_disc
+        + mu_align * L_align
+        + nu_mask_c * L_mask_c      (semantic masked-node ID)
+        + nu_mask_x * L_mask_x      (geometric masked-node reconstruction)
+
+L_mask_x is an explicit term — structurally it is ``continuous_flow_loss``
+restricted to the ``MASK_X`` subset (where the collator forced t=0 so
+``x_t = x_0`` is pure noise).  Keeping it named separately makes the
+ablation/metrics/math-doc story crisp.
 """
 
 from __future__ import annotations
@@ -51,16 +60,16 @@ def masked_node_loss(
     true_emb: Tensor,
     temperature: float = 0.07,
 ) -> Tensor:
-    """In-batch contrastive masked node prediction loss (L_mask).
+    """In-batch contrastive masked node prediction loss (L_mask_c).
 
-    Each masked node must identify its true entity embedding among
-    all other masked nodes' entity embeddings in the same batch.
-    This is the same symmetric InfoNCE formulation as L_align.
+    Each masked node must identify its true text embedding among all
+    other M_c nodes' text embeddings in the same batch.  Symmetric
+    InfoNCE over the (M_c x M_c) similarity matrix.
 
     Args:
-        h_masked: Backbone hidden states for masked nodes, ``(M, node_dim)``.
-        proj_mask: Projection head ``node_dim -> D_emb``.
-        true_emb: True entity embeddings for masked nodes, ``(M, D_emb)``.
+        h_masked: Backbone hidden states for M_c nodes, ``(M, node_dim)``.
+        proj_mask: Projection head ``node_dim -> d_c``.
+        true_emb: True text embeddings for M_c nodes, ``(M, d_c)``.
         temperature: InfoNCE temperature.
 
     Returns:
@@ -69,12 +78,11 @@ def masked_node_loss(
     if h_masked.shape[0] < 2:
         return torch.tensor(0.0, device=h_masked.device, dtype=h_masked.dtype)
 
-    pred = proj_mask(h_masked)  # (M, D_emb)
+    pred = proj_mask(h_masked)  # (M, d_c)
 
-    pred_norm = F.normalize(pred, dim=-1)       # (M, D_emb)
-    true_norm = F.normalize(true_emb, dim=-1)   # (M, D_emb)
+    pred_norm = F.normalize(pred, dim=-1)
+    true_norm = F.normalize(true_emb, dim=-1)
 
-    # Symmetric InfoNCE: pred[i] should match true[i], not true[j].
     logits = pred_norm @ true_norm.T / temperature  # (M, M)
     labels = torch.arange(logits.shape[0], device=logits.device)
     loss_p2t = F.cross_entropy(logits, labels)
@@ -85,25 +93,37 @@ def masked_node_loss(
 class RiemannFMCombinedLoss(nn.Module):
     """Combined pretraining loss (Algorithm 1).
 
-    L_total = L_cont + lambda_disc * L_disc + mu_align * L_align + nu_mask * L_mask
+    L_total = L_cont
+            + lambda_disc * L_disc
+            + mu_align   * L_align
+            + nu_mask_c  * L_mask_c
+            + nu_mask_x  * L_mask_x
 
-    Contains learnable projection layers for the contrastive alignment
-    loss (Definition 6.9):
-      - proj_g: R^{node_dim} -> R^{d_a}  (backbone hidden -> alignment space)
-      - proj_c: R^{d_c} -> R^{d_a}       (text embeddings -> alignment space)
-    And for the masked node prediction loss:
-      - proj_mask: R^{node_dim} -> R^{D_emb}  (backbone hidden -> entity emb space)
+    Node partition (Def 6.9a) — each real node is exactly one of:
+      - ``REAL``  : both x and c real   — contributes to L_cont + L_align
+      - ``MASK_C``: text masked (c ← mask_emb), geometry real (t=1)
+                    — contributes to L_mask_c
+      - ``MASK_X``: geometry masked (x = x_0 at t=0), text real
+                    — contributes to L_mask_x (via continuous_flow_loss)
+
+    Learnable projection heads:
+      - proj_g      : R^{node_dim} -> R^{d_a}  (L_align graph side)
+      - proj_c      : R^{d_c}     -> R^{d_a}  (L_align text side)
+      - proj_mask_c : R^{node_dim} -> R^{d_c}  (L_mask_c; InfoNCE to text)
+
+    L_mask_x reuses the backbone's V_hat output — no new head.
 
     Args:
-        manifold: Product manifold for tangent norm in L_cont.
+        manifold: Product manifold for tangent norm in L_cont / L_mask_x.
         lambda_disc: Weight for discrete flow loss.
         mu_align: Weight for contrastive alignment loss.
-        nu_mask: Weight for masked node prediction loss.
+        nu_mask_c: Weight for L_mask_c (text-masked nodes).
+        nu_mask_x: Weight for L_mask_x (geometry-masked nodes at t=0).
         neg_ratio: Ratio of negative to positive pairs for L_disc sampling.
         temperature: InfoNCE temperature for L_align.
-        mask_temperature: InfoNCE temperature for L_mask.
+        mask_c_temperature: InfoNCE temperature for L_mask_c.
         input_text_dim: Raw text embedding dimension d_c (0 to disable
-            alignment and masking).
+            alignment and L_mask_c).
         node_dim: Backbone hidden state dimension for graph-side projection.
         d_a: Alignment space dimension for projection layers.
         max_align_nodes: Maximum nodes for L_align contrastive matrix.
@@ -114,10 +134,11 @@ class RiemannFMCombinedLoss(nn.Module):
         manifold: RiemannFMProductManifold,
         lambda_disc: float = 1.0,
         mu_align: float = 0.1,
-        nu_mask: float = 0.0,
+        nu_mask_c: float = 0.0,
+        nu_mask_x: float = 0.0,
         neg_ratio: float = 1.0,
         temperature: float = 0.07,
-        mask_temperature: float = 0.07,
+        mask_c_temperature: float = 0.07,
         input_text_dim: int = 0,
         node_dim: int = 512,
         d_a: int = 256,
@@ -127,25 +148,14 @@ class RiemannFMCombinedLoss(nn.Module):
         self.manifold = manifold
         self.lambda_disc = lambda_disc
         self.mu_align = mu_align
-        self.nu_mask = nu_mask
+        self.nu_mask_c = nu_mask_c
+        self.nu_mask_x = nu_mask_x
         self.neg_ratio = neg_ratio
         self.temperature = temperature
-        self.mask_temperature = mask_temperature
+        self.mask_c_temperature = mask_c_temperature
         self.max_align_nodes = max_align_nodes
 
-        # Projection layers for L_align (Def 6.9):
-        #   g_i = proj_g(h_i)       — backbone hidden state -> alignment space
-        #   c_i = proj_c(text_emb_i) — raw text embedding -> alignment space
-        # We use the backbone hidden state h instead of raw manifold
-        # coordinates x_1 because entity embeddings initialise near the
-        # manifold origin and remain directionally collapsed (cosine
-        # sim > 0.99) during early training, making InfoNCE degenerate
-        # (loss = log(M)).  h has rich inter-sample variance from the
-        # start thanks to diverse text cross-attention and noise inputs.
-        # LayerNorm before each projection normalises the input scale
-        # (backbone h norm ~4 vs text norm ~0.1), preventing gradient
-        # starvation of the smaller-norm branch and reducing
-        # intra-modal collapse in proj_g.
+        # L_align projections (Def 6.9).
         self.ln_g: nn.LayerNorm | None = None
         self.ln_c: nn.LayerNorm | None = None
         self.proj_g: nn.Sequential | None = None
@@ -169,21 +179,21 @@ class RiemannFMCombinedLoss(nn.Module):
                 nn.Linear(d_a, d_a, bias=False),
             )
 
-        # Projection head for L_mask: h_masked -> text embedding space.
+        # L_mask_c head (semantic identification from geometry-real h).
         # Targets are text embeddings (d_c), NOT manifold coordinates.
         # Entity embeddings cluster near the manifold origin (cos-sim
         # > 0.998) making manifold-coordinate targets indistinguishable;
         # text embeddings have healthy diversity (cos-sim ~0.20).
-        self.proj_mask: nn.Sequential | None
-        if nu_mask > 0 and input_text_dim > 0:
-            self.proj_mask = nn.Sequential(
+        self.proj_mask_c: nn.Sequential | None
+        if nu_mask_c > 0 and input_text_dim > 0:
+            self.proj_mask_c = nn.Sequential(
                 nn.LayerNorm(node_dim),
                 nn.Linear(node_dim, node_dim, bias=False),
                 nn.GELU(),
                 nn.Linear(node_dim, input_text_dim, bias=False),
             )
         else:
-            self.proj_mask = None
+            self.proj_mask_c = None
 
     def forward(
         self,
@@ -196,7 +206,7 @@ class RiemannFMCombinedLoss(nn.Module):
         h: Tensor | None = None,
         node_text: Tensor | None = None,
         mask_type: Tensor | None = None,
-        true_entity_emb: Tensor | None = None,
+        true_text_emb: Tensor | None = None,
     ) -> tuple[Tensor, dict[str, Tensor]]:
         """Compute combined loss.
 
@@ -207,38 +217,55 @@ class RiemannFMCombinedLoss(nn.Module):
             P_hat: Predicted edge logits, shape ``(B, N, N, K)``.
             E_1: Target edge types, shape ``(B, N, N, K)``.
             node_mask: Bool mask, shape ``(B, N)``.
-            h: Backbone hidden states for L_align/L_mask, shape
-                ``(B, N, node_dim)``.  None to skip L_align and L_mask.
-            node_text: Raw text embeddings for L_align, shape ``(B, N, d_c)``.
-                None to skip L_align.
-            mask_type: Node type labels, shape ``(B, N)``.
-                0=real, 1=masked, -1=virtual.  None to skip L_mask.
-            true_entity_emb: Original (pre-mask) entity embeddings for
-                masked nodes, shape ``(B, N, D_emb)``.  Only needed when
-                mask_type is provided.
+            h: Backbone hidden states for L_align / L_mask_c, shape
+                ``(B, N, node_dim)``.  None to skip both.
+            node_text: Raw text embeddings (AFTER masking replacement) for
+                L_align, shape ``(B, N, d_c)``.  None to skip L_align.
+            mask_type: Node partition labels, shape ``(B, N)``.
+                ``{-1: VIRTUAL, 0: REAL, 1: MASK_C, 2: MASK_X}``.
+                None to skip L_mask_c / L_mask_x.
+            true_text_emb: Pre-masking text embeddings for M_c targets,
+                shape ``(B, N, d_c)``.  Only needed when mask_type is
+                provided and L_mask_c is enabled.
 
         Returns:
             Tuple of (total_loss, metrics_dict).
-            metrics_dict contains individual loss components.
         """
-        from riemannfm.data.collator import MASK_MASKED
+        from riemannfm.data.collator import MASK_C, MASK_REAL, MASK_X
 
-        # L_cont: continuous flow matching loss.
-        # Exclude masked nodes — their x_1 was replaced, so u_t is invalid.
-        cont_mask = node_mask & (mask_type != MASK_MASKED) if mask_type is not None else node_mask
+        if mask_type is not None:
+            real_mask = node_mask & (mask_type == MASK_REAL)
+            mx_mask = node_mask & (mask_type == MASK_X)
+            mc_mask = node_mask & (mask_type == MASK_C)
+        else:
+            real_mask = node_mask
+            mx_mask = torch.zeros_like(node_mask)
+            mc_mask = torch.zeros_like(node_mask)
+
+        # L_cont: standard flow matching on REAL nodes only.
         l_cont = continuous_flow_loss(
-            self.manifold, V_hat, u_t, x_t, cont_mask,
+            self.manifold, V_hat, u_t, x_t, real_mask,
         )
 
-        # L_disc: discrete flow matching loss (Def 6.8) with negative sampling.
-        # Masked nodes keep their real edges, so L_disc uses full node_mask.
+        # L_mask_x: identical flow matching formula on M_x subset (t=0).
+        # Reuses continuous_flow_loss; the collator already forced t=0
+        # on these positions so x_t[M_x] = x_0 and u_t is the initial
+        # velocity pointing to x_1.
+        if mask_type is not None and mx_mask.any():
+            l_mask_x = continuous_flow_loss(
+                self.manifold, V_hat, u_t, x_t, mx_mask,
+            )
+        else:
+            l_mask_x = torch.tensor(0.0, device=V_hat.device, dtype=V_hat.dtype)
+
+        # L_disc: edge flow matching (full node_mask — edges span pairs,
+        # unaffected by per-node mask labels).
         l_disc = discrete_flow_loss(
             P_hat, E_1, node_mask,
             neg_ratio=self.neg_ratio,
         )
 
-        # L_align: contrastive alignment loss (Def 6.9).
-        # Only unmasked real nodes participate (masked nodes have no text).
+        # L_align: contrastive alignment on REAL nodes only.
         if (
             self.mu_align > 0
             and self.proj_g is not None
@@ -248,11 +275,9 @@ class RiemannFMCombinedLoss(nn.Module):
             and node_text.shape[-1] > 0
         ):
             B, N, _ = h.shape
-            align_mask = node_mask & (mask_type != MASK_MASKED) if mask_type is not None else node_mask
-            mask_flat = align_mask.reshape(-1)
+            mask_flat = real_mask.reshape(-1)
             valid_idx = mask_flat.nonzero(as_tuple=True)[0]
 
-            # Subsample to cap contrastive matrix size.
             if valid_idx.numel() > self.max_align_nodes:
                 perm = torch.randperm(
                     valid_idx.numel(), device=valid_idx.device,
@@ -262,49 +287,49 @@ class RiemannFMCombinedLoss(nn.Module):
             if valid_idx.numel() < 2:
                 l_align = torch.tensor(0.0, device=h.device, dtype=h.dtype)
             else:
-                h_valid = h.reshape(B * N, -1)[valid_idx]  # (M, node_dim)
-                t_valid = node_text.reshape(B * N, -1)[valid_idx]  # (M, d_c)
+                h_valid = h.reshape(B * N, -1)[valid_idx]
+                t_valid = node_text.reshape(B * N, -1)[valid_idx]
                 assert self.ln_g is not None and self.ln_c is not None
-                g_valid = self.proj_g(self.ln_g(h_valid))  # (M, d_a)
-                c_valid = self.proj_c(self.ln_c(t_valid))  # (M, d_a)
+                g_valid = self.proj_g(self.ln_g(h_valid))
+                c_valid = self.proj_c(self.ln_c(t_valid))
                 l_align = _contrastive_loss_from_pairs(
                     g_valid, c_valid, self.temperature,
                 )
         else:
             l_align = torch.tensor(0.0, device=V_hat.device, dtype=V_hat.dtype)
 
-        # L_mask: masked node prediction loss (in-batch contrastive).
-        # Each masked node's proj_mask(h) must match its true entity
-        # embedding among all other masked nodes' embeddings in the batch.
+        # L_mask_c: InfoNCE on M_c nodes against their true text embeddings.
         if (
-            self.nu_mask > 0
-            and self.proj_mask is not None
+            self.nu_mask_c > 0
+            and self.proj_mask_c is not None
             and h is not None
             and mask_type is not None
-            and true_entity_emb is not None
+            and true_text_emb is not None
+            and mc_mask.any()
         ):
             B, N, _ = h.shape
-            masked_flat = (mask_type == MASK_MASKED).reshape(-1)
-            masked_idx = masked_flat.nonzero(as_tuple=True)[0]
+            mc_flat = mc_mask.reshape(-1)
+            mc_idx = mc_flat.nonzero(as_tuple=True)[0]
 
-            if masked_idx.numel() < 2:
-                l_mask = torch.tensor(0.0, device=h.device, dtype=h.dtype)
+            if mc_idx.numel() < 2:
+                l_mask_c = torch.tensor(0.0, device=h.device, dtype=h.dtype)
             else:
-                h_masked = h.reshape(B * N, -1)[masked_idx]       # (M, node_dim)
-                true_emb = true_entity_emb.reshape(B * N, -1)[masked_idx]  # (M, D_emb)
-                l_mask = masked_node_loss(
-                    h_masked, self.proj_mask, true_emb,
-                    temperature=self.mask_temperature,
+                h_mc = h.reshape(B * N, -1)[mc_idx]
+                true_mc = true_text_emb.reshape(B * N, -1)[mc_idx]
+                l_mask_c = masked_node_loss(
+                    h_mc, self.proj_mask_c, true_mc,
+                    temperature=self.mask_c_temperature,
                 )
         else:
-            l_mask = torch.tensor(0.0, device=V_hat.device, dtype=V_hat.dtype)
+            l_mask_c = torch.tensor(0.0, device=V_hat.device, dtype=V_hat.dtype)
 
         # Total loss.
         total = (
             l_cont
             + self.lambda_disc * l_disc
             + self.mu_align * l_align
-            + self.nu_mask * l_mask
+            + self.nu_mask_c * l_mask_c
+            + self.nu_mask_x * l_mask_x
         )
 
         metrics = {
@@ -312,7 +337,8 @@ class RiemannFMCombinedLoss(nn.Module):
             "loss/cont": l_cont.detach(),
             "loss/disc": l_disc.detach(),
             "loss/align": l_align.detach(),
-            "loss/mask": l_mask.detach(),
+            "loss/mask_c": l_mask_c.detach(),
+            "loss/mask_x": l_mask_x.detach(),
         }
 
         return total, metrics

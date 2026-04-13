@@ -60,7 +60,8 @@ class RiemannFMDataModule(LightningDataModule):
         val_epoch_size: int = 1000,
         test_epoch_size: int = 1000,
         batch_size: int = 64,
-        mask_ratio: float = 0.0,
+        mask_ratio_c: float = 0.0,
+        mask_ratio_x: float = 0.0,
         **kwargs: Any,
     ):
         super().__init__()
@@ -74,7 +75,8 @@ class RiemannFMDataModule(LightningDataModule):
         self.val_epoch_size = val_epoch_size
         self.test_epoch_size = test_epoch_size
         self.batch_size = batch_size
-        self.mask_ratio = mask_ratio
+        self.mask_ratio_c = mask_ratio_c
+        self.mask_ratio_x = mask_ratio_x
         self._train_dataset: RiemannFMKGDataset | None = None
         self._val_dataset: RiemannFMKGDataset | None = None
         self._test_dataset: RiemannFMKGDataset | None = None
@@ -184,11 +186,16 @@ class RiemannFMDataModule(LightningDataModule):
             return ds.dim_text_emb
         return self._dim_text_emb
 
-    def _make_collator(self, mask_ratio: float | None = None) -> RiemannFMGraphCollator:
+    def _make_collator(
+        self,
+        mask_ratio_c: float | None = None,
+        mask_ratio_x: float | None = None,
+    ) -> RiemannFMGraphCollator:
         return RiemannFMGraphCollator(
             max_nodes=self.max_nodes,
             num_edge_types=self._num_edge_types,
-            mask_ratio=mask_ratio if mask_ratio is not None else self.mask_ratio,
+            mask_ratio_c=mask_ratio_c if mask_ratio_c is not None else self.mask_ratio_c,
+            mask_ratio_x=mask_ratio_x if mask_ratio_x is not None else self.mask_ratio_x,
         )
 
     def train_dataloader(self) -> DataLoader:
@@ -206,12 +213,14 @@ class RiemannFMDataModule(LightningDataModule):
 
     def val_dataloader(self) -> DataLoader:
         assert self._val_dataset is not None, "Call setup('fit') first"
+        # Mirror training mask ratios so val/L_mask_c and val/L_mask_x
+        # are meaningful.  val_epoch_size averages out mask stochasticity.
         return DataLoader(
             self._val_dataset,
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
-            collate_fn=self._make_collator(mask_ratio=0.0),
+            collate_fn=self._make_collator(),
             pin_memory=torch.cuda.is_available(),
             persistent_workers=self.num_workers > 0,
         )
@@ -223,7 +232,7 @@ class RiemannFMDataModule(LightningDataModule):
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
-            collate_fn=self._make_collator(mask_ratio=0.0),
+            collate_fn=self._make_collator(mask_ratio_c=0.0, mask_ratio_x=0.0),
             pin_memory=torch.cuda.is_available(),
             persistent_workers=self.num_workers > 0,
         )
