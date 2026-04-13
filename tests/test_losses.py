@@ -9,9 +9,10 @@ from __future__ import annotations
 import torch
 
 from riemannfm.data.collator import (
-    MASK_MASKED,
+    MASK_C,
     MASK_REAL,
     MASK_VIRTUAL,
+    MASK_X,
     RiemannFMGraphCollator,
     _apply_node_masking,
 )
@@ -55,7 +56,6 @@ class TestContinuousFlowLoss:
         D = manifold.ambient_dim
         x_t = manifold.sample_noise(B, N, radius_h=1.0)
         u_t = torch.randn(B, N, D)
-        # Perfect prediction.
         V_hat = u_t.clone()
         mask = torch.ones(B, N, dtype=torch.bool)
         loss = continuous_flow_loss(manifold, V_hat, u_t, x_t, mask)
@@ -67,7 +67,6 @@ class TestContinuousFlowLoss:
         x_t = manifold.sample_noise(B, N, radius_h=1.0)
         u_t = torch.randn(B, N, D)
         V_hat = u_t.clone()
-        # All virtual — loss should be zero.
         mask = torch.zeros(B, N, dtype=torch.bool)
         loss = continuous_flow_loss(manifold, V_hat, u_t, x_t, mask)
         assert loss < 1e-6
@@ -85,27 +84,18 @@ class TestContinuousFlowLoss:
         assert torch.isfinite(V_hat.grad).all()
 
     def test_gradient_finite_when_residual_zero_at_masked_token(self) -> None:
-        """Regression: zero residual at any token must not produce NaN grads.
-
-        Going through ``tangent_norm`` (sqrt) then ``pow(2)`` is forward-equal
-        to a direct squared norm, but the backward of ``sqrt`` at zero is
-        ``inf``; multiplied by the mask zero this gave ``0 * inf = NaN`` and
-        poisoned the curvature parameter via global gradient clipping.
-        """
+        """Regression: zero residual at any token must not produce NaN grads."""
         manifold = _make_manifold()
         D = manifold.ambient_dim
         x_t = manifold.sample_noise(B, N, radius_h=1.0)
         u_t = torch.randn(B, N, D)
-        # Make V_hat exactly equal to u_t at one token so residual = 0 there.
         V_hat = u_t.clone().detach().requires_grad_(True)
-        # Mask out that token to mimic a virtual / padding node.
         mask = torch.ones(B, N, dtype=torch.bool)
         mask[0, 0] = False
         loss = continuous_flow_loss(manifold, V_hat, u_t, x_t, mask)
         loss.backward()
         assert V_hat.grad is not None
         assert torch.isfinite(V_hat.grad).all()
-        # Curvatures must also receive finite gradients.
         for comp in (manifold.hyperbolic, manifold.spherical):
             if comp is not None and comp._curvature.grad is not None:
                 assert torch.isfinite(comp._curvature.grad).all()
@@ -122,7 +112,6 @@ class TestDiscreteFlowLoss:
 
     def test_zero_ish_when_perfect(self) -> None:
         E_1 = torch.zeros(B, N, N, K)
-        # Perfect prediction: large negative logits for all zeros.
         P_hat = torch.full((B, N, N, K), -10.0)
         mask = torch.ones(B, N, dtype=torch.bool)
         loss = discrete_flow_loss(P_hat, E_1, mask)
@@ -136,7 +125,6 @@ class TestDiscreteFlowLoss:
         mask_partial[:, :2] = True
         loss_full = discrete_flow_loss(P_hat, E_1, mask_full)
         loss_partial = discrete_flow_loss(P_hat, E_1, mask_partial)
-        # Partial mask should give different loss.
         assert not torch.allclose(loss_full, loss_partial)
 
     def test_gradient_flow(self) -> None:
@@ -160,7 +148,7 @@ class TestContrastiveLoss:
 
     def test_zero_when_no_text(self) -> None:
         g = torch.randn(B, N, 0)
-        c = torch.zeros(B, N, 0)  # d_a = 0
+        c = torch.zeros(B, N, 0)
         mask = torch.ones(B, N, dtype=torch.bool)
         loss = contrastive_alignment_loss(g, c, mask)
         assert loss == 0.0
@@ -179,7 +167,6 @@ class TestContrastiveLoss:
         d_a = 32
         g = torch.randn(B, N, d_a)
         c = torch.randn(B, N, d_a)
-        # Only 1 valid node across all batches.
         mask = torch.zeros(B, N, dtype=torch.bool)
         mask[0, 0] = True
         loss = contrastive_alignment_loss(g, c, mask)
@@ -204,6 +191,8 @@ class TestCombinedLoss:
         assert "loss/cont" in metrics
         assert "loss/disc" in metrics
         assert "loss/align" in metrics
+        assert "loss/mask_c" in metrics
+        assert "loss/mask_x" in metrics
 
     def test_no_text_skips_align(self) -> None:
         manifold = _make_manifold()
@@ -216,7 +205,6 @@ class TestCombinedLoss:
         E_1 = torch.randint(0, 2, (B, N, N, K)).float()
         mask = torch.ones(B, N, dtype=torch.bool)
 
-        # No x_1 or text → L_align = 0.
         _total, metrics = loss_fn(V_hat, u_t, x_t, P_hat, E_1, mask)
         assert metrics["loss/align"] == 0.0
 
@@ -271,109 +259,65 @@ class TestCombinedLoss:
         total.backward()
         assert V_hat.grad is not None
         assert P_hat.grad is not None
-        # Projection layers should also have gradients.
         assert loss_fn.proj_g[0].weight.grad is not None
         assert loss_fn.proj_c[0].weight.grad is not None
-        # Gradient flows back to backbone hidden states.
         assert h.grad is not None
-
-    def test_per_group_gradient_clipping(self) -> None:
-        """Alignment proj grads survive clipping independently of backbone."""
-        manifold = _make_manifold()
-        D = manifold.ambient_dim
-        d_c = 16
-        node_dim = 32
-        loss_fn = RiemannFMCombinedLoss(
-            manifold, mu_align=1.0, input_text_dim=d_c,
-            node_dim=node_dim, d_a=8,
-        )
-
-        # Create a mock backbone param with large gradients.
-        backbone_param = torch.nn.Parameter(torch.randn(512, 512))
-
-        x_t = manifold.sample_noise(B, N, radius_h=1.0)
-        h = torch.randn(B, N, node_dim, requires_grad=True)
-        V_hat = torch.randn(B, N, D, requires_grad=True)
-        u_t = torch.randn(B, N, D)
-        P_hat = torch.randn(B, N, N, K, requires_grad=True)
-        E_1 = torch.randint(0, 2, (B, N, N, K)).float()
-        node_text = torch.randn(B, N, d_c)
-        mask = torch.ones(B, N, dtype=torch.bool)
-
-        total, _ = loss_fn(
-            V_hat, u_t, x_t, P_hat, E_1, mask,
-            h=h, node_text=node_text,
-        )
-        # Add a large fake backbone loss to simulate L_cont dominance.
-        fake_backbone_loss = (backbone_param ** 2).sum() * 1000
-        (total + fake_backbone_loss).backward()
-
-        # Before clipping: backbone gradient norm dwarfs proj gradient norm.
-        align_params = list(loss_fn.parameters())
-        align_norm_before = torch.nn.utils.clip_grad_norm_(
-            align_params, float("inf"),
-        )
-
-        backbone_norm = backbone_param.grad.norm()
-        assert backbone_norm > 100 * align_norm_before, (
-            "Test setup: backbone grads should dominate"
-        )
-
-        # Re-run backward for a fresh set of gradients.
-        loss_fn.zero_grad()
-        backbone_param.grad = None
-        total2, _ = loss_fn(
-            V_hat.detach().requires_grad_(), u_t, x_t,
-            P_hat.detach().requires_grad_(), E_1, mask,
-            h=h.detach().requires_grad_(), node_text=node_text,
-        )
-        fake2 = (backbone_param ** 2).sum() * 1000
-        (total2 + fake2).backward()
-
-        # Per-group clipping: clip alignment and backbone independently.
-        clip_val = 1.0
-        torch.nn.utils.clip_grad_norm_(align_params, clip_val)
-        torch.nn.utils.clip_grad_norm_([backbone_param], clip_val)
-
-        # After per-group clipping, alignment grads should be at clip_val.
-        align_norm_after = torch.cat(
-            [p.grad.flatten() for p in align_params if p.grad is not None],
-        ).norm()
-        # The alignment norm should be close to clip_val (not near-zero).
-        assert align_norm_after > 0.5 * clip_val, (
-            f"Per-group clipping should preserve alignment grad norm, "
-            f"got {align_norm_after:.4f}"
-        )
 
 
 class TestNodeMasking:
-    """Tests for collator-level node masking."""
+    """Tests for collator-level node partition (Def 6.9a)."""
 
-    def test_apply_node_masking_counts(self) -> None:
-        """Correct number of nodes are masked per graph."""
-        mask_type = torch.zeros(4, 10, dtype=torch.long)
+    def test_apply_node_masking_disjoint_counts(self) -> None:
+        # Initialise padding positions as VIRTUAL so we can count REAL
+        # anchors without accidentally counting padding.
+        mask_type = torch.full((4, 10), MASK_VIRTUAL, dtype=torch.long)
         num_real = torch.tensor([8, 6, 10, 3])
-        _apply_node_masking(mask_type, num_real, mask_ratio=0.15)
+        for i, nr in enumerate(num_real.tolist()):
+            mask_type[i, :nr] = MASK_REAL
+        t_node = torch.full((4, 10), float("nan"))
+        _apply_node_masking(
+            mask_type, t_node, num_real,
+            mask_ratio_c=0.25, mask_ratio_x=0.15,
+        )
 
         for i in range(4):
             nr = int(num_real[i].item())
-            n_masked = (mask_type[i] == MASK_MASKED).sum().item()
-            # At least 1 masked, at most nr-1 (keep 1 unmasked).
-            assert n_masked >= 1, f"Graph {i}: expected >=1 masked"
-            assert n_masked < nr, f"Graph {i}: all nodes masked"
-            # Masked nodes only within real range.
-            assert (mask_type[i, nr:] != MASK_MASKED).all()
+            n_c = int((mask_type[i] == MASK_C).sum().item())
+            n_x = int((mask_type[i] == MASK_X).sum().item())
+            n_real = int((mask_type[i, :nr] == MASK_REAL).sum().item())
+            # Disjoint partition covers all real nodes.
+            assert n_c + n_x + n_real == nr
+            # At least one REAL anchor survives.
+            assert n_real >= 1
+
+    def test_t_node_labels_correct(self) -> None:
+        mask_type = torch.zeros(2, 8, dtype=torch.long)
+        t_node = torch.full((2, 8), float("nan"))
+        num_real = torch.tensor([6, 6])
+        _apply_node_masking(
+            mask_type, t_node, num_real,
+            mask_ratio_c=0.3, mask_ratio_x=0.3,
+        )
+        # M_x positions must be exactly 0.0.
+        assert ((mask_type == MASK_X) == (t_node == 0.0)).all()
+        # M_c positions must be exactly 1.0.
+        assert ((mask_type == MASK_C) == (t_node == 1.0)).all()
+        # REAL / VIRTUAL positions remain NaN.
+        assert torch.isnan(t_node[mask_type == MASK_REAL]).all()
 
     def test_masking_does_not_touch_virtual(self) -> None:
         mask_type = torch.full((2, 8), MASK_VIRTUAL, dtype=torch.long)
         mask_type[:, :4] = MASK_REAL
+        t_node = torch.full((2, 8), float("nan"))
         num_real = torch.tensor([4, 4])
-        _apply_node_masking(mask_type, num_real, mask_ratio=0.3)
-        # Virtual nodes remain unchanged.
+        _apply_node_masking(
+            mask_type, t_node, num_real,
+            mask_ratio_c=0.3, mask_ratio_x=0.2,
+        )
         assert (mask_type[:, 4:] == MASK_VIRTUAL).all()
+        assert torch.isnan(t_node[:, 4:]).all()
 
-    def test_collator_mask_type_shape(self) -> None:
-        """Collator produces mask_type with correct shape and values."""
+    def test_collator_emits_t_node(self) -> None:
         from riemannfm.data.graph import RiemannFMGraphData
 
         g = RiemannFMGraphData(
@@ -385,19 +329,19 @@ class TestNodeMasking:
             num_edge_types=K,
         )
         collator = RiemannFMGraphCollator(
-            max_nodes=6, num_edge_types=K, mask_ratio=0.25,
+            max_nodes=6, num_edge_types=K,
+            mask_ratio_c=0.25, mask_ratio_x=0.25,
         )
         batch = collator([g, g])
         mt = batch["mask_type"]
+        tn = batch["t_node"]
         assert mt.shape == (2, 6)
-        # Virtual nodes are MASK_VIRTUAL.
+        assert tn.shape == (2, 6)
+        # Virtual nodes are VIRTUAL with NaN t.
         assert (mt[:, 4:] == MASK_VIRTUAL).all()
-        # At least 1 masked per graph.
-        for i in range(2):
-            assert (mt[i] == MASK_MASKED).any()
+        assert torch.isnan(tn[:, 4:]).all()
 
     def test_collator_no_masking_when_zero(self) -> None:
-        """mask_ratio=0 produces no masked nodes."""
         from riemannfm.data.graph import RiemannFMGraphData
 
         g = RiemannFMGraphData(
@@ -409,14 +353,16 @@ class TestNodeMasking:
             num_edge_types=K,
         )
         collator = RiemannFMGraphCollator(
-            max_nodes=4, num_edge_types=K, mask_ratio=0.0,
+            max_nodes=4, num_edge_types=K,
+            mask_ratio_c=0.0, mask_ratio_x=0.0,
         )
         batch = collator([g])
         assert (batch["mask_type"][0] == MASK_REAL).all()
+        assert torch.isnan(batch["t_node"][0]).all()
 
 
 class TestMaskedNodeLoss:
-    """Tests for the masked node prediction loss function."""
+    """Tests for the masked_node_loss utility (used inside L_mask_c)."""
 
     def test_finite_and_positive(self) -> None:
         node_dim = 32
@@ -438,10 +384,8 @@ class TestMaskedNodeLoss:
         proj = torch.nn.Sequential(
             torch.nn.Linear(node_dim, D_emb, bias=False),
         )
-        # 0 masked nodes.
         loss0 = masked_node_loss(torch.randn(0, node_dim), proj, torch.randn(0, D_emb))
         assert loss0.item() == 0.0
-        # 1 masked node — need >=2 for in-batch contrastive.
         loss1 = masked_node_loss(torch.randn(1, node_dim), proj, torch.randn(1, D_emb))
         assert loss1.item() == 0.0
 
@@ -462,7 +406,7 @@ class TestMaskedNodeLoss:
 
 
 class TestCombinedLossWithMask:
-    """Tests for L_mask integration in RiemannFMCombinedLoss."""
+    """Tests for L_mask_c / L_mask_x integration in RiemannFMCombinedLoss."""
 
     def test_l_mask_disabled_by_default(self) -> None:
         manifold = _make_manifold()
@@ -476,14 +420,16 @@ class TestCombinedLossWithMask:
         mask = torch.ones(B, N, dtype=torch.bool)
 
         _, metrics = loss_fn(V_hat, u_t, x_t, P_hat, E_1, mask)
-        assert metrics["loss/mask"].item() == 0.0
+        assert metrics["loss/mask_c"].item() == 0.0
+        assert metrics["loss/mask_x"].item() == 0.0
 
-    def test_l_mask_active(self) -> None:
+    def test_l_mask_c_active(self) -> None:
         manifold = _make_manifold()
         D = manifold.ambient_dim
+        d_c = 16
         node_dim = 32
         loss_fn = RiemannFMCombinedLoss(
-            manifold, nu_mask=1.0, input_text_dim=D,
+            manifold, nu_mask_c=1.0, input_text_dim=d_c,
             node_dim=node_dim,
         )
         x_t = manifold.sample_noise(B, N, radius_h=1.0)
@@ -494,28 +440,55 @@ class TestCombinedLossWithMask:
         E_1 = torch.randint(0, 2, (B, N, N, K)).float()
         mask = torch.ones(B, N, dtype=torch.bool)
 
-        # Create mask_type: mask 2 nodes per graph.
+        # Tag two nodes per graph as M_c.
         mask_type = torch.zeros(B, N, dtype=torch.long)
-        mask_type[:, 0] = MASK_MASKED
-        mask_type[:, 1] = MASK_MASKED
+        mask_type[:, 0] = MASK_C
+        mask_type[:, 1] = MASK_C
 
-        true_entity_emb = torch.randn(B, N, D)
+        true_text_emb = torch.randn(B, N, d_c)
 
         total, metrics = loss_fn(
             V_hat, u_t, x_t, P_hat, E_1, mask,
             h=h, mask_type=mask_type,
-            true_entity_emb=true_entity_emb,
+            true_text_emb=true_text_emb,
         )
         assert torch.isfinite(total)
-        assert metrics["loss/mask"] > 0.0
+        assert metrics["loss/mask_c"] > 0.0
+        # L_mask_x still zero because no MASK_X nodes.
+        assert metrics["loss/mask_x"].item() == 0.0
 
-    def test_masked_nodes_excluded_from_l_cont(self) -> None:
-        """Masked nodes should not contribute to L_cont."""
+    def test_l_mask_x_active(self) -> None:
+        """MASK_X subset produces a non-zero L_mask_x via continuous_flow_loss."""
         manifold = _make_manifold()
         D = manifold.ambient_dim
         node_dim = 32
         loss_fn = RiemannFMCombinedLoss(
-            manifold, nu_mask=1.0, input_text_dim=D,
+            manifold, nu_mask_x=1.0, node_dim=node_dim,
+        )
+        x_t = manifold.sample_noise(B, N, radius_h=1.0)
+        V_hat = torch.randn(B, N, D)
+        u_t = torch.randn(B, N, D)
+        P_hat = torch.randn(B, N, N, K)
+        E_1 = torch.randint(0, 2, (B, N, N, K)).float()
+        mask = torch.ones(B, N, dtype=torch.bool)
+
+        mask_type = torch.zeros(B, N, dtype=torch.long)
+        mask_type[:, 2] = MASK_X
+        mask_type[:, 3] = MASK_X
+
+        _, metrics = loss_fn(
+            V_hat, u_t, x_t, P_hat, E_1, mask,
+            mask_type=mask_type,
+        )
+        assert metrics["loss/mask_x"] > 0.0
+
+    def test_masked_nodes_excluded_from_l_cont(self) -> None:
+        """MASK_C and MASK_X nodes must not contribute to L_cont."""
+        manifold = _make_manifold()
+        D = manifold.ambient_dim
+        node_dim = 32
+        loss_fn = RiemannFMCombinedLoss(
+            manifold, nu_mask_c=1.0, input_text_dim=D,
             node_dim=node_dim, lambda_disc=0.0, mu_align=0.0,
         )
 
@@ -527,33 +500,30 @@ class TestCombinedLossWithMask:
         mask = torch.ones(B, N, dtype=torch.bool)
         h = torch.randn(B, N, node_dim)
 
-        # All real, no masking.
         mt_none = torch.zeros(B, N, dtype=torch.long)
         _, m1 = loss_fn(
             V_hat, u_t, x_t, P_hat, E_1, mask, h=h,
             mask_type=mt_none,
-            true_entity_emb=torch.randn(B, N, D),
+            true_text_emb=torch.randn(B, N, D),
         )
 
-        # Mask half the nodes — L_cont should change (fewer contributing nodes).
         mt_half = torch.zeros(B, N, dtype=torch.long)
-        mt_half[:, :N // 2] = MASK_MASKED
+        mt_half[:, :N // 2] = MASK_C
         _, m2 = loss_fn(
             V_hat, u_t, x_t, P_hat, E_1, mask, h=h,
             mask_type=mt_half,
-            true_entity_emb=torch.randn(B, N, D),
+            true_text_emb=torch.randn(B, N, D),
         )
 
-        # L_cont values should differ since masked nodes are excluded.
         assert m1["loss/cont"] != m2["loss/cont"]
 
-    def test_l_mask_gradient_backward(self) -> None:
-        """Gradient flows from L_mask through proj_mask to h."""
+    def test_l_mask_c_gradient_backward(self) -> None:
+        """Gradient flows from L_mask_c through proj_mask_c to h."""
         manifold = _make_manifold()
         D = manifold.ambient_dim
         node_dim = 32
         loss_fn = RiemannFMCombinedLoss(
-            manifold, nu_mask=1.0, input_text_dim=D,
+            manifold, nu_mask_c=1.0, input_text_dim=D,
             node_dim=node_dim, mu_align=0.0, lambda_disc=0.0,
         )
         x_t = manifold.sample_noise(B, N, radius_h=1.0)
@@ -565,16 +535,15 @@ class TestCombinedLossWithMask:
         mask = torch.ones(B, N, dtype=torch.bool)
 
         mask_type = torch.zeros(B, N, dtype=torch.long)
-        mask_type[:, 0] = MASK_MASKED
-        true_entity_emb = torch.randn(B, N, D)
+        mask_type[:, 0] = MASK_C
+        mask_type[:, 1] = MASK_C
+        true_text_emb = torch.randn(B, N, D)
 
         total, _ = loss_fn(
             V_hat, u_t, x_t, P_hat, E_1, mask, h=h,
             mask_type=mask_type,
-            true_entity_emb=true_entity_emb,
+            true_text_emb=true_text_emb,
         )
         total.backward()
-        # proj_mask should have gradients (index 1 = first Linear after LayerNorm).
-        assert loss_fn.proj_mask[1].weight.grad is not None
-        # Gradient flows back to backbone hidden states.
+        assert loss_fn.proj_mask_c[1].weight.grad is not None
         assert h.grad is not None

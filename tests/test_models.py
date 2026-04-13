@@ -58,10 +58,16 @@ class TestTimeEmbedding:
         assert out.shape == (B, NODE_DIM)
 
     def test_output_shape_2d(self) -> None:
+        """Per-node input ``(B, N)`` produces ``(B, N, NODE_DIM)``.
+
+        Supports the collator's ``t_node`` pipeline where M_x / M_c
+        positions are pinned to 0 / 1 and REAL positions broadcast
+        the batch-sampled scalar.
+        """
         emb = RiemannFMTimeEmbedding(NODE_DIM)
         t = torch.rand(B, 1)
         out = emb(t)
-        assert out.shape == (B, NODE_DIM)
+        assert out.shape == (B, 1, NODE_DIM)
 
     def test_different_times_different_embeddings(self) -> None:
         emb = RiemannFMTimeEmbedding(NODE_DIM)
