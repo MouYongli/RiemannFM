@@ -65,6 +65,7 @@ def discrete_flow_loss(
     E_1: Tensor,
     node_mask: Tensor,
     neg_ratio: float = 1.0,
+    mode: str = "bce",
 ) -> Tensor:
     """Discrete flow matching loss L_disc (Def 6.8) with negative sampling.
 
@@ -78,6 +79,11 @@ def discrete_flow_loss(
         E_1: Target edge types, shape ``(B, N, N, K)``.
         node_mask: Bool mask, shape ``(B, N)``. True = real node.
         neg_ratio: Ratio of negative to positive pairs to sample.
+        mode: ``"bce"`` (per-channel binary CE, multi-hot compatible) or
+            ``"softmax_ce"`` (softmax-CE over K on positive pairs +
+            all-zero BCE on negative pairs). Softmax mode removes the
+            ~1/K channel-level positive dilution that keeps L_disc
+            stuck at trivially low values when K is large.
 
     Returns:
         Scalar loss (mean over sampled pairs and relations).
@@ -106,19 +112,40 @@ def discrete_flow_loss(
 
     if n_neg > 0:
         neg_idx = torch.multinomial(neg_flat, n_neg, replacement=False)
-        sample_idx = torch.cat([pos_idx, neg_idx], dim=0)
     else:
-        sample_idx = pos_idx
+        neg_idx = torch.empty(0, dtype=torch.long, device=P_hat.device)
 
-    # Gather only sampled pairs — avoids BCE on full (B, N, N, K).
     K = E_1.shape[-1]
     P_flat = P_hat.reshape(-1, K)  # (L, K)
     E_flat = E_1.reshape(-1, K)    # (L, K)
 
+    if mode == "softmax_ce":
+        # Positive pairs: soft-label CE over K relations.  Target is the
+        # multi-hot row normalised to a probability distribution so that
+        # single-hot pairs reduce to standard CE and multi-hot pairs split
+        # mass uniformly across active relations.
+        P_pos = P_flat[pos_idx]                          # (P, K)
+        E_pos = E_flat[pos_idx]                          # (P, K)
+        target = E_pos / E_pos.sum(dim=-1, keepdim=True).clamp_min(1.0)
+        log_p = F.log_softmax(P_pos, dim=-1)
+        loss_pos = -(target * log_p).sum(dim=-1).mean()
+
+        # Negative pairs: push every channel's sigmoid toward 0 so that
+        # sampling-time Bernoulli decoding still produces "no edge" on
+        # empty pairs.  BCE with zero target = softplus(logit).
+        if neg_idx.numel() > 0:
+            P_neg = P_flat[neg_idx]
+            loss_neg = F.binary_cross_entropy_with_logits(
+                P_neg, torch.zeros_like(P_neg),
+            )
+        else:
+            loss_neg = torch.tensor(0.0, device=P_hat.device, dtype=P_hat.dtype)
+        return loss_pos + loss_neg
+
+    # Default: per-channel BCE on the gathered subset.
+    sample_idx = (
+        torch.cat([pos_idx, neg_idx], dim=0) if neg_idx.numel() > 0 else pos_idx
+    )
     P_sampled = P_flat[sample_idx]  # (S, K)
     E_sampled = E_flat[sample_idx]  # (S, K)
-
-    # BCE on the compact gathered tensor.
-    loss = F.binary_cross_entropy_with_logits(P_sampled, E_sampled)
-
-    return loss
+    return F.binary_cross_entropy_with_logits(P_sampled, E_sampled)

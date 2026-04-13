@@ -39,3 +39,6 @@ training:
   nu_mask_x: 1.0
   mask_ratio_c: 0.15
   mask_ratio_x: 0.05
+  # wikidata_5m is 100% single-hot; softmax_ce removes the K≈822 channel
+  # dilution that pins L_disc near zero under per-channel BCE.
+  edge_loss_mode: softmax_ce

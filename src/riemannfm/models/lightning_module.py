@@ -506,6 +506,7 @@ class RiemannFMPretrainModule(L.LightningModule):
             use_text_cross_attn=bool(getattr(model_cfg, "use_text_cross_attn", False)),
             text_cross_attn_every=model_cfg.text_cross_attn_every,
             rel_emb_dim=model_cfg.rel_emb_dim,
+            pe_dim=int(getattr(model_cfg, "pe_dim", 0)),
             use_geodesic_kernel=ablation_cfg.use_geodesic_kernel,
             use_ath_norm=ablation_cfg.use_ath_norm,
             use_edge_self_update=ablation_cfg.use_edge_self_update,
@@ -523,6 +524,7 @@ class RiemannFMPretrainModule(L.LightningModule):
             nu_mask_c=float(getattr(training_cfg, "nu_mask_c", 0.0)),
             nu_mask_x=float(getattr(training_cfg, "nu_mask_x", 0.0)),
             neg_ratio=float(getattr(training_cfg, "neg_ratio", 1.0)),
+            edge_loss_mode=str(getattr(training_cfg, "edge_loss_mode", "bce")),
             temperature=training_cfg.temperature,
             mask_c_temperature=float(
                 getattr(training_cfg, "mask_c_temperature", 0.07),

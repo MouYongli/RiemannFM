@@ -25,6 +25,11 @@ nu_mask_x: 1.0          # geometric masked-node reconstruction (L_mask_x)
 temperature: 0.07
 mask_c_temperature: 0.07
 neg_ratio: 1.0
+# L_disc formulation: "bce" (per-channel, multi-hot compatible) or
+# "softmax_ce" (K-way CE on positive pairs + zero-BCE on negatives).
+# softmax_ce removes the 1/K channel dilution; use on single-hot KGs
+# (wikidata_5m has 0% multi-hot pairs).
+edge_loss_mode: bce
 max_align_nodes: 128
 
 # Node-partition mask ratios (Def 6.9a).  Disjoint; REAL anchors get the

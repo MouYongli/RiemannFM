@@ -80,6 +80,12 @@ def masked_node_loss(
 
     pred = proj_mask(h_masked)  # (M, d_c)
 
+    # Remove per-batch shared mean direction before cosine similarity.
+    # entity_emb collapses to ‖mean‖/mean(‖x‖) ≈ 0.9, hiding real
+    # discriminability under a single shared component.
+    pred = pred - pred.mean(dim=0, keepdim=True)
+    true_emb = true_emb - true_emb.mean(dim=0, keepdim=True)
+
     pred_norm = F.normalize(pred, dim=-1)
     true_norm = F.normalize(true_emb, dim=-1)
 
@@ -120,6 +126,8 @@ class RiemannFMCombinedLoss(nn.Module):
         nu_mask_c: Weight for L_mask_c (text-masked nodes).
         nu_mask_x: Weight for L_mask_x (geometry-masked nodes at t=0).
         neg_ratio: Ratio of negative to positive pairs for L_disc sampling.
+        edge_loss_mode: L_disc formulation, ``"bce"`` (multi-hot per-channel)
+            or ``"softmax_ce"`` (K-way on positive pairs).
         temperature: InfoNCE temperature for L_align.
         mask_c_temperature: InfoNCE temperature for L_mask_c.
         input_text_dim: Raw text embedding dimension d_c (0 to disable
@@ -137,6 +145,7 @@ class RiemannFMCombinedLoss(nn.Module):
         nu_mask_c: float = 0.0,
         nu_mask_x: float = 0.0,
         neg_ratio: float = 1.0,
+        edge_loss_mode: str = "bce",
         temperature: float = 0.07,
         mask_c_temperature: float = 0.07,
         input_text_dim: int = 0,
@@ -151,6 +160,7 @@ class RiemannFMCombinedLoss(nn.Module):
         self.nu_mask_c = nu_mask_c
         self.nu_mask_x = nu_mask_x
         self.neg_ratio = neg_ratio
+        self.edge_loss_mode = edge_loss_mode
         self.temperature = temperature
         self.mask_c_temperature = mask_c_temperature
         self.max_align_nodes = max_align_nodes
@@ -263,6 +273,7 @@ class RiemannFMCombinedLoss(nn.Module):
         l_disc = discrete_flow_loss(
             P_hat, E_1, node_mask,
             neg_ratio=self.neg_ratio,
+            mode=self.edge_loss_mode,
         )
 
         # L_align: contrastive alignment on REAL nodes only.

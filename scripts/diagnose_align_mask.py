@@ -1,6 +1,7 @@
 """Adapted diagnostic for L_align & L_mask_c on latest run (current API)."""
 from __future__ import annotations
 import os
+os.environ["TORCH_COMPILE_DISABLE"] = "1"
 from pathlib import Path
 import numpy as np
 import torch
@@ -24,6 +25,7 @@ dm = RiemannFMDataModule(
     batch_size=cfg.training.batch_size,
     mask_ratio_c=float(getattr(cfg.training, "mask_ratio_c", 0.15)),
     mask_ratio_x=float(getattr(cfg.training, "mask_ratio_x", 0.05)),
+    rwpe_k=int(getattr(cfg.data, "rwpe_k", 0)),
 )
 dm.setup("fit")
 input_text_dim = dm.dim_text_emb
@@ -44,6 +46,7 @@ collator = RiemannFMGraphCollator(
     max_nodes=cfg.data.max_nodes, num_edge_types=cfg.data.num_edge_types,
     mask_ratio_c=float(getattr(cfg.training, "mask_ratio_c", 0.15)),
     mask_ratio_x=float(getattr(cfg.training, "mask_ratio_x", 0.05)),
+    rwpe_k=int(getattr(cfg.data, "rwpe_k", 0)),
 )
 loader = DataLoader(dm._val_dataset, batch_size=cfg.training.batch_size,
                     shuffle=False, num_workers=2, collate_fn=collator)
@@ -73,6 +76,7 @@ with torch.no_grad(), torch.amp.autocast("cuda", dtype=torch.bfloat16):
         V_hat, P_hat, h = module.model(
             x_t=sample.x_t, E_t=sample.E_t, t=sample.t,
             node_text=node_text, node_mask=node_mask, C_R=module.C_R,
+            node_pe=batch.get("node_pe"),
         )
         h = h.float(); node_text_f = node_text.float()
 
@@ -121,6 +125,8 @@ with torch.no_grad(), torch.amp.autocast("cuda", dtype=torch.bfloat16):
             h_m = h.reshape(B*N,-1)[midx]
             tgt = true_text_emb.float().reshape(B*N,-1)[midx]
             pred = module.loss_fn.proj_mask_c(h_m)
+            pred = pred - pred.mean(0, keepdim=True)
+            tgt  = tgt  - tgt.mean(0, keepdim=True)
             pn = F.normalize(pred, dim=-1); tn = F.normalize(tgt, dim=-1)
             hmn = F.normalize(h_m, dim=-1)
             M2 = n_mc; off2 = ~torch.eye(M2, dtype=torch.bool, device=pn.device)

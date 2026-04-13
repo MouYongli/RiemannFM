@@ -506,6 +506,10 @@ $$\mathcal{L}_{\mathrm{disc}} = \frac{1}{|\mathcal{S}|}\sum_{(i,j) \in \mathcal{
 
 **可选扩展**：若实验表明稀有关系（$\rho_k$ 极小）的预测不足，可引入逐关系正样本权重 $w_k^+ = \min\!\left(\frac{1-\rho_k}{\rho_k},\, w_{\max}\right)$ 作为 BCE 的 `pos_weight`，与负采样正交互补。
 
+**注记 6.8a（单热 KG 的 softmax-CE 紧化形式）。** 若数据集满足 $\max_{(i,j)} \sum_{k=1}^K \mathbf{E}_{1,ij}^{(k)} = 1$（即每对节点至多一条关系，如 wikidata_5m），定义 6.8 的 per-channel BCE 会退化为 $K$ 个独立二分类：在每个正对上仅 1 个通道为正，其余 $K-1$ 通道为 easy-negative，梯度按 $O(1/K)$ 稀释，使 $\mathcal{L}_{\mathrm{disc}}$ 在大 $K$ 下（wikidata_5m 的 $K \approx 822$）被压至近零。等价的紧化形式为：正对上做 $K$ 路 softmax-CE，负对上仍保留零目标 BCE 以维持"无边"信号，
+$$\mathcal{L}_{\mathrm{disc}}^{\mathrm{sm}} = \frac{1}{|\mathcal{S}^+|}\sum_{(i,j) \in \mathcal{S}^+}\!\Bigl(-\sum_{k=1}^K \tilde{\mathbf{E}}_{1,ij}^{(k)} \log \mathrm{softmax}(\hat{\mathbf{P}}_{ij})^{(k)}\Bigr) + \frac{1}{|\mathcal{S}^-|}\sum_{(i,j) \in \mathcal{S}^-}\sum_{k=1}^K \mathrm{softplus}(\hat{\mathbf{P}}_{ij}^{(k)})$$
+其中 $\tilde{\mathbf{E}}_{1,ij} = \mathbf{E}_{1,ij} / \sum_k \mathbf{E}_{1,ij}^{(k)}$ 为正对标签的概率归一化（单热时就是 one-hot，多热时退化为均匀分配），$\hat{\mathbf{P}}_{ij}$ 为预测 logits。代码通过 `edge_loss_mode: softmax_ce` 切换；多热占比非零的 KG（如 fb15k_237 约 9.5%）应保持默认 `bce` 以免截断多热信号。
+
 **定义 6.9（图-文对比损失）。** 将 backbone 隐藏状态和原始文本条件分别投影到共同的对齐空间 $\mathbb{R}^{d_a}$。直接使用数据端流形坐标 $\mathbf{x}_{1,i}$ 会导致对比损失退化：实体嵌入从流形原点附近初始化，训练初期所有实体方向高度一致（余弦相似度 $> 0.99$），使得 InfoNCE 无法区分不同节点（损失恒为 $\log M$）。因此，我们使用 RieFormer backbone 的最终隐藏状态 $\mathbf{h}_i$ 作为图侧输入——$\mathbf{h}_i$ 融合了加噪坐标、边类型和文本交叉注意力，从训练伊始即具有充分的样本间差异性。
 
 图侧与文本侧投影：

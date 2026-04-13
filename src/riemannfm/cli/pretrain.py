@@ -166,6 +166,7 @@ def main(cfg: DictConfig) -> None:
         nu_mask_c=float(getattr(cfg.training, "nu_mask_c", 0.0)),
         nu_mask_x=float(getattr(cfg.training, "nu_mask_x", 0.0)),
         neg_ratio=float(getattr(cfg.training, "neg_ratio", 1.0)),
+        edge_loss_mode=str(getattr(cfg.training, "edge_loss_mode", "bce")),
         temperature=cfg.training.temperature,
         mask_c_temperature=float(
             getattr(cfg.training, "mask_c_temperature", 0.07),
