@@ -85,10 +85,12 @@ class RiemannFMPretrainModule(L.LightningModule):
             self.C_R = None
 
         # Learnable entity embeddings -> manifold coordinates.
-        # Initialize near the manifold origin with small noise.
+        # Initialize with larger std=0.1 so x_1 has inter-node diversity
+        # beyond origin jitter (std=0.01 made MASK_C backbone h self-cos
+        # collapse to 0.89 — see diagnose_align_mask report 2026-04-13).
         D = manifold.ambient_dim
         self.entity_emb = nn.Embedding(num_entities, D)
-        nn.init.normal_(self.entity_emb.weight, std=0.01)
+        nn.init.normal_(self.entity_emb.weight, std=0.1)
         # Set the origin-like initial values for hyperbolic/spherical time coords.
         with torch.no_grad():
             origin = manifold.origin(device=self.entity_emb.weight.device)  # (D,)
