@@ -46,6 +46,8 @@ class RiemannFMGraphCollator:
             If None, inferred from the first sample.
         mask_ratio_c: Fraction of real nodes assigned to MASK_C (text mask).
         mask_ratio_x: Fraction of real nodes assigned to MASK_X (geom mask).
+        rwpe_k: Number of random-walk steps for the structural positional
+            encoding.  0 disables PE (``node_pe`` omitted from batch).
     """
 
     def __init__(
@@ -54,11 +56,13 @@ class RiemannFMGraphCollator:
         num_edge_types: int | None = None,
         mask_ratio_c: float = 0.0,
         mask_ratio_x: float = 0.0,
+        rwpe_k: int = 0,
     ):
         self.max_nodes = max_nodes
         self.num_edge_types = num_edge_types
         self.mask_ratio_c = mask_ratio_c
         self.mask_ratio_x = mask_ratio_x
+        self.rwpe_k = rwpe_k
 
     def __call__(self, batch: list[RiemannFMGraphData]) -> dict[str, object]:
         """Collate a batch of RiemannFMGraphData into padded tensors.
@@ -110,7 +114,7 @@ class RiemannFMGraphCollator:
                 self.mask_ratio_c, self.mask_ratio_x,
             )
 
-        return {
+        out: dict[str, object] = {
             "edge_types": edge_types,
             "node_text": node_text,
             "node_mask": node_mask,
@@ -120,6 +124,51 @@ class RiemannFMGraphCollator:
             "t_node": t_node,
             "batch_size": B,
         }
+
+        if self.rwpe_k > 0:
+            out["node_pe"] = _compute_rwpe(edge_types, node_mask, self.rwpe_k)
+
+        return out
+
+
+def _compute_rwpe(
+    edge_types: torch.Tensor,
+    node_mask: torch.Tensor,
+    k: int,
+) -> torch.Tensor:
+    """Random-walk positional encoding (Dwivedi et al. 2022).
+
+    For each graph, builds a binary adjacency ``A`` from any edge type
+    being present, row-normalises to ``P = D^{-1} A``, and stacks the
+    diagonals ``[P^1_ii, P^2_ii, ..., P^k_ii]`` as each node's PE.
+    Identity-free: depends only on ``A``, so it is computable at inference
+    when node entities are unknown.
+
+    Args:
+        edge_types: Multi-hot edges, shape ``(B, N, N, K)``.
+        node_mask: Bool mask, shape ``(B, N)``.
+        k: Number of walk steps.
+
+    Returns:
+        Tensor of shape ``(B, N, k)``.  Virtual-node rows are zero.
+    """
+    B, N, _, _ = edge_types.shape
+    # Binary adjacency: edge present if any relation type is active.
+    A = (edge_types.sum(dim=-1) > 0).float()  # (B, N, N)
+    A = A * node_mask.unsqueeze(1).float() * node_mask.unsqueeze(2).float()
+
+    deg = A.sum(dim=-1, keepdim=True).clamp(min=1.0)  # (B, N, 1)
+    P = A / deg  # (B, N, N)
+
+    pe = torch.zeros(B, N, k, dtype=torch.float32)
+    P_power = P.clone()
+    for step in range(k):
+        pe[..., step] = torch.diagonal(P_power, dim1=-2, dim2=-1)
+        if step < k - 1:
+            P_power = P_power @ P
+    # Zero out virtual node rows.
+    pe = pe * node_mask.unsqueeze(-1).float()
+    return pe
 
 
 def _apply_node_masking(

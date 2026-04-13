@@ -75,6 +75,7 @@ class RiemannFM(nn.Module):
         num_edge_types: int = 10,
         input_text_dim: int = 0,
         text_proj_dim: int = 256,
+        pe_dim: int = 0,
         use_text_cross_attn: bool = False,
         text_cross_attn_every: int = 999,
         rel_emb_dim: int = 32,
@@ -91,6 +92,7 @@ class RiemannFM(nn.Module):
         self.node_dim = node_dim
         self.edge_dim = edge_dim
         self.text_proj_dim = text_proj_dim if input_text_dim > 0 else 0
+        self.pe_dim = pe_dim
 
         ambient_dim = manifold.ambient_dim
         time_dim = node_dim
@@ -111,6 +113,7 @@ class RiemannFM(nn.Module):
             text_dim=self.text_proj_dim,
             node_dim=node_dim,
             time_dim=time_dim,
+            pe_dim=pe_dim,
             dropout=dropout,
         )
         self.edge_encoder = RiemannFMEdgeEncoder(
@@ -173,6 +176,7 @@ class RiemannFM(nn.Module):
         node_text: Tensor,
         node_mask: Tensor,
         C_R: Tensor | None = None,
+        node_pe: Tensor | None = None,
     ) -> tuple[Tensor, Tensor, Tensor]:
         """Full forward pass.
 
@@ -198,7 +202,7 @@ class RiemannFM(nn.Module):
         t_emb = self.time_emb(t)  # (B, time_dim)
 
         # 2. Input encoding (uses projected text_proj_dim-dim text).
-        h = self.node_encoder(x_t, node_text_proj, node_mask, t_emb)
+        h = self.node_encoder(x_t, node_text_proj, node_mask, t_emb, node_pe=node_pe)
         g = self.edge_encoder(E_t, C_R_proj)
 
         # 3. RieFormer backbone.
@@ -243,6 +247,7 @@ class RiemannFM(nn.Module):
             num_edge_types=num_edge_types,
             input_text_dim=input_text_dim,
             text_proj_dim=int(getattr(model_cfg, "text_proj_dim", 256)),
+            pe_dim=int(getattr(model_cfg, "pe_dim", 0)),
             use_text_cross_attn=bool(getattr(model_cfg, "use_text_cross_attn", False)),
             text_cross_attn_every=model_cfg.text_cross_attn_every,
             rel_emb_dim=model_cfg.rel_emb_dim,

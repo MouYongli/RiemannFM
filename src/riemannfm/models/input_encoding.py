@@ -24,6 +24,7 @@ class RiemannFMNodeEncoder(nn.Module):
         text_dim: Text embedding dimension d_c (0 to disable text).
         node_dim: Output hidden dimension for nodes.
         time_dim: Time embedding dimension (added after MLP).
+        pe_dim: Random-walk positional encoding dimension (0 to disable).
         dropout: Dropout rate.
     """
 
@@ -33,11 +34,13 @@ class RiemannFMNodeEncoder(nn.Module):
         text_dim: int,
         node_dim: int,
         time_dim: int,
+        pe_dim: int = 0,
         dropout: float = 0.1,
     ) -> None:
         super().__init__()
-        # Input: [x_i (D) || c_i (d_c) || m_i (1)]
-        in_dim = ambient_dim + text_dim + 1
+        self.pe_dim = pe_dim
+        # Input: [x_i (D) || c_i (d_c) || pe_i (pe_dim) || m_i (1)]
+        in_dim = ambient_dim + text_dim + pe_dim + 1
         self.mlp = nn.Sequential(
             nn.Linear(in_dim, node_dim),
             nn.SiLU(),
@@ -55,6 +58,7 @@ class RiemannFMNodeEncoder(nn.Module):
         node_text: Tensor,
         node_mask: Tensor,
         t_emb: Tensor,
+        node_pe: Tensor | None = None,
     ) -> Tensor:
         """Encode node inputs.
 
@@ -65,16 +69,22 @@ class RiemannFMNodeEncoder(nn.Module):
             t_emb: Time embeddings.  Shape ``(B, time_dim)`` for a
                 batch-scalar schedule, or ``(B, N, time_dim)`` when the
                 collator assigned per-node mask labels (M_x=0 / M_c=1).
+            node_pe: Random-walk positional encoding, shape ``(B, N, pe_dim)``.
+                Required iff ``pe_dim > 0``.
 
         Returns:
             Node hidden states, shape ``(B, N, node_dim)``.
         """
-        # Concatenate inputs: [x_i || c_i || m_i]
+        # Concatenate inputs: [x_i || c_i || pe_i || m_i]
         mask_float = node_mask.unsqueeze(-1).float()  # (B, N, 1)
-        features = [x, mask_float]
+        features: list[Tensor] = [x]
         if node_text.shape[-1] > 0:
-            features.insert(1, node_text)
-        cat = torch.cat(features, dim=-1)  # (B, N, D + d_c + 1)
+            features.append(node_text)
+        if self.pe_dim > 0:
+            assert node_pe is not None, "pe_dim>0 requires node_pe"
+            features.append(node_pe.to(x.dtype))
+        features.append(mask_float)
+        cat = torch.cat(features, dim=-1)  # (B, N, D + d_c + pe_dim + 1)
 
         h: Tensor = self.mlp(cat)  # (B, N, node_dim)
         # Add time conditioning.  Broadcast along N when scalar per batch;

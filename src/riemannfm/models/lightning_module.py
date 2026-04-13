@@ -252,6 +252,7 @@ class RiemannFMPretrainModule(L.LightningModule):
             node_text=node_text,
             node_mask=node_mask,
             C_R=self.C_R,
+            node_pe=batch.get("node_pe"),
         )
 
         # 4. Compute loss (fp32 for manifold norms; cast only what needs it).

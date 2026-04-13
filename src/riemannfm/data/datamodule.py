@@ -62,6 +62,7 @@ class RiemannFMDataModule(LightningDataModule):
         batch_size: int = 64,
         mask_ratio_c: float = 0.0,
         mask_ratio_x: float = 0.0,
+        rwpe_k: int = 0,
         **kwargs: Any,
     ):
         super().__init__()
@@ -77,6 +78,7 @@ class RiemannFMDataModule(LightningDataModule):
         self.batch_size = batch_size
         self.mask_ratio_c = mask_ratio_c
         self.mask_ratio_x = mask_ratio_x
+        self.rwpe_k = rwpe_k
         self._train_dataset: RiemannFMKGDataset | None = None
         self._val_dataset: RiemannFMKGDataset | None = None
         self._test_dataset: RiemannFMKGDataset | None = None
@@ -196,6 +198,7 @@ class RiemannFMDataModule(LightningDataModule):
             num_edge_types=self._num_edge_types,
             mask_ratio_c=mask_ratio_c if mask_ratio_c is not None else self.mask_ratio_c,
             mask_ratio_x=mask_ratio_x if mask_ratio_x is not None else self.mask_ratio_x,
+            rwpe_k=self.rwpe_k,
         )
 
     def train_dataloader(self) -> DataLoader:
