@@ -36,7 +36,9 @@ class FlowMatchingSample:
         u_t: Vector field target (tangent at x_t), shape ``(B, N, D)``.
         E_t: Interpolated edge types, shape ``(B, N, N, K)``.
         E_1: Target edge types (data), shape ``(B, N, N, K)``.
-        t: Time steps, shape ``(B,)``.
+        t: Time steps.  Shape ``(B,)`` when no per-node override is
+            supplied, or ``(B, N)`` when the collator assigned per-node
+            mask labels (M_x=0 / M_c=1) through ``t_node_override``.
         node_mask: Bool mask, shape ``(B, N)``.
     """
 
@@ -121,17 +123,26 @@ class RiemannFMJointFlow:
         E_1: Tensor,
         node_mask: Tensor,
         generator: torch.Generator | None = None,
+        t_node_override: Tensor | None = None,
     ) -> FlowMatchingSample:
         """Generate a flow matching training sample.
 
         Given data points (x_1, E_1), samples noise, time, and computes
         the interpolated state and vector field target.
 
+        When ``t_node_override`` is provided (from the collator's masking
+        pipeline), per-node time labels replace the batch-level scalar for
+        continuous interpolation: M_x positions are forced to ``t=0`` and
+        M_c positions to ``t=1``.  Discrete (edge) flow continues to use
+        the batch-level scalar because edges span node pairs.
+
         Args:
             x_1: Data manifold coordinates, shape ``(B, N, D)``.
             E_1: Data edge types, shape ``(B, N, N, K)``.
             node_mask: Bool mask, shape ``(B, N)``.
             generator: Optional RNG.
+            t_node_override: Optional per-node time, shape ``(B, N)``.
+                ``NaN`` entries are filled with the sampled batch-``t``.
 
         Returns:
             FlowMatchingSample with all training tensors.
@@ -140,13 +151,24 @@ class RiemannFMJointFlow:
         device = x_1.device
         dtype = x_1.dtype
 
-        # Sample time.
-        t = sample_time(
+        # Sample batch-level time (used for discrete flow and as the
+        # fill value for per-node NaN sentinels).
+        t_batch = sample_time(
             B, device=device, dtype=dtype, generator=generator,
             distribution=self.time_distribution,
             logit_normal_mu=self.logit_normal_mu,
             logit_normal_sigma=self.logit_normal_sigma,
         )
+
+        # Construct the continuous-flow time tensor.  Per-node when the
+        # collator supplied mask labels; otherwise the batch scalar.
+        if t_node_override is not None:
+            fill = t_batch.unsqueeze(-1).expand_as(t_node_override)
+            t_cont = torch.where(
+                torch.isnan(t_node_override), fill, t_node_override.to(dtype),
+            )
+        else:
+            t_cont = t_batch
 
         # Continuous flow.
         if self.disable_continuous:
@@ -158,12 +180,13 @@ class RiemannFMJointFlow:
                 device=device, dtype=dtype, generator=generator,
                 radius_h=self.radius_h, sigma_e=self.sigma_e,
             )
-            x_t = geodesic_interpolation(self.manifold, x_0, x_1, t)
+            x_t = geodesic_interpolation(self.manifold, x_0, x_1, t_cont)
             u_t = vector_field_target(
-                self.manifold, x_t, x_1, t, t_max=self.t_max,
+                self.manifold, x_t, x_1, t_cont, t_max=self.t_max,
             )
 
-        # Discrete flow.
+        # Discrete flow uses the batch-level scalar — edges are per-pair,
+        # not per-node, so per-node masking does not apply to them.
         if self.disable_discrete:
             E_t = E_1.clone()
         else:
@@ -171,13 +194,13 @@ class RiemannFMJointFlow:
                 E_1, avg_edge_density=self.avg_edge_density,
                 rho_k=self.rho_k, generator=generator,
             )
-            E_t = discrete_interpolation(E_0, E_1, t, generator=generator)
+            E_t = discrete_interpolation(E_0, E_1, t_batch, generator=generator)
 
         return FlowMatchingSample(
             x_t=x_t,
             u_t=u_t,
             E_t=E_t,
             E_1=E_1,
-            t=t,
+            t=t_cont,
             node_mask=node_mask,
         )

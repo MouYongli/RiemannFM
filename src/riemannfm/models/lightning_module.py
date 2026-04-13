@@ -55,6 +55,7 @@ class RiemannFMPretrainModule(L.LightningModule):
         flow: RiemannFMJointFlow,
         loss_fn: RiemannFMCombinedLoss,
         num_entities: int,
+        input_text_dim: int,
         C_R: Tensor | None = None,
         lr: float = 1e-4,
         curvature_lr: float = 1e-5,
@@ -93,12 +94,13 @@ class RiemannFMPretrainModule(L.LightningModule):
             origin = manifold.origin(device=self.entity_emb.weight.device)  # (D,)
             self.entity_emb.weight.add_(origin)
 
-        # Learnable [MASK] token for masked node prediction.
-        # Same dimension as entity embeddings (ambient_dim D).
-        self.mask_emb = nn.Parameter(torch.zeros(D))
-        nn.init.normal_(self.mask_emb, std=0.01)
-        with torch.no_grad():
-            self.mask_emb.add_(origin)
+        # Learnable [MASK] text token for MASK_C nodes (L_mask_c input).
+        # Lives in text-embedding space (d_c), not manifold space:
+        # M_c nodes keep their real geometric coordinates (t=1 in flow)
+        # and only have their text replaced by this shared vector.
+        self.mask_emb = nn.Parameter(torch.zeros(max(input_text_dim, 1)))
+        if input_text_dim > 0:
+            nn.init.normal_(self.mask_emb, std=0.02)
 
     def _get_manifold_coords(
         self, node_ids: Tensor, node_mask: Tensor,
@@ -127,73 +129,41 @@ class RiemannFMPretrainModule(L.LightningModule):
 
         return x_1
 
-    def _apply_mask_replacement(
-        self, x_1: Tensor, node_text: Tensor, mask_type: Tensor,
-    ) -> tuple[Tensor, Tensor, Tensor]:
-        """Apply BERT-style 80/10/10 replacement for masked nodes.
+    def _apply_mask_semantics(
+        self, node_text: Tensor, mask_type: Tensor,
+    ) -> tuple[Tensor, Tensor]:
+        """Apply text-side masking for MASK_C nodes (L_mask_c input).
 
-        For masked nodes (mask_type == MASK_MASKED):
-          - 80%: replace entity embedding with learnable [MASK] token
-          - 10%: replace with a random entity's embedding
-          - 10%: keep unchanged (still a prediction target)
-        Text embeddings are zeroed for ALL masked nodes (no text leakage).
+        The collator already labelled each real node as REAL, MASK_C, or
+        MASK_X (disjoint).  Here we only touch the text stream:
+
+          - ``MASK_C`` nodes: c_i ← self.mask_emb (a single learnable
+            vector).  The geometry is kept (collator sets ``t_node=1``
+            so ``x_t = x_1`` for these nodes).
+          - ``MASK_X`` nodes: c_i stays real.  Their geometry is masked
+            by the flow module (``t_node=0`` forces ``x_t = x_0``).
 
         Args:
-            x_1: Original manifold coordinates, shape ``(B, N, D)``.
             node_text: Text embeddings, shape ``(B, N, d_c)``.
-            mask_type: Node type labels, shape ``(B, N)``.
+            mask_type: Node partition labels, shape ``(B, N)``.
 
         Returns:
-            Tuple of (x_1_masked, node_text_masked, true_text_emb).
-            true_text_emb holds the original text embeddings for L_mask
-            targets.  Text embeddings are used instead of manifold
-            coordinates because entity embeddings cluster near the
-            manifold origin (cos-sim > 0.998), making in-batch
-            contrastive L_mask degenerate.
+            ``(node_text_masked, true_text_emb)`` where ``true_text_emb``
+            is the pre-masking clone used as the L_mask_c target.
         """
-        from riemannfm.data.collator import MASK_MASKED
+        from riemannfm.data.collator import MASK_C
 
-        # Save original text embeddings as L_mask prediction targets.
-        # Using text (cos-sim ~0.20) instead of manifold coords (cos-sim ~1.0).
         true_text_emb = node_text.detach().clone()
 
-        is_masked = mask_type == MASK_MASKED  # (B, N)
-        if not is_masked.any():
-            return x_1, node_text, true_text_emb
+        is_mc = mask_type == MASK_C
+        if not is_mc.any():
+            return node_text, true_text_emb
 
-        # Draw per-node random for 80/10/10 split.
-        rand = torch.rand_like(mask_type, dtype=x_1.dtype)
-        replace_mask = is_masked & (rand < 0.8)       # → [MASK] token
-        random_mask = is_masked & (rand >= 0.8) & (rand < 0.9)  # → random entity
-        # remaining 10%: keep unchanged
-
-        x_1 = x_1.clone()
-
-        # 80% → learnable [MASK] embedding projected onto manifold.
-        if replace_mask.any():
-            with torch.amp.autocast(device_type=self.device.type, enabled=False):
-                mask_coord = self.manifold.proj_manifold(
-                    self.mask_emb.float(),
-                ).to(x_1.dtype)
-            x_1[replace_mask] = mask_coord
-
-        # 10% → random entity embedding.
-        if random_mask.any():
-            n_random = int(random_mask.sum().item())
-            rand_ids = torch.randint(
-                0, self.entity_emb.num_embeddings, (n_random,),
-                device=x_1.device,
-            )
-            rand_emb = self.entity_emb(rand_ids)
-            with torch.amp.autocast(device_type=self.device.type, enabled=False):
-                rand_coord = self.manifold.proj_manifold(rand_emb.float())
-            x_1[random_mask] = rand_coord.to(x_1.dtype)
-
-        # Zero text for ALL masked nodes (prevent text leakage).
         node_text = node_text.clone()
-        node_text[is_masked] = 0.0
-
-        return x_1, node_text, true_text_emb
+        mask_vec = self.mask_emb.to(node_text.dtype)
+        # Broadcast a single learnable vector over all M_c positions.
+        node_text[is_mc] = mask_vec
+        return node_text, true_text_emb
 
     def _shared_step(
         self, batch: dict[str, Any], t_override: Tensor | None = None,
@@ -213,23 +183,30 @@ class RiemannFMPretrainModule(L.LightningModule):
         node_mask = batch["node_mask"]   # (B, N)
         node_ids = batch["node_ids"]     # (B, N)
         mask_type = batch.get("mask_type")  # (B, N) or None
+        t_node = batch.get("t_node")     # (B, N) float32 or None
 
         # 1. Get data manifold coordinates from entity embeddings.
         x_1 = self._get_manifold_coords(node_ids, node_mask)
 
-        # 1b. Apply masked node replacement (BERT 80/10/10).
+        # 1b. Apply M_c text replacement (collator already labelled nodes).
+        #     M_x geometry masking happens inside flow via t_node=0.
         true_text_emb = None
-        if mask_type is not None and self.loss_fn.nu_mask > 0:
-            x_1, node_text, true_text_emb = self._apply_mask_replacement(
-                x_1, node_text, mask_type,
+        has_mask_loss = self.loss_fn.nu_mask_c > 0 or self.loss_fn.nu_mask_x > 0
+        if mask_type is not None and has_mask_loss:
+            node_text, true_text_emb = self._apply_mask_semantics(
+                node_text, mask_type,
             )
 
         # 2. Flow matching: sample noise, time, interpolate.
         #    Force fp32 — geodesic interpolation is numerically sensitive.
         with torch.amp.autocast(device_type=self.device.type, enabled=False):
-            sample = self.flow.sample(x_1.float(), E_1.float(), node_mask)
+            sample = self.flow.sample(
+                x_1.float(), E_1.float(), node_mask,
+                t_node_override=t_node,
+            )
 
-        # Override t if provided (for multi-t validation).
+        # Override t if provided (for multi-t validation).  Respects the
+        # per-node mask labels: M_x stays at t=0, M_c stays at t=1.
         if t_override is not None:
             from riemannfm.flow.continuous_flow import (
                 geodesic_interpolation,
@@ -248,17 +225,24 @@ class RiemannFMPretrainModule(L.LightningModule):
                 rho_k=self.flow.rho_k,
             )
 
+            # Expand scalar t_override to (B, N) and overlay mask labels.
+            if t_node is not None:
+                fill = t_override.unsqueeze(-1).expand_as(t_node)
+                t_cont = torch.where(torch.isnan(t_node), fill, t_node.to(fill.dtype))
+            else:
+                t_cont = t_override
+
             with torch.amp.autocast(device_type=self.device.type, enabled=False):
                 sample.x_t = geodesic_interpolation(
-                    self.manifold, x_0.float(), x_1.float(), t_override,
+                    self.manifold, x_0.float(), x_1.float(), t_cont,
                 ).to(x_1.dtype)
                 sample.u_t = vector_field_target(
                     self.manifold, sample.x_t.float(), x_1.float(),
-                    t_override, t_max=self.flow.t_max,
+                    t_cont, t_max=self.flow.t_max,
                 ).to(x_1.dtype)
 
             sample.E_t = discrete_interpolation(E_0, E_1, t_override)
-            sample.t = t_override
+            sample.t = t_cont
 
         # 3. Forward pass through model.
         V_hat, P_hat, h = self.model(
@@ -285,7 +269,7 @@ class RiemannFMPretrainModule(L.LightningModule):
                 h=h if h.dtype == _f32 else h.float(),
                 node_text=node_text,
                 mask_type=mask_type,
-                true_entity_emb=true_text_emb,
+                true_text_emb=true_text_emb,
             )
 
         return total_loss, metrics
@@ -310,7 +294,8 @@ class RiemannFMPretrainModule(L.LightningModule):
         self.log("train/L_cont", metrics["loss/cont"], sync_dist=True, batch_size=B, on_step=True, on_epoch=False)
         self.log("train/L_disc", metrics["loss/disc"], sync_dist=True, batch_size=B, on_step=True, on_epoch=False)
         self.log("train/L_align", metrics["loss/align"], sync_dist=True, batch_size=B, on_step=True, on_epoch=False)
-        self.log("train/L_mask", metrics["loss/mask"], sync_dist=True, batch_size=B, on_step=True, on_epoch=False)
+        self.log("train/L_mask_c", metrics["loss/mask_c"], sync_dist=True, batch_size=B, on_step=True, on_epoch=False)
+        self.log("train/L_mask_x", metrics["loss/mask_x"], sync_dist=True, batch_size=B, on_step=True, on_epoch=False)
 
         # Log curvatures.
         if self.manifold.hyperbolic is not None:
@@ -348,6 +333,9 @@ class RiemannFMPretrainModule(L.LightningModule):
         total_loss = torch.tensor(0.0, device=self.device)
         total_cont = torch.tensor(0.0, device=self.device)
         total_disc = torch.tensor(0.0, device=self.device)
+        total_align = torch.tensor(0.0, device=self.device)
+        total_mask_c = torch.tensor(0.0, device=self.device)
+        total_mask_x = torch.tensor(0.0, device=self.device)
 
         for t_val in _VAL_T_VALUES:
             t_fixed = torch.full((B,), t_val, device=self.device)
@@ -355,6 +343,9 @@ class RiemannFMPretrainModule(L.LightningModule):
             total_loss = total_loss + loss
             total_cont = total_cont + metrics["loss/cont"]
             total_disc = total_disc + metrics["loss/disc"]
+            total_align = total_align + metrics["loss/align"]
+            total_mask_c = total_mask_c + metrics["loss/mask_c"]
+            total_mask_x = total_mask_x + metrics["loss/mask_x"]
 
         n = len(_VAL_T_VALUES)
         avg_loss = total_loss / n
@@ -362,6 +353,9 @@ class RiemannFMPretrainModule(L.LightningModule):
         self.log("val/loss", avg_loss, prog_bar=True, sync_dist=True, batch_size=B)
         self.log("val/L_cont", total_cont / n, sync_dist=True, batch_size=B)
         self.log("val/L_disc", total_disc / n, sync_dist=True, batch_size=B)
+        self.log("val/L_align", total_align / n, sync_dist=True, batch_size=B)
+        self.log("val/L_mask_c", total_mask_c / n, sync_dist=True, batch_size=B)
+        self.log("val/L_mask_x", total_mask_x / n, sync_dist=True, batch_size=B)
 
         return avg_loss
 
@@ -519,11 +513,12 @@ class RiemannFMPretrainModule(L.LightningModule):
             manifold=manifold,
             lambda_disc=training_cfg.lambda_disc,
             mu_align=training_cfg.mu_align,
-            nu_mask=float(getattr(training_cfg, "nu_mask", 0.0)),
+            nu_mask_c=float(getattr(training_cfg, "nu_mask_c", 0.0)),
+            nu_mask_x=float(getattr(training_cfg, "nu_mask_x", 0.0)),
             neg_ratio=float(getattr(training_cfg, "neg_ratio", 1.0)),
             temperature=training_cfg.temperature,
-            mask_temperature=float(
-                getattr(training_cfg, "mask_temperature", 0.07),
+            mask_c_temperature=float(
+                getattr(training_cfg, "mask_c_temperature", 0.07),
             ),
             input_text_dim=input_text_dim,
             node_dim=model_cfg.node_dim,
@@ -537,6 +532,7 @@ class RiemannFMPretrainModule(L.LightningModule):
             flow=flow,
             loss_fn=loss_fn,
             num_entities=num_entities,
+            input_text_dim=input_text_dim,
             C_R=C_R,
             lr=training_cfg.lr,
             curvature_lr=training_cfg.curvature_lr,

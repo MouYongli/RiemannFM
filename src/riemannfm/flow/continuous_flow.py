@@ -32,17 +32,21 @@ def geodesic_interpolation(
         manifold: Product manifold.
         x_0: Noise samples, shape ``(B, N, D)``.
         x_1: Data samples, shape ``(B, N, D)``.
-        t: Time steps, shape ``(B,)`` or ``(B, 1)`` or ``(B, 1, 1)``.
-            Broadcast to match spatial dims.
+        t: Time steps.  Accepts:
+            - ``(B,)``            — scalar per batch (classic flow).
+            - ``(B, N)``          — per-node time (used for M_x/M_c mask labels).
+            - ``(B, 1)`` / ``(B, 1, 1)`` — manual broadcast.
 
     Returns:
         Interpolated points on the manifold, shape ``(B, N, D)``.
     """
-    # Ensure t has shape (B, 1, 1) for broadcasting with (B, N, D).
+    # Broadcast t to (B, *, 1) against (B, N, D).
+    # - (B,)   -> (B, 1, 1) broadcasts identically across N.
+    # - (B, N) -> (B, N, 1) gives per-node time.
     if t.dim() == 1:
-        t = t.unsqueeze(-1).unsqueeze(-1)  # (B, 1, 1)
+        t = t.unsqueeze(-1).unsqueeze(-1)
     elif t.dim() == 2:
-        t = t.unsqueeze(-1)  # (B, 1, 1)
+        t = t.unsqueeze(-1)
 
     # Log map: direction from x_0 to x_1 in tangent space at x_0.
     v = manifold.log_map(x_0, x_1)  # (B, N, D)
@@ -69,13 +73,14 @@ def vector_field_target(
         manifold: Product manifold.
         x_t: Interpolated points, shape ``(B, N, D)``.
         x_1: Data points, shape ``(B, N, D)``.
-        t: Time steps, shape ``(B,)`` or ``(B, 1)`` or ``(B, 1, 1)``.
+        t: Time steps.  Accepts ``(B,)`` (scalar per batch) or ``(B, N)``
+            (per-node; e.g. M_x nodes forced to t=0).
         t_max: Maximum time value to clamp at (avoids 1/(1-1) singularity).
 
     Returns:
         Vector field target (tangent vectors at x_t), shape ``(B, N, D)``.
     """
-    # Ensure t has shape (B, 1, 1) for broadcasting.
+    # Broadcast t to (B, *, 1) against (B, N, D) — supports per-node time.
     if t.dim() == 1:
         t = t.unsqueeze(-1).unsqueeze(-1)
     elif t.dim() == 2:

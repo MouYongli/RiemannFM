@@ -62,7 +62,9 @@ class RiemannFMNodeEncoder(nn.Module):
             x: Manifold coordinates, shape ``(B, N, D)``.
             node_text: Text embeddings, shape ``(B, N, d_c)``.
             node_mask: Bool mask, shape ``(B, N)``.
-            t_emb: Time embeddings, shape ``(B, time_dim)``.
+            t_emb: Time embeddings.  Shape ``(B, time_dim)`` for a
+                batch-scalar schedule, or ``(B, N, time_dim)`` when the
+                collator assigned per-node mask labels (M_x=0 / M_c=1).
 
         Returns:
             Node hidden states, shape ``(B, N, node_dim)``.
@@ -75,8 +77,12 @@ class RiemannFMNodeEncoder(nn.Module):
         cat = torch.cat(features, dim=-1)  # (B, N, D + d_c + 1)
 
         h: Tensor = self.mlp(cat)  # (B, N, node_dim)
-        # Add time conditioning (broadcast over N).
-        h = h + self.time_proj(t_emb).unsqueeze(1)  # (B, N, node_dim)
+        # Add time conditioning.  Broadcast along N when scalar per batch;
+        # use per-node projection when the embedding already carries N.
+        t_proj = self.time_proj(t_emb)
+        if t_proj.dim() == 2:
+            t_proj = t_proj.unsqueeze(1)  # (B, 1, node_dim)
+        h = h + t_proj
         return h
 
 

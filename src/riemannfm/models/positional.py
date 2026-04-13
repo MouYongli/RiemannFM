@@ -49,18 +49,23 @@ class RiemannFMTimeEmbedding(nn.Module):
         )
 
     def forward(self, t: Tensor) -> Tensor:
-        """Embed scalar time steps.
+        """Embed time steps of arbitrary leading shape.
 
         Args:
-            t: Time steps, shape ``(B,)`` or ``(B, 1)``.
+            t: Time steps.  Accepts any shape; each element is embedded
+                independently.  Typical usage:
+                  - ``(B,)`` — scalar per batch (classic flow).
+                  - ``(B, N)`` — per-node time (M_x/M_c labels forced to
+                    0 or 1 by the collator).
 
         Returns:
-            Time embeddings, shape ``(B, dim)``.
+            Time embeddings with shape ``t.shape + (dim,)`` — e.g. ``(B, dim)``
+            for scalar input, ``(B, N, dim)`` for per-node input.
         """
-        t = t.view(-1, 1)  # (B, 1)
-        # (B, half) for sin and cos
+        lead_shape = t.shape
+        t_flat = t.reshape(-1, 1)  # (*, 1)
         freq: Tensor = self.freq  # type: ignore[assignment]
-        angles = t * freq  # broadcast: (B, 1) * (half,) -> (B, half)
-        sinusoidal = torch.cat([angles.sin(), angles.cos()], dim=-1)  # (B, dim)
-        result: Tensor = self.mlp(sinusoidal)
-        return result
+        angles = t_flat * freq
+        sinusoidal = torch.cat([angles.sin(), angles.cos()], dim=-1)  # (*, dim)
+        emb: Tensor = self.mlp(sinusoidal)
+        return emb.reshape(*lead_shape, self.dim)

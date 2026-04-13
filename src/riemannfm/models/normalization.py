@@ -49,7 +49,9 @@ class RiemannFMATHNorm(nn.Module):
 
         Args:
             x: Input features, shape ``(B, N, dim)``.
-            t_emb: Time embeddings, shape ``(B, time_dim)``.
+            t_emb: Time embeddings.  Shape ``(B, time_dim)`` for a
+                batch-scalar schedule, or ``(B, N, time_dim)`` for
+                per-node time (e.g. M_x/M_c labels from the collator).
             node_mask: Unused (kept for interface compatibility).
 
         Returns:
@@ -58,11 +60,13 @@ class RiemannFMATHNorm(nn.Module):
         # 1. Layer-normalize.
         x_norm = self.norm(x)
 
-        # 2. Time-conditioned affine.
-        gamma_beta = self.adaLN(t_emb)  # (B, 2*dim)
-        gamma, beta = gamma_beta.chunk(2, dim=-1)  # each (B, dim)
-        gamma = gamma.unsqueeze(1)  # (B, 1, dim)
-        beta = beta.unsqueeze(1)  # (B, 1, dim)
+        # 2. Time-conditioned affine.  Predict (gamma, beta) per-batch
+        #    when t_emb is (B, time_dim); per-node when (B, N, time_dim).
+        gamma_beta = self.adaLN(t_emb)
+        gamma, beta = gamma_beta.chunk(2, dim=-1)
+        if gamma.dim() == 2:
+            gamma = gamma.unsqueeze(1)  # (B, 1, dim)
+            beta = beta.unsqueeze(1)
 
         result: Tensor = gamma * x_norm + beta
         return result
