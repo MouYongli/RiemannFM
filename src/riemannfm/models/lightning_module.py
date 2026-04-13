@@ -65,6 +65,7 @@ class RiemannFMPretrainModule(L.LightningModule):
         max_steps: int = 500_000,
         max_grad_norm: float = 1.0,
         use_riemannian_optim: bool = True,
+        lr_min_ratio: float = 0.0,
         **kwargs: Any,
     ) -> None:
         super().__init__()
@@ -430,6 +431,7 @@ class RiemannFMPretrainModule(L.LightningModule):
         use_riemannian_optim: bool = self.hparams["use_riemannian_optim"]
         warmup: int = self.hparams["warmup_steps"]
         total_steps: int = self.hparams["max_steps"]
+        min_ratio: float = float(self.hparams.get("lr_min_ratio", 0.0))
 
         optimizer = build_optimizer(
             model=self,
@@ -446,12 +448,14 @@ class RiemannFMPretrainModule(L.LightningModule):
             if step < warmup:
                 return step / max(warmup, 1)
             progress = (step - warmup) / max(total_steps - warmup, 1)
-            return 0.5 * (1.0 + math.cos(math.pi * progress))
+            cos_term = 0.5 * (1.0 + math.cos(math.pi * progress))
+            return min_ratio + (1.0 - min_ratio) * cos_term
 
         def cosine_only(step: int) -> float:
             """Cosine annealing without warmup (pg2 — alignment)."""
             progress = step / max(total_steps, 1)
-            return 0.5 * (1.0 + math.cos(math.pi * progress))
+            cos_term = 0.5 * (1.0 + math.cos(math.pi * progress))
+            return min_ratio + (1.0 - min_ratio) * cos_term
 
         # Per-group lambdas: pg0, pg1 get warmup; pg2 skips warmup.
         scheduler = torch.optim.lr_scheduler.LambdaLR(
@@ -546,4 +550,5 @@ class RiemannFMPretrainModule(L.LightningModule):
             max_steps=max_steps,
             max_grad_norm=training_cfg.max_grad_norm,
             use_riemannian_optim=training_cfg.use_riemannian_optim,
+            lr_min_ratio=float(getattr(training_cfg, "lr_min_ratio", 0.0)),
         )

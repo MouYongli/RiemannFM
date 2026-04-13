@@ -13,6 +13,9 @@ weight_decay: 0.01
 warmup_steps: 10000
 max_grad_norm: 1.0
 mixed_precision: bf16
+# Cosine decay floor: final LR = peak × lr_min_ratio (0 = decay to zero,
+# 0.1 keeps 10% of peak so the tail of training retains learning signal).
+lr_min_ratio: 0.0
 
 # Loss weights
 lambda_disc: 10.0
