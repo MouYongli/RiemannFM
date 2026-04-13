@@ -494,9 +494,55 @@ where:
 $$\mathcal{L}_{\mathrm{align}}^{g \to c} = -\frac{1}{|\mathcal{B}|}\sum_{i \in \mathcal{B}} \log \frac{\exp(\mathrm{sim}(\mathbf{g}_i, \mathbf{c}_i) / \tau)}{\sum_{j \in \mathcal{B}} \exp(\mathrm{sim}(\mathbf{g}_i, \mathbf{c}_j) / \tau)}$$
 $\mathcal{L}_{\mathrm{align}}^{c \to g}$ is defined symmetrically. $\tau > 0$ is the temperature hyperparameter.
 
+**Definition 6.9a (Node Three-Way Partition).** During pretraining, for each subgraph the real-node index set $\mathcal{V}_{\mathrm{real}} \subseteq [N]$ is split into three disjoint subsets at ratios $(p_c, p_x)$:
+
+$$\mathcal{V}_{\mathrm{real}} = \mathcal{U} \sqcup \mathcal{M}_c \sqcup \mathcal{M}_x$$
+
+with $|\mathcal{M}_c| \approx p_c |\mathcal{V}_{\mathrm{real}}|$ (**semantic-mask** subset), $|\mathcal{M}_x| \approx p_x |\mathcal{V}_{\mathrm{real}}|$ (**geometric-mask** subset), and $|\mathcal{U}| \geq 1$ (at least one REAL anchor).  Virtual nodes form $\mathcal{V}_{\mathrm{virt}} = [N] \setminus \mathcal{V}_{\mathrm{real}}$.
+
+**Per-node state**:
+
+| Subset | Geometry $\mathbf{x}_{t,i}$ | Text $\bar{\mathbf{c}}_i$ | Time label $t_i$ | Contributes to |
+|------|-----|-----|-----|-----|
+| $\mathcal{U}$ (REAL) | Geodesic interpolation (flow) | Real $\bar{\mathbf{c}}_i$ | Subgraph batch-$t$ | $\mathcal{L}_{\mathrm{cont}}$, $\mathcal{L}_{\mathrm{align}}$ |
+| $\mathcal{M}_c$ (semantic) | $\mathbf{x}_{1,i}$ held fixed | Learnable $\mathbf{e}_{\mathrm{mask}} \in \mathbb{R}^{d_c}$ | $t_i = 1$ | $\mathcal{L}_{\mathrm{mask}\_c}$ |
+| $\mathcal{M}_x$ (geometric) | $\mathbf{x}_{0,i}$ (pure noise) | Real $\bar{\mathbf{c}}_i$ | $t_i = 0$ | $\mathcal{L}_{\mathrm{mask}\_x}$ |
+
+Each masked node loses **one** modality while the other serves as an anchor, preventing collapse of the backbone representation $\mathbf{h}_i$.
+
+**Definition 6.10a (Semantic Mask Identification Loss $\mathcal{L}_{\mathrm{mask}\_c}$).** For $i \in \mathcal{M}_c$, geometry is preserved ($t_i = 1 \Rightarrow \mathbf{x}_{t,i} = \mathbf{x}_{1,i}$) and text is replaced by a single learnable vector $\mathbf{e}_{\mathrm{mask}} \in \mathbb{R}^{d_c}$.  Using the original text $\bar{\mathbf{c}}_i$ as the contrastive target, the projection head $\mathrm{MLP}_{\mathrm{mask}\_c}: \mathbb{R}^{d_v} \to \mathbb{R}^{d_c}$ computes:
+
+$$\mathbf{p}_i = \mathrm{MLP}_{\mathrm{mask}\_c}(\mathbf{h}_i) \in \mathbb{R}^{d_c}$$
+
+Symmetric InfoNCE over in-batch $\mathcal{M}_c$ nodes:
+
+$$\mathcal{L}_{\mathrm{mask}\_c} = \frac{1}{2}\!\left(\mathcal{L}_{\mathrm{mask}\_c}^{p \to c} + \mathcal{L}_{\mathrm{mask}\_c}^{c \to p}\right), \quad \mathcal{L}_{\mathrm{mask}\_c}^{p \to c} = -\frac{1}{|\mathcal{M}_c|}\sum_{i \in \mathcal{M}_c} \log \frac{\exp(\mathrm{sim}(\mathbf{p}_i, \bar{\mathbf{c}}_i)/\tau_{\mathrm{mask}\_c})}{\sum_{j \in \mathcal{M}_c} \exp(\mathrm{sim}(\mathbf{p}_i, \bar{\mathbf{c}}_j)/\tau_{\mathrm{mask}\_c})}$$
+
+Set to $0$ when $|\mathcal{M}_c| < 2$.  Mirrors the T2G / GAD downstream direction (identify entity from its manifold position).
+
+**Definition 6.10b (Geometric Mask Reconstruction Loss $\mathcal{L}_{\mathrm{mask}\_x}$).** For $i \in \mathcal{M}_x$, $t_i = 0$ forces $\mathbf{x}_{t,i} = \mathbf{x}_{0,i}$ (pure noise) while the text $\bar{\mathbf{c}}_i$ remains real.  The vector-field target is Definition 6.5 at $t=0$:
+
+$$\mathbf{u}_{0,i} = \log_{\mathbf{x}_{0,i}}(\mathbf{x}_{1,i})$$
+
+The loss reuses the Riemannian tangent-space MSE of Definition 6.7 restricted to $\mathcal{M}_x$:
+
+$$\mathcal{L}_{\mathrm{mask}\_x} = \frac{1}{|\mathcal{M}_x|} \sum_{i \in \mathcal{M}_x} \left\| \hat{\mathbf{v}}_i - \mathbf{u}_{0,i} \right\|^2_{T_{\mathbf{x}_{0,i}}\mathcal{M}}$$
+
+Set to $0$ when $|\mathcal{M}_x| = 0$.  Shares the backbone vector-field output $\hat{\mathbf{V}}$ with $\mathcal{L}_{\mathrm{cont}}$ — no additional prediction head.  Mirrors the KGC $(h, r, ?)$ downstream direction (locate an entity on the manifold given its text).
+
+**Participation rules** (strictly aligned with the partition):
+
+| Loss | $\mathcal{U}$ | $\mathcal{M}_c$ | $\mathcal{M}_x$ | Virtual |
+|------|:---:|:---:|:---:|:---:|
+| $\mathcal{L}_{\mathrm{cont}}$ | ✓ | ✗ ($\mathbf{x}_t$ frozen at $\mathbf{x}_1$) | ✗ (handled by $\mathcal{L}_{\mathrm{mask}\_x}$) | ✗ |
+| $\mathcal{L}_{\mathrm{disc}}$ | ✓ | ✓ | ✓ | ✗ |
+| $\mathcal{L}_{\mathrm{align}}$ | ✓ | ✗ (text replaced) | ✗ ($\mathbf{h}$ quality low) | ✗ |
+| $\mathcal{L}_{\mathrm{mask}\_c}$ | ✗ | ✓ | ✗ | ✗ |
+| $\mathcal{L}_{\mathrm{mask}\_x}$ | ✗ | ✗ | ✓ | ✗ |
+
 **Definition 6.10 (Total Training Loss).**
-$$\mathcal{L} = \mathcal{L}_{\mathrm{cont}} + \lambda\,\mathcal{L}_{\mathrm{disc}} + \mu\,\mathcal{L}_{\mathrm{align}}$$
-where $\lambda, \mu > 0$ are loss weight hyperparameters.
+$$\mathcal{L} = \mathcal{L}_{\mathrm{cont}} + \lambda\,\mathcal{L}_{\mathrm{disc}} + \mu\,\mathcal{L}_{\mathrm{align}} + \nu_c\,\mathcal{L}_{\mathrm{mask}\_c} + \nu_x\,\mathcal{L}_{\mathrm{mask}\_x}$$
+where $\lambda, \mu, \nu_c, \nu_x \geq 0$ are loss weight hyperparameters.  Setting $\nu_c = \nu_x = 0$ recovers the original unmasked objective.
 
 ### 6.5 Training and Inference Algorithms
 
@@ -505,16 +551,18 @@ where $\lambda, \mu > 0$ are loss weight hyperparameters.
 **Input**: Training subgraph $(\mathbf{X}_1, \mathbf{E}_1, \mathbf{C}_{\mathcal{V}}, \mathbf{C}_{\mathcal{R}}, \mathbf{m})$, parameters $\theta$
 **Output**: Loss $\mathcal{L}$
 
-1. Sample $t \sim \mathrm{Uniform}(0, 1 - \epsilon_t)$
-2. For $i \in [N]$: sample $\mathbf{x}_{0,i} \sim p_0^{\mathcal{M}}$ (Definition 6.1)
-3. For $(i, j) \in [N]^2$, $k \in [K]$: sample $\mathbf{E}_{0,ij}^{(k)} \sim \mathrm{Bernoulli}(\rho_k)$ (Definition 6.2)
-4. For $i \in [N]$: $\mathbf{x}_{t,i} = \exp_{\mathbf{x}_{0,i}}(t \cdot \log_{\mathbf{x}_{0,i}}(\mathbf{x}_{1,i}))$ (Definition 6.3)
-5. For $(i, j) \in [N]^2$: sample $z_{ij} \sim \mathrm{Bernoulli}(t)$, $\mathbf{E}_{t,ij} = z_{ij} \mathbf{E}_{1,ij} + (1 - z_{ij}) \mathbf{E}_{0,ij}$ (Definition 6.4)
-6. $(\hat{\mathbf{V}}, \hat{\mathbf{P}}, \mathbf{H}) = f_\theta(\mathbf{X}_t, \mathbf{E}_t, t, \mathbf{C}_{\mathcal{V}}, \mathbf{C}_{\mathcal{R}}, \mathbf{m})$ (Definition 5.1), where $\mathbf{H}$ is the backbone hidden state used for $\mathcal{L}_{\mathrm{align}}$
-7. For $i \in [N]$: $\mathbf{u}_{t,i} = \frac{1}{1-t}\log_{\mathbf{x}_{t,i}}(\mathbf{x}_{1,i})$ (Definition 6.5)
-8. Compute $\mathcal{L} = \mathcal{L}_{\mathrm{cont}} + \lambda\,\mathcal{L}_{\mathrm{disc}} + \mu\,\mathcal{L}_{\mathrm{align}}$ (Definition 6.10)
-9. Riemannian Adam update for $\theta$: standard Adam for Euclidean parameters, Riemannian gradient for curvature parameters
-10. Curvature projection: $\kappa_h \leftarrow \min(\kappa_h, -\epsilon_\kappa)$, $\kappa_s \leftarrow \max(\kappa_s, \epsilon_\kappa)$
+1. Collator emits the node three-way partition $\{\mathcal{U}, \mathcal{M}_c, \mathcal{M}_x\}$ and the per-node time label $t_{\mathrm{node}} \in \mathbb{R}^{B \times N}$ (Definition 6.9a): $0$ on $\mathcal{M}_x$, $1$ on $\mathcal{M}_c$, placeholder on $\mathcal{U}$
+2. Sample the subgraph-level scalar $t \sim \mathrm{Uniform}(0, 1 - \epsilon_t)$ and fill the placeholder positions of $t_{\mathrm{node}}$ via broadcasting
+3. For $i \in \mathcal{M}_c$: replace the input text with $\mathbf{e}_{\mathrm{mask}}$ (geometry retained at $\mathbf{x}_{1,i}$ via $t_i = 1$)
+4. For $i \in [N]$: sample $\mathbf{x}_{0,i} \sim p_0^{\mathcal{M}}$ (Definition 6.1)
+5. For $(i, j) \in [N]^2$, $k \in [K]$: sample $\mathbf{E}_{0,ij}^{(k)} \sim \mathrm{Bernoulli}(\rho_k)$ (Definition 6.2)
+6. For $i \in [N]$: $\mathbf{x}_{t,i} = \exp_{\mathbf{x}_{0,i}}(t_i \cdot \log_{\mathbf{x}_{0,i}}(\mathbf{x}_{1,i}))$ (Definition 6.3, per-node interpolation with $t_{\mathrm{node}}$)
+7. For $(i, j) \in [N]^2$: sample $z_{ij} \sim \mathrm{Bernoulli}(t)$, $\mathbf{E}_{t,ij} = z_{ij} \mathbf{E}_{1,ij} + (1 - z_{ij}) \mathbf{E}_{0,ij}$ (Definition 6.4, edge flow uses the subgraph scalar $t$)
+8. $(\hat{\mathbf{V}}, \hat{\mathbf{P}}, \mathbf{H}) = f_\theta(\mathbf{X}_t, \mathbf{E}_t, t_{\mathrm{node}}, \mathbf{C}_{\mathcal{V}}, \mathbf{C}_{\mathcal{R}}, \mathbf{m})$ (Definition 5.1)
+9. For $i \in [N]$: $\mathbf{u}_{t,i} = \frac{1}{1-t_i}\log_{\mathbf{x}_{t,i}}(\mathbf{x}_{1,i})$ (Definition 6.5)
+10. Compute $\mathcal{L} = \mathcal{L}_{\mathrm{cont}} + \lambda\,\mathcal{L}_{\mathrm{disc}} + \mu\,\mathcal{L}_{\mathrm{align}} + \nu_c\,\mathcal{L}_{\mathrm{mask}\_c} + \nu_x\,\mathcal{L}_{\mathrm{mask}\_x}$ (Definition 6.10)
+11. Riemannian Adam update for $\theta$: standard Adam for Euclidean parameters, Riemannian gradient for curvature parameters
+12. Curvature projection: $\kappa_h \leftarrow \min(\kappa_h, -\epsilon_\kappa)$, $\kappa_s \leftarrow \max(\kappa_s, \epsilon_\kappa)$
 
 where $\epsilon_t > 0$, $\epsilon_\kappa > 0$ are small constants.
 

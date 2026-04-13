@@ -270,18 +270,24 @@ $\theta$ 包含所有可学习参数，含曲率 $\kappa_h, \kappa_s$。
 
 **记号**：$[\mathbf{a} \| \mathbf{b}]$ 表示向量拼接（concatenation）。
 
-**定义 5.2（坐标投影）。** $\pi: \mathcal{M} \to \mathbb{R}^D$：
+**定义 5.2（文本投影）。** 预训练文本编码器的输出维度 $d_c$ 随编码器选择而变化（如 Qwen3-Embedding $d_c = 1024$，SBERT $d_c = 768$）。为解耦模型与文本编码器，引入共享线性投影 $\mathbf{W}_{\mathrm{text}} \in \mathbb{R}^{d_p \times d_c}$ 将文本条件映射到模型内部维度 $d_p$：
+
+$$\bar{\mathbf{C}}_\mathcal{V} = \mathbf{C}_\mathcal{V} \mathbf{W}_{\mathrm{text}}^\top \in \mathbb{R}^{N \times d_p}, \qquad \bar{\mathbf{C}}_\mathcal{R} = \mathbf{C}_\mathcal{R} \mathbf{W}_{\mathrm{text}}^\top \in \mathbb{R}^{K \times d_p}$$
+
+节点文本与关系文本**共享同一投影矩阵**。后续所有公式中 $\bar{\mathbf{c}}_i \in \mathbb{R}^{d_p}$ 和 $\bar{\mathbf{c}}_{r_k} \in \mathbb{R}^{d_p}$ 分别指投影后的节点和关系文本条件向量。
+
+**定义 5.3（坐标投影）。** $\pi: \mathcal{M} \to \mathbb{R}^D$：
 $$\pi(\mathbf{x}) = [\mathbf{x}^{\mathbb{H}} \| \mathbf{x}^{\mathbb{S}} \| \mathbf{x}^{\mathbb{R}}]$$
 
-**定义 5.3（节点初始嵌入）。**
-$$\mathbf{h}_i^{V,(0)} = \mathrm{MLP}_{\mathrm{node}}\!\left([\pi(\mathbf{x}_{t,i}) \| \mathbf{c}_i \| m_i]\right) + \mathbf{W}_{\mathrm{tp}}\,\mathbf{t}_{\mathrm{emb}} \in \mathbb{R}^{d_v}$$
-其中输入维度为 $D + d_c + 1$，$d_v$ 为节点隐藏维度，$\mathbf{W}_{\mathrm{tp}} \in \mathbb{R}^{d_v \times d_v}$ 为时间投影矩阵，$\mathbf{t}_{\mathrm{emb}}$ 为定义 5.5 的时间嵌入。此时间投影与 ATH-Norm（定义 5.9）的逐层时间条件互补：前者在输入层提供全局时间锚点，后者在每层自适应调节归一化参数。
+**定义 5.4（节点初始嵌入）。**
+$$\mathbf{h}_i^{V,(0)} = \mathrm{MLP}_{\mathrm{node}}\!\left([\pi(\mathbf{x}_{t,i}) \| \bar{\mathbf{c}}_i \| m_i]\right) + \mathbf{W}_{\mathrm{tp}}\,\mathbf{t}_{\mathrm{emb}} \in \mathbb{R}^{d_v}$$
+其中输入维度为 $D + d_p + 1$，$d_v$ 为节点隐藏维度，$\mathbf{W}_{\mathrm{tp}} \in \mathbb{R}^{d_v \times d_v}$ 为时间投影矩阵，$\mathbf{t}_{\mathrm{emb}}$ 为定义 5.6 的时间嵌入。此时间投影与 ATH-Norm（定义 5.10）的逐层时间条件互补：前者在输入层提供全局时间锚点，后者在每层自适应调节归一化参数。
 
-**定义 5.4（边初始嵌入）。**
-$$\mathbf{h}_{ij}^{E,(0)} = \mathrm{MLP}_{\mathrm{edge}}\!\left([\mathbf{E}_{t,ij}\mathbf{W}_{\mathrm{rel}} \| \mathbf{E}_{t,ij}\mathbf{C}_\mathcal{R}]\right) \in \mathbb{R}^{d_{e'}}$$
-其中 $\mathbf{W}_{\mathrm{rel}} \in \mathbb{R}^{K \times d_r}$ 为可学习关系嵌入矩阵，$\mathbf{E}_{t,ij}\mathbf{W}_{\mathrm{rel}} \in \mathbb{R}^{d_r}$ 为激活关系类型的嵌入之和，$\mathbf{E}_{t,ij}\mathbf{C}_\mathcal{R} \in \mathbb{R}^{d_c}$ 为激活关系类型的文本嵌入之和。输入维度为 $d_r + d_c$。
+**定义 5.5（边初始嵌入）。**
+$$\mathbf{h}_{ij}^{E,(0)} = \mathrm{MLP}_{\mathrm{edge}}\!\left([\mathbf{E}_{t,ij}\mathbf{W}_{\mathrm{rel}} \| \mathbf{E}_{t,ij}\bar{\mathbf{C}}_\mathcal{R}]\right) \in \mathbb{R}^{d_{e'}}$$
+其中 $\mathbf{W}_{\mathrm{rel}} \in \mathbb{R}^{K \times d_r}$ 为可学习关系嵌入矩阵，$\mathbf{E}_{t,ij}\mathbf{W}_{\mathrm{rel}} \in \mathbb{R}^{d_r}$ 为激活关系类型的嵌入之和，$\mathbf{E}_{t,ij}\bar{\mathbf{C}}_\mathcal{R} \in \mathbb{R}^{d_p}$ 为激活关系类型的投影文本嵌入之和。输入维度为 $d_r + d_p$。
 
-**定义 5.5（时间嵌入）。** 设 $d_t \in \mathbb{Z}_{>0}$ 为偶数，正弦位置编码采用块拼接形式：
+**定义 5.6（时间嵌入）。** 设 $d_t \in \mathbb{Z}_{>0}$ 为偶数，正弦位置编码采用块拼接形式：
 $$\boldsymbol{\psi}(t) = [\sin(\omega_1 t),\, \ldots,\, \sin(\omega_{d_t/2} t),\, \cos(\omega_1 t),\, \ldots,\, \cos(\omega_{d_t/2} t)] \in \mathbb{R}^{d_t}$$
 其中 $\omega_l = 10000^{-2l/d_t}$，$l \in [d_t/2]$。经两层 MLP 投影：
 $$\mathbf{t}_{\mathrm{emb}} = \mathbf{W}_2\,\sigma\!\left(\mathbf{W}_1 \boldsymbol{\psi}(t) + \mathbf{b}_1\right) + \mathbf{b}_2 \in \mathbb{R}^{d_t}$$
@@ -305,13 +311,13 @@ RieFormer 由 $L \in \mathbb{Z}_{>0}$ 个相同结构的块堆叠而成。第 $l
 
 设 $n_h \in \mathbb{Z}_{>0}$ 为注意力头数，$d_{\mathrm{head}} = d_v / n_h$（要求 $n_h \mid d_v$ 且 $2 \mid d_{\mathrm{head}}$）。
 
-**定义 5.6（Manifold RoPE）。** 对第 $s$ 个注意力头（$s \in [n_h]$），频率 $\omega_l^{(s)} = 10000^{-2l/d_{\mathrm{head}}}$，$l \in [d_{\mathrm{head}}/2]$。对节点对 $(i, j)$，定义角度：
+**定义 5.7（Manifold RoPE）。** 对第 $s$ 个注意力头（$s \in [n_h]$），频率 $\omega_l^{(s)} = 10000^{-2l/d_{\mathrm{head}}}$，$l \in [d_{\mathrm{head}}/2]$。对节点对 $(i, j)$，定义角度：
 $$\theta_{ij,l}^{(s)} = \omega_l^{(s)} \cdot d_\mathcal{M}(\mathbf{x}_{t,i}, \mathbf{x}_{t,j})$$
 
 旋转矩阵 $\mathbf{R}(\boldsymbol{\theta}_{ij}^{(s)}) \in \mathbb{R}^{d_{\mathrm{head}} \times d_{\mathrm{head}}}$ 为块对角矩阵，由 $d_{\mathrm{head}}/2$ 个 $2 \times 2$ 旋转块组成：
 $$\mathbf{R}(\boldsymbol{\theta}_{ij}^{(s)}) = \mathrm{diag}\!\left(\begin{pmatrix} \cos\theta_{ij,1}^{(s)} & -\sin\theta_{ij,1}^{(s)} \\ \sin\theta_{ij,1}^{(s)} & \cos\theta_{ij,1}^{(s)} \end{pmatrix}, \ldots, \begin{pmatrix} \cos\theta_{ij,d_{\mathrm{head}}/2}^{(s)} & -\sin\theta_{ij,d_{\mathrm{head}}/2}^{(s)} \\ \sin\theta_{ij,d_{\mathrm{head}}/2}^{(s)} & \cos\theta_{ij,d_{\mathrm{head}}/2}^{(s)} \end{pmatrix}\right)$$
 
-**定义 5.7（Geodesic Kernel）。** 对第 $s$ 个注意力头：
+**定义 5.8（Geodesic Kernel）。** 对第 $s$ 个注意力头：
 $$\kappa^{(s)}(\mathbf{x}_{t,i}, \mathbf{x}_{t,j}) = w_{\mathbb{H}}^{(s)} \kappa_{\mathbb{H}}(\mathbf{x}_{t,i}^{\mathbb{H}}, \mathbf{x}_{t,j}^{\mathbb{H}}) + w_{\mathbb{S}}^{(s)} \kappa_{\mathbb{S}}(\mathbf{x}_{t,i}^{\mathbb{S}}, \mathbf{x}_{t,j}^{\mathbb{S}}) + w_{\mathbb{R}}^{(s)} \kappa_{\mathbb{R}}(\mathbf{x}_{t,i}^{\mathbb{R}}, \mathbf{x}_{t,j}^{\mathbb{R}})$$
 其中：
 - $\kappa_{\mathbb{H}}(\mathbf{a}, \mathbf{b}) = -d_{\mathbb{H}}(\mathbf{a}, \mathbf{b})$
@@ -320,7 +326,7 @@ $$\kappa^{(s)}(\mathbf{x}_{t,i}, \mathbf{x}_{t,j}) = w_{\mathbb{H}}^{(s)} \kappa
 
 $w_{\mathbb{H}}^{(s)}, w_{\mathbb{S}}^{(s)}, w_{\mathbb{R}}^{(s)} \in \mathbb{R}$ 为每头独立的可学习权重。
 
-**定义 5.8（流形感知注意力，Pre-Norm 风格）。** 先对节点嵌入做 ATH-Norm（定义 5.9），再计算注意力：
+**定义 5.9（流形感知注意力，Pre-Norm 风格）。** 先对节点嵌入做 ATH-Norm（定义 5.10），再计算注意力：
 
 $$\bar{\mathbf{h}}_i^{V} = \mathrm{ATH\text{-}Norm}(\mathbf{h}_i^{V,(l-1)},\, \mathbf{t}_{\mathrm{emb}})$$
 
@@ -347,7 +353,7 @@ $$\mathrm{MHA}_i = \mathbf{W}_O [\mathbf{o}_i^{(1)} \| \cdots \| \mathbf{o}_i^{(
 
 边嵌入通过分解注意力独立更新：对边 $(i, j)$，分别聚合头节点 $i$ 的其他出边和尾节点 $j$ 的其他入边的信息。
 
-**定义 5.11（分解边注意力）。** 对边 $(i, j)$：
+**定义 5.12（分解边注意力）。** 对边 $(i, j)$：
 
 头侧聚合（$i$ 的其他出边）：
 $$\mathbf{g}_{ij}^{\mathrm{head}} = \sum_{p \in [N] \setminus \{j\}} \gamma_{ip \to ij}^{\mathrm{head}} \cdot \mathbf{W}_{\mathrm{Ev}}^{\mathrm{head}} \mathbf{h}_{ip}^{E,(l-1)}$$
@@ -369,26 +375,26 @@ $$\tilde{\mathbf{h}}_{ij}^E = \mathbf{h}_{ij}^{E,(l-1)} + \mathrm{MLP}_{\mathrm{
 
 #### 5.3.4 子模块 D：双向交叉交互
 
-**定义 5.12（边→节点聚合）。** 对节点 $i$，聚合其相关边嵌入：
+**定义 5.13（边→节点聚合）。** 对节点 $i$，聚合其相关边嵌入：
 $$\hat{\mathbf{h}}_i^V = \bar{\mathbf{h}}_i^V + \mathrm{MLP}_{E \to V}\!\left(\sum_{j=1}^N \alpha_{ij}^{E \to V} \cdot \mathbf{W}_{\mathrm{Ev2n}} \bar{\mathbf{h}}_{ij}^E\right)$$
 其中 $\mathbf{W}_{\mathrm{Ev2n}} \in \mathbb{R}^{d_v \times d_{e'}}$，$\mathrm{MLP}_{E \to V}: \mathbb{R}^{d_v} \to \mathbb{R}^{d_v}$。注意力权重：
 $$\alpha_{ij}^{E \to V} = \mathrm{softmax}_j\!\left(\frac{(\mathbf{W}_Q^{E \to V} \bar{\mathbf{h}}_i^V)^\top (\mathbf{W}_K^{E \to V} \bar{\mathbf{h}}_{ij}^E)}{\sqrt{d_v}}\right)$$
 其中 $\mathbf{W}_Q^{E \to V} \in \mathbb{R}^{d_v \times d_v}$，$\mathbf{W}_K^{E \to V} \in \mathbb{R}^{d_v \times d_{e'}}$。
 
-**定义 5.13（节点→边注入）。** 对边 $(i, j)$：
+**定义 5.14（节点→边注入）。** 对边 $(i, j)$：
 $$\hat{\mathbf{h}}_{ij}^E = \bar{\mathbf{h}}_{ij}^E + \mathrm{MLP}_{V \to E}\!\left([\hat{\mathbf{h}}_i^V \| \hat{\mathbf{h}}_j^V \| \hat{\mathbf{h}}_i^V \odot \hat{\mathbf{h}}_j^V]\right)$$
 其中 $\mathrm{MLP}_{V \to E}: \mathbb{R}^{3d_v} \to \mathbb{R}^{d_{e'}}$。
 
 #### 5.3.5 子模块 E：文本条件注入
 
-**定义 5.14（文本交叉注意力）。** 对节点 $i$，以节点嵌入为 query、文本条件为 key/value：
-$$\mathbf{q}_i^{\mathrm{text}} = \mathbf{W}_Q^{\mathrm{text}} \hat{\mathbf{h}}_i^V, \quad \mathbf{k}_j^{\mathrm{text}} = \mathbf{W}_K^{\mathrm{text}} \mathbf{c}_j, \quad \mathbf{v}_j^{\mathrm{text}} = \mathbf{W}_V^{\mathrm{text}} \mathbf{c}_j$$
-其中 $\mathbf{W}_Q^{\mathrm{text}} \in \mathbb{R}^{d_v \times d_v}$，$\mathbf{W}_K^{\mathrm{text}}, \mathbf{W}_V^{\mathrm{text}} \in \mathbb{R}^{d_v \times d_c}$。
+**定义 5.15（文本交叉注意力）。** 对节点 $i$，以节点嵌入为 query、投影后文本条件为 key/value：
+$$\mathbf{q}_i^{\mathrm{text}} = \mathbf{W}_Q^{\mathrm{text}} \hat{\mathbf{h}}_i^V, \quad \mathbf{k}_j^{\mathrm{text}} = \mathbf{W}_K^{\mathrm{text}} \bar{\mathbf{c}}_j, \quad \mathbf{v}_j^{\mathrm{text}} = \mathbf{W}_V^{\mathrm{text}} \bar{\mathbf{c}}_j$$
+其中 $\mathbf{W}_Q^{\mathrm{text}} \in \mathbb{R}^{d_v \times d_v}$，$\mathbf{W}_K^{\mathrm{text}}, \mathbf{W}_V^{\mathrm{text}} \in \mathbb{R}^{d_v \times d_p}$。
 
 交叉注意力：
 $$\mathrm{CrossAttn}_i = \sum_{j=1}^N \mathrm{softmax}_j\!\left(\frac{\mathbf{q}_i^{\mathrm{text}\top} \mathbf{k}_j^{\mathrm{text}}}{\sqrt{d_v}}\right) \cdot \mathbf{v}_j^{\mathrm{text}}$$
 
-**定义 5.15（第 $l$ 层输出）。** 文本交叉注意力残差后，分别经 ATH-Norm + FFN 残差得到最终输出：
+**定义 5.16（第 $l$ 层输出）。** 文本交叉注意力残差后，分别经 ATH-Norm + FFN 残差得到最终输出：
 
 - 节点文本残差：$\mathbf{h}_i^{V,\mathrm{text}} = \hat{\mathbf{h}}_i^V + \mathrm{CrossAttn}_i$
 - 节点 FFN：$\mathbf{h}_i^{V,(l)} = \mathbf{h}_i^{V,\mathrm{text}} + \mathrm{FFN}_V\!\left(\mathrm{ATH\text{-}Norm}(\mathbf{h}_i^{V,\mathrm{text}},\, \mathbf{t}_{\mathrm{emb}})\right)$
@@ -400,26 +406,33 @@ $$\mathrm{CrossAttn}_i = \sum_{j=1}^N \mathrm{softmax}_j\!\left(\frac{\mathbf{q}
 
 #### 5.4.1 向量场输出头
 
-**定义 5.16（切空间投影）。** 对任意 $\hat{\mathbf{u}} \in \mathbb{R}^D$，按坐标投影 $\pi$ 的逆序拆分为 $\hat{\mathbf{u}}^{\mathbb{H}} \in \mathbb{R}^{d_h+1}$，$\hat{\mathbf{u}}^{\mathbb{S}} \in \mathbb{R}^{d_s+1}$，$\hat{\mathbf{u}}^{\mathbb{R}} \in \mathbb{R}^{d_e}$。投影到 $T_{\mathbf{x}_t}\mathcal{M}$：
+**定义 5.17（切空间投影）。** 对任意 $\hat{\mathbf{u}} \in \mathbb{R}^D$，按坐标投影 $\pi$ 的逆序拆分为 $\hat{\mathbf{u}}^{\mathbb{H}} \in \mathbb{R}^{d_h+1}$，$\hat{\mathbf{u}}^{\mathbb{S}} \in \mathbb{R}^{d_s+1}$，$\hat{\mathbf{u}}^{\mathbb{R}} \in \mathbb{R}^{d_e}$。投影到 $T_{\mathbf{x}_t}\mathcal{M}$：
 $$\hat{\mathbf{v}}^{\mathbb{H}} = \hat{\mathbf{u}}^{\mathbb{H}} - \kappa_h \langle \hat{\mathbf{u}}^{\mathbb{H}}, \mathbf{x}_t^{\mathbb{H}} \rangle_{\mathrm{L}} \cdot \mathbf{x}_t^{\mathbb{H}} \in T_{\mathbf{x}_t^{\mathbb{H}}}\mathbb{H}$$
 $$\hat{\mathbf{v}}^{\mathbb{S}} = \hat{\mathbf{u}}^{\mathbb{S}} - \kappa_s (\mathbf{x}_t^{\mathbb{S}\top} \hat{\mathbf{u}}^{\mathbb{S}}) \cdot \mathbf{x}_t^{\mathbb{S}} \in T_{\mathbf{x}_t^{\mathbb{S}}}\mathbb{S}$$
 $$\hat{\mathbf{v}}^{\mathbb{R}} = \hat{\mathbf{u}}^{\mathbb{R}} \in \mathbb{R}^{d_e}$$
 
-**定义 5.17（向量场预测）。** 对节点 $i$：
+**定义 5.18（向量场预测）。** 对节点 $i$：
 $$\hat{\mathbf{u}}_i = \mathrm{MLP}_{\mathrm{vec}}(\mathbf{h}_i^{V,(L)}) \in \mathbb{R}^D$$
-其中 $\mathrm{MLP}_{\mathrm{vec}}: \mathbb{R}^{d_v} \to \mathbb{R}^D$。经定义 5.16 投影后得 $\hat{\mathbf{v}}_i = (\hat{\mathbf{v}}_i^{\mathbb{H}}, \hat{\mathbf{v}}_i^{\mathbb{S}}, \hat{\mathbf{v}}_i^{\mathbb{R}}) \in T_{\mathbf{x}_{t,i}}\mathcal{M}$。
+其中 $\mathrm{MLP}_{\mathrm{vec}}: \mathbb{R}^{d_v} \to \mathbb{R}^D$。经定义 5.17 投影后得 $\hat{\mathbf{v}}_i = (\hat{\mathbf{v}}_i^{\mathbb{H}}, \hat{\mathbf{v}}_i^{\mathbb{S}}, \hat{\mathbf{v}}_i^{\mathbb{R}}) \in T_{\mathbf{x}_{t,i}}\mathcal{M}$。
 
 #### 5.4.2 边类型输出头
 
-**定义 5.18（关系交互层）。** 对边 $(i, j)$ 和每个关系类型 $k \in [K]$，构造候选关系特征：
-$$\mathbf{r}_{ij}^{(k)} = \mathrm{MLP}_{\mathrm{rel\text{-}proj}}\!\left([\mathbf{h}_{ij}^{E,(L)} \| \mathbf{c}_{r_k}]\right) \in \mathbb{R}^{d_{e'}}$$
-其中 $\mathrm{MLP}_{\mathrm{rel\text{-}proj}}: \mathbb{R}^{d_{e'} + d_c} \to \mathbb{R}^{d_{e'}}$。
+**定义 5.19（双线性关系匹配）。** 将边嵌入投影到匹配空间，并构造关系原型向量：
 
-$K$ 个候选特征 $\{\mathbf{r}_{ij}^{(1)}, \ldots, \mathbf{r}_{ij}^{(K)}\}$ 经关系 Transformer（在关系维度上的自注意力）交互后得 $\tilde{\mathbf{r}}_{ij}^{(k)} \in \mathbb{R}^{d_{e'}}$，$k \in [K]$。
+- 边投影：$\mathbf{g}_{ij}^{\mathrm{proj}} = \mathrm{MLP}_{\mathrm{edge\text{-}proj}}(\mathbf{h}_{ij}^{E,(L)}) \in \mathbb{R}^{d_{e'}}$，其中 $\mathrm{MLP}_{\mathrm{edge\text{-}proj}}: \mathbb{R}^{d_{e'}} \to \mathbb{R}^{d_{e'}}$（两层 MLP：Linear → SiLU → Linear）。
+- 关系原型：
+  - 若有文本条件：$\mathbf{p}_k = \mathrm{MLP}_{\mathrm{rel\text{-}proto}}(\bar{\mathbf{c}}_{r_k}) \in \mathbb{R}^{d_{e'}}$，其中 $\mathrm{MLP}_{\mathrm{rel\text{-}proto}}: \mathbb{R}^{d_p} \to \mathbb{R}^{d_{e'}}$（两层 MLP）。
+  - 若无文本条件：$\mathbf{p}_k \in \mathbb{R}^{d_{e'}}$ 为可学习关系原型参数（Xavier 均匀初始化）。
 
-**定义 5.19（边类型概率）。**
-$$\hat{\mathbf{P}}_{ij}^{(k)} = \sigma(\mathbf{w}_{\mathrm{cls}}^\top \tilde{\mathbf{r}}_{ij}^{(k)} + b_{\mathrm{cls}}) \in [0,1]$$
-其中 $\sigma(\cdot)$ 为 sigmoid 函数，$\mathbf{w}_{\mathrm{cls}} \in \mathbb{R}^{d_{e'}}$，$b_{\mathrm{cls}} \in \mathbb{R}$。各关系类型独立预测（对应多热标签）。
+记 $\mathbf{P}_{\mathrm{proto}} = (\mathbf{p}_1, \ldots, \mathbf{p}_K)^\top \in \mathbb{R}^{K \times d_{e'}}$ 为关系原型矩阵。
+
+**定义 5.20（边类型概率）。** 通过内积打分与逐关系偏置：
+$$\hat{\mathbf{P}}_{ij}^{(k)} = \sigma\!\left(\langle \mathbf{g}_{ij}^{\mathrm{proj}},\, \mathbf{p}_k \rangle + b_k\right) \in [0,1]$$
+其中 $\sigma(\cdot)$ 为 sigmoid 函数，$\mathbf{b} = (b_1, \ldots, b_K)^\top \in \mathbb{R}^K$ 为可学习逐关系偏置（初始化为零），用于非对称阈值校准。各关系类型独立预测（对应多热标签）。
+
+矩阵形式：$\hat{\mathbf{P}}_{ij} = \sigma\!\left(\mathbf{P}_{\mathrm{proto}}\,\mathbf{g}_{ij}^{\mathrm{proj}} + \mathbf{b}\right) \in [0,1]^K$。
+
+**设计理由**：相比拼接边嵌入与关系文本后经关系维度自注意力交互的方案，双线性匹配的计算复杂度对 $K$ 为线性（$O(N^2 K d_{e'})$ vs $O(N^2 K^2 d_{e'})$），适用于关系类型数 $K$ 较大的知识图谱（如 Wikidata $K > 800$）。关系间的依赖已通过 $L$ 层边自更新（定义 5.12）和双向交叉交互（定义 5.13–5.14）隐式建模。
 
 ### 5.5 排列等变性
 
@@ -481,33 +494,81 @@ $$\mathbf{E}_{1,ij}^{(k)} \in \{0,1\}$$
 ### 6.4 训练损失函数
 
 **定义 6.7（流形向量场损失）。**
-$$\mathcal{L}_{\mathrm{cont}} = \frac{1}{N}\sum_{i=1}^N m_i \cdot \|\hat{\mathbf{v}}_i - \mathbf{u}_{t,i}\|_{T_{\mathbf{x}_{t,i}}\mathcal{M}}^2$$
+$$\mathcal{L}_{\mathrm{cont}} = \frac{1}{|\mathcal{V}_{\mathrm{real}}|}\sum_{i=1}^N m_i \cdot \|\hat{\mathbf{v}}_i - \mathbf{u}_{t,i}\|_{T_{\mathbf{x}_{t,i}}\mathcal{M}}^2$$
 
-其中 $\|\cdot\|_{T_{\mathbf{x}_{t,i}}\mathcal{M}}$ 为定义 4.6 的切空间黎曼范数。虚节点（$m_i = 0$）不贡献损失。
+其中 $|\mathcal{V}_{\mathrm{real}}| = \sum_{i=1}^N m_i$ 为真实节点数，$\|\cdot\|_{T_{\mathbf{x}_{t,i}}\mathcal{M}}$ 为定义 4.6 的切空间黎曼范数。虚节点（$m_i = 0$）不贡献损失。按真实节点数而非 $N$ 归一化，使损失量级不受填充大小 $N_{\max}$ 的影响。
 
-**定义 6.8（边类型损失）。** 设 $\mathcal{S} \subseteq [N]^2$ 为采样的边对集合。
-$$\mathcal{L}_{\mathrm{disc}} = \frac{1}{|\mathcal{S}|}\sum_{(i,j) \in \mathcal{S}}\sum_{k=1}^K \mathrm{BCE}_{\mathrm{w}}(\hat{\mathbf{P}}_{ij}^{(k)}, \mathbf{E}_{1,ij}^{(k)})$$
+**定义 6.8（边类型损失）。** 知识图谱中边极度稀疏（$\rho_k \ll 1$），对全部 $N^2$ 节点对计算 BCE 会被大量无边对主导。为此采用**负采样**：先收集正样本对集合 $\mathcal{S}^+ = \{(i,j) \in [N]^2 \mid \mathbf{E}_{1,ij} \neq \mathbf{0}_K,\; m_i = m_j = 1\}$（至少存在一条边的真实节点对），再从无边真实节点对中按比例 $\eta_{\mathrm{neg}} > 0$ 均匀采样负样本对 $\mathcal{S}^-$，$|\mathcal{S}^-| = \min(\eta_{\mathrm{neg}} |\mathcal{S}^+|,\, |\text{负样本池}|)$。令 $\mathcal{S} = \mathcal{S}^+ \cup \mathcal{S}^-$：
 
-其中加权二元交叉熵：
-$$\mathrm{BCE}_{\mathrm{w}}(\hat{p}, y) = -\left[w_k^+ \cdot y \cdot \log(\hat{p} + \epsilon_p) + (1 - y) \cdot \log(1 - \hat{p} + \epsilon_p)\right]$$
+$$\mathcal{L}_{\mathrm{disc}} = \frac{1}{|\mathcal{S}|}\sum_{(i,j) \in \mathcal{S}}\sum_{k=1}^K \mathrm{BCE}(\hat{\mathbf{P}}_{ij}^{(k)}, \mathbf{E}_{1,ij}^{(k)})$$
 
-正样本权重 $w_k^+ = \min\!\left(\frac{1 - \rho_k}{\rho_k},\, w_{\max}\right)$ 校正类别不平衡，$w_{\max} > 0$ 为截断上限，$\epsilon_p > 0$ 为数值稳定常数。
+其中 $\mathrm{BCE}(\hat{p}, y) = -\left[y \cdot \log(\hat{p} + \epsilon_p) + (1 - y) \cdot \log(1 - \hat{p} + \epsilon_p)\right]$，$\epsilon_p > 0$ 为数值稳定常数。负采样将正负对比例从 $O(1/N^2)$ 提升至 $1 : \eta_{\mathrm{neg}}$，使梯度信号集中于有意义的边预测。
 
-**定义 6.9（图-文对比损失）。** 将 backbone 隐藏状态投影到对齐空间。直接使用数据端流形坐标 $\mathbf{x}_{1,i}$ 会导致对比损失退化：实体嵌入从流形原点附近初始化，训练初期所有实体方向高度一致（余弦相似度 $> 0.99$），使得 InfoNCE 无法区分不同节点（损失恒为 $\log M$）。因此，我们使用 RieFormer backbone 的最终隐藏状态 $\mathbf{h}_i$ 作为图侧输入——$\mathbf{h}_i$ 融合了加噪坐标、边类型和文本交叉注意力，从训练伊始即具有充分的样本间差异性：
-$$\mathbf{g}_i = \mathrm{MLP}_{\mathrm{proj}}(\mathbf{h}_i) \in \mathbb{R}^{d_\mathrm{a}}$$
-其中 $\mathbf{h}_i \in \mathbb{R}^{d_{\mathrm{node}}}$ 为 backbone 输出的节点隐藏状态（定义 5.1），$\mathrm{MLP}_{\mathrm{proj}}: \mathbb{R}^{d_{\mathrm{node}}} \to \mathbb{R}^{d_\mathrm{a}}$，$d_\mathrm{a}$ 为对齐空间维度。
+**可选扩展**：若实验表明稀有关系（$\rho_k$ 极小）的预测不足，可引入逐关系正样本权重 $w_k^+ = \min\!\left(\frac{1-\rho_k}{\rho_k},\, w_{\max}\right)$ 作为 BCE 的 `pos_weight`，与负采样正交互补。
 
-余弦相似度：$\mathrm{sim}(\mathbf{g}_i, \mathbf{c}_j) = \frac{\mathbf{g}_i^\top \mathbf{c}_j}{\|\mathbf{g}_i\|_2 \|\mathbf{c}_j\|_2}$
+**定义 6.9（图-文对比损失）。** 将 backbone 隐藏状态和原始文本条件分别投影到共同的对齐空间 $\mathbb{R}^{d_a}$。直接使用数据端流形坐标 $\mathbf{x}_{1,i}$ 会导致对比损失退化：实体嵌入从流形原点附近初始化，训练初期所有实体方向高度一致（余弦相似度 $> 0.99$），使得 InfoNCE 无法区分不同节点（损失恒为 $\log M$）。因此，我们使用 RieFormer backbone 的最终隐藏状态 $\mathbf{h}_i$ 作为图侧输入——$\mathbf{h}_i$ 融合了加噪坐标、边类型和文本交叉注意力，从训练伊始即具有充分的样本间差异性。
+
+图侧与文本侧投影：
+$$\mathbf{g}_i = \mathrm{MLP}_g(\mathbf{h}_i) \in \mathbb{R}^{d_\mathrm{a}}, \qquad \tilde{\mathbf{c}}_i = \mathrm{MLP}_c(\mathbf{c}_i) \in \mathbb{R}^{d_\mathrm{a}}$$
+其中 $\mathbf{h}_i \in \mathbb{R}^{d_v}$ 为 backbone 输出的节点隐藏状态（定义 5.1），$\mathrm{MLP}_g: \mathbb{R}^{d_v} \to \mathbb{R}^{d_\mathrm{a}}$（图侧投影），$\mathrm{MLP}_c: \mathbb{R}^{d_c} \to \mathbb{R}^{d_\mathrm{a}}$（文本侧投影），$d_\mathrm{a}$ 为对齐空间维度。两个 MLP 均为两层无偏置网络（Linear → GELU → Linear），无偏置确保 L2 归一化后余弦相似度不因偏置项退化。注意文本侧使用**原始**文本条件 $\mathbf{c}_i \in \mathbb{R}^{d_c}$，而非定义 5.2 的投影 $\bar{\mathbf{c}}_i \in \mathbb{R}^{d_p}$，使对齐损失直接锚定在预训练文本编码器的语义空间上。
+
+余弦相似度：$\mathrm{sim}(\mathbf{g}_i, \tilde{\mathbf{c}}_j) = \frac{\mathbf{g}_i^\top \tilde{\mathbf{c}}_j}{\|\mathbf{g}_i\|_2 \|\tilde{\mathbf{c}}_j\|_2}$
 
 设 $\mathcal{B} \subseteq [N]$ 为 mini-batch 中的节点索引集。当 $|\mathcal{B}|$ 较大时（如 $BN_{\max}$ 量级），从中均匀随机子采样至多 $M_{\mathrm{align}}$ 个节点以控制 $|\mathcal{B}| \times |\mathcal{B}|$ 相似度矩阵的规模并降低 InfoNCE 任务难度。对称对比损失：
 $$\mathcal{L}_{\mathrm{align}} = \frac{1}{2}\left(\mathcal{L}_{\mathrm{align}}^{g \to c} + \mathcal{L}_{\mathrm{align}}^{c \to g}\right)$$
 其中：
-$$\mathcal{L}_{\mathrm{align}}^{g \to c} = -\frac{1}{|\mathcal{B}|}\sum_{i \in \mathcal{B}} \log \frac{\exp(\mathrm{sim}(\mathbf{g}_i, \mathbf{c}_i) / \tau)}{\sum_{j \in \mathcal{B}} \exp(\mathrm{sim}(\mathbf{g}_i, \mathbf{c}_j) / \tau)}$$
+$$\mathcal{L}_{\mathrm{align}}^{g \to c} = -\frac{1}{|\mathcal{B}|}\sum_{i \in \mathcal{B}} \log \frac{\exp(\mathrm{sim}(\mathbf{g}_i, \tilde{\mathbf{c}}_i) / \tau)}{\sum_{j \in \mathcal{B}} \exp(\mathrm{sim}(\mathbf{g}_i, \tilde{\mathbf{c}}_j) / \tau)}$$
 $\mathcal{L}_{\mathrm{align}}^{c \to g}$ 对称定义。$\tau > 0$ 为温度超参数。
 
-**定义 6.10（总训练损失）。**
-$$\mathcal{L} = \mathcal{L}_{\mathrm{cont}} + \lambda\,\mathcal{L}_{\mathrm{disc}} + \mu\,\mathcal{L}_{\mathrm{align}}$$
-其中 $\lambda, \mu > 0$ 为损失权重超参数。
+**定义 6.9a（节点三分区）。** 在预训练阶段，对每个子图将真实节点索引集 $\mathcal{V}_{\mathrm{real}} \subseteq [N]$ 按互斥比例 $(p_c, p_x)$ 随机划分为三个不相交子集：
+
+$$\mathcal{V}_{\mathrm{real}} = \mathcal{U} \sqcup \mathcal{M}_c \sqcup \mathcal{M}_x$$
+
+其中 $|\mathcal{M}_c| \approx p_c |\mathcal{V}_{\mathrm{real}}|$（**语义掩码**子集），$|\mathcal{M}_x| \approx p_x |\mathcal{V}_{\mathrm{real}}|$（**几何掩码**子集），且 $|\mathcal{U}| \geq 1$（至少保留一个 REAL 锚点）。虚节点构成第四集合 $\mathcal{V}_{\mathrm{virt}} = [N] \setminus \mathcal{V}_{\mathrm{real}}$。
+
+**各子集的几何-语义状态**：
+
+| 子集 | 几何 $\mathbf{x}_{t,i}$ | 文本 $\bar{\mathbf{c}}_i$ | 时间标签 $t_i$ | 参与损失 |
+|------|-----|-----|-----|-----|
+| $\mathcal{U}$（REAL） | 沿测地线插值（正常 flow） | 真文本 $\bar{\mathbf{c}}_i$ | 子图 batch-$t$ | $\mathcal{L}_{\mathrm{cont}}$, $\mathcal{L}_{\mathrm{align}}$ |
+| $\mathcal{M}_c$（语义掩码） | $\mathbf{x}_{1,i}$ 固定不变 | 可学习 $\mathbf{e}_{\mathrm{mask}} \in \mathbb{R}^{d_c}$ | $t_i = 1$ | $\mathcal{L}_{\mathrm{mask}\_c}$ |
+| $\mathcal{M}_x$（几何掩码） | $\mathbf{x}_{0,i}$（纯噪声） | 真文本 $\bar{\mathbf{c}}_i$ | $t_i = 0$ | $\mathcal{L}_{\mathrm{mask}\_x}$ |
+
+每个 mask 节点仅丢失一个模态，另一个模态作为 anchor 确保 backbone 表征 $\mathbf{h}_i$ 不退化为同一常向量。
+
+**定义 6.10a（语义掩码识别损失 $\mathcal{L}_{\mathrm{mask}\_c}$）。** 对 $i \in \mathcal{M}_c$，几何坐标保留 $\mathbf{x}_{1,i}$（通过 $t_i = 1$ 强制 $\mathbf{x}_{t,i} = \mathbf{x}_{1,i}$），文本替换为单一可学习向量 $\mathbf{e}_{\mathrm{mask}} \in \mathbb{R}^{d_c}$。以原始文本 $\bar{\mathbf{c}}_i$ 为对比目标，投影头 $\mathrm{MLP}_{\mathrm{mask}\_c}: \mathbb{R}^{d_v} \to \mathbb{R}^{d_c}$ 计算：
+
+$$\mathbf{p}_i = \mathrm{MLP}_{\mathrm{mask}\_c}(\mathbf{h}_i) \in \mathbb{R}^{d_c}$$
+
+对称 InfoNCE 损失，batch 内 $\mathcal{M}_c$ 节点之间对比：
+
+$$\mathcal{L}_{\mathrm{mask}\_c} = \frac{1}{2}\!\left(\mathcal{L}_{\mathrm{mask}\_c}^{p \to c} + \mathcal{L}_{\mathrm{mask}\_c}^{c \to p}\right), \quad \mathcal{L}_{\mathrm{mask}\_c}^{p \to c} = -\frac{1}{|\mathcal{M}_c|}\sum_{i \in \mathcal{M}_c} \log \frac{\exp(\mathrm{sim}(\mathbf{p}_i, \bar{\mathbf{c}}_i)/\tau_{\mathrm{mask}\_c})}{\sum_{j \in \mathcal{M}_c} \exp(\mathrm{sim}(\mathbf{p}_i, \bar{\mathbf{c}}_j)/\tau_{\mathrm{mask}\_c})}$$
+
+当 $|\mathcal{M}_c| < 2$ 时 $\mathcal{L}_{\mathrm{mask}\_c} = 0$。对应下游 T2G / GAD（从几何位置识别实体）。
+
+**定义 6.10b（几何掩码重建损失 $\mathcal{L}_{\mathrm{mask}\_x}$）。** 对 $i \in \mathcal{M}_x$，强制 $t_i = 0$（即 $\mathbf{x}_{t,i} = \mathbf{x}_{0,i}$ 为纯噪声），文本保留真值 $\bar{\mathbf{c}}_i$。目标向量场为定义 6.5 在 $t=0$ 处的特例：
+
+$$\mathbf{u}_{0,i} = \log_{\mathbf{x}_{0,i}}(\mathbf{x}_{1,i})$$
+
+损失复用定义 6.7 的黎曼切空间 MSE，仅作用在 $\mathcal{M}_x$ 子集：
+
+$$\mathcal{L}_{\mathrm{mask}\_x} = \frac{1}{|\mathcal{M}_x|} \sum_{i \in \mathcal{M}_x} \left\| \hat{\mathbf{V}}_i - \mathbf{u}_{0,i} \right\|^2_{g(\mathbf{x}_{0,i})}$$
+
+当 $|\mathcal{M}_x| = 0$ 时 $\mathcal{L}_{\mathrm{mask}\_x} = 0$。与 $\mathcal{L}_{\mathrm{cont}}$ 共享 backbone 输出 $\hat{\mathbf{V}}$，无需新增预测头。对应下游 KGC $(h, r, ?)$（给定文本定位几何）。
+
+**各损失的参与规则**（与节点分区严格对应）：
+
+| 损失 | $\mathcal{U}$ | $\mathcal{M}_c$ | $\mathcal{M}_x$ | 虚节点 |
+|------|:---:|:---:|:---:|:---:|
+| $\mathcal{L}_{\mathrm{cont}}$ | ✓ | ✗（$\mathbf{x}_t$ 冻结于 $\mathbf{x}_1$，无 flow 语义） | ✗（由 $\mathcal{L}_{\mathrm{mask}\_x}$ 承担） | ✗ |
+| $\mathcal{L}_{\mathrm{disc}}$ | ✓ | ✓ | ✓ | ✗ |
+| $\mathcal{L}_{\mathrm{align}}$ | ✓ | ✗（文本已换成 $\mathbf{e}_{\mathrm{mask}}$） | ✗（$\mathbf{h}_i$ 因 $\mathbf{x}_t=$ 噪声而质量低） | ✗ |
+| $\mathcal{L}_{\mathrm{mask}\_c}$ | ✗ | ✓ | ✗ | ✗ |
+| $\mathcal{L}_{\mathrm{mask}\_x}$ | ✗ | ✗ | ✓ | ✗ |
+
+**定义 6.11（总训练损失）。**
+$$\mathcal{L} = \mathcal{L}_{\mathrm{cont}} + \lambda\,\mathcal{L}_{\mathrm{disc}} + \mu\,\mathcal{L}_{\mathrm{align}} + \nu_c\,\mathcal{L}_{\mathrm{mask}\_c} + \nu_x\,\mathcal{L}_{\mathrm{mask}\_x}$$
+其中 $\lambda, \mu, \nu_c, \nu_x \geq 0$ 为损失权重。设 $\nu_c = \nu_x = 0$ 退化为无掩码预测的基础损失；各自独立关闭可用于消融。
 
 ### 6.5 训练与推理算法
 
@@ -516,16 +577,18 @@ $$\mathcal{L} = \mathcal{L}_{\mathrm{cont}} + \lambda\,\mathcal{L}_{\mathrm{disc
 **输入**：训练子图 $(\mathbf{X}_1, \mathbf{E}_1, \mathbf{C}_\mathcal{V}, \mathbf{C}_\mathcal{R}, \mathbf{m})$，参数 $\theta$
 **输出**：损失 $\mathcal{L}$
 
-1. 采样 $t \sim p_t$（$p_t$ 为 Uniform 或 Logit-Normal，见定义 6.5 注释）
-2. 对 $i \in [N]$：采样 $\mathbf{x}_{0,i} \sim p_0^{\mathcal{M}}$（定义 6.1）
-3. 对 $(i, j) \in [N]^2$，$k \in [K]$：采样 $\mathbf{E}_{0,ij}^{(k)} \sim \mathrm{Bernoulli}(\rho_k)$（定义 6.2）
-4. 对 $i \in [N]$：$\mathbf{x}_{t,i} = \exp_{\mathbf{x}_{0,i}}(t \cdot \log_{\mathbf{x}_{0,i}}(\mathbf{x}_{1,i}))$（定义 6.3）
-5. 对 $(i, j) \in [N]^2$：采样 $z_{ij} \sim \mathrm{Bernoulli}(t)$，$\mathbf{E}_{t,ij} = z_{ij} \mathbf{E}_{1,ij} + (1 - z_{ij}) \mathbf{E}_{0,ij}$（定义 6.4）
-6. $(\hat{\mathbf{V}}, \hat{\mathbf{P}}, \mathbf{H}) = f_\theta(\mathbf{X}_t, \mathbf{E}_t, t, \mathbf{C}_\mathcal{V}, \mathbf{C}_\mathcal{R}, \mathbf{m})$（定义 5.1），其中 $\mathbf{H}$ 为 backbone 隐藏状态，用于 $\mathcal{L}_{\mathrm{align}}$
-7. 对 $i \in [N]$：$\mathbf{u}_{t,i} = \frac{1}{1-t}\log_{\mathbf{x}_{t,i}}(\mathbf{x}_{1,i})$（定义 6.5）
-8. 计算 $\mathcal{L} = \mathcal{L}_{\mathrm{cont}} + \lambda\,\mathcal{L}_{\mathrm{disc}} + \mu\,\mathcal{L}_{\mathrm{align}}$（定义 6.10）
-9. Riemannian Adam 更新 $\theta$：对欧氏参数用标准 Adam，对曲率参数用黎曼梯度
-10. 曲率投影：$\kappa_h \leftarrow \min(\kappa_h, -\epsilon_\kappa)$，$\kappa_s \leftarrow \max(\kappa_s, \epsilon_\kappa)$
+1. Collator 输出节点三分区 $\{\mathcal{U}, \mathcal{M}_c, \mathcal{M}_x\}$ 与每节点时间标签 $t_{\mathrm{node}} \in \mathbb{R}^{B \times N}$（定义 6.9a）：$\mathcal{M}_x$ 位置写入 $0$，$\mathcal{M}_c$ 位置写入 $1$，$\mathcal{U}$ 位置暂留占位
+2. 采样子图级标量 $t \sim p_t$（$p_t$ 为 Uniform 或 Logit-Normal，见定义 6.5 注释），广播填充 $t_{\mathrm{node}}$ 占位位置
+3. 对 $i \in \mathcal{M}_c$：将其输入文本替换为 $\mathbf{e}_{\mathrm{mask}}$（几何保留 $\mathbf{x}_{1,i}$，由 $t_i = 1$ 保证）
+4. 对 $i \in [N]$：采样 $\mathbf{x}_{0,i} \sim p_0^{\mathcal{M}}$（定义 6.1）
+5. 对 $(i, j) \in [N]^2$，$k \in [K]$：采样 $\mathbf{E}_{0,ij}^{(k)} \sim \mathrm{Bernoulli}(\rho_k)$（定义 6.2）
+6. 对 $i \in [N]$：$\mathbf{x}_{t,i} = \exp_{\mathbf{x}_{0,i}}(t_i \cdot \log_{\mathbf{x}_{0,i}}(\mathbf{x}_{1,i}))$（定义 6.3，使用 $t_{\mathrm{node}}$ 逐节点插值）
+7. 对 $(i, j) \in [N]^2$：采样 $z_{ij} \sim \mathrm{Bernoulli}(t)$，$\mathbf{E}_{t,ij} = z_{ij} \mathbf{E}_{1,ij} + (1 - z_{ij}) \mathbf{E}_{0,ij}$（定义 6.4，边使用子图标量 $t$）
+8. $(\hat{\mathbf{V}}, \hat{\mathbf{P}}, \mathbf{H}) = f_\theta(\mathbf{X}_t, \mathbf{E}_t, t_{\mathrm{node}}, \mathbf{C}_\mathcal{V}, \mathbf{C}_\mathcal{R}, \mathbf{m})$（定义 5.1），其中 $\mathbf{H}$ 为 backbone 隐藏状态
+9. 对 $i \in [N]$：$\mathbf{u}_{t,i} = \frac{1}{1-t_i}\log_{\mathbf{x}_{t,i}}(\mathbf{x}_{1,i})$（定义 6.5）
+10. 计算 $\mathcal{L} = \mathcal{L}_{\mathrm{cont}} + \lambda\,\mathcal{L}_{\mathrm{disc}} + \mu\,\mathcal{L}_{\mathrm{align}} + \nu_c\,\mathcal{L}_{\mathrm{mask}\_c} + \nu_x\,\mathcal{L}_{\mathrm{mask}\_x}$（定义 6.11）
+11. Riemannian Adam 更新 $\theta$：对欧氏参数用标准 Adam，对曲率参数用黎曼梯度
+12. 曲率投影：$\kappa_h \leftarrow \min(\kappa_h, -\epsilon_\kappa)$，$\kappa_s \leftarrow \max(\kappa_s, \epsilon_\kappa)$
 
 其中 $\epsilon_t > 0$，$\epsilon_\kappa > 0$ 为小常数。
 
@@ -687,6 +750,7 @@ $$S_i = \frac{1}{|\mathcal{N}_i|}\sum_{j \in \mathcal{N}_i} \max_{k:\,\mathbf{E}
 | $L$ | 标量 | $\mathbb{Z}_{>0}$ | RieFormer 层数 |
 | $d_v$ | 标量 | $\mathbb{Z}_{>0}$ | 节点隐藏维度 |
 | $d_{e'}$ | 标量 | $\mathbb{Z}_{>0}$ | 边隐藏维度 |
+| $d_p$ | 标量 | $\mathbb{Z}_{>0}$ | 文本投影维度（定义 5.2） |
 | $d_r$ | 标量 | $\mathbb{Z}_{>0}$ | 关系嵌入维度 |
 | $d_t$ | 标量 | $\mathbb{Z}_{>0}$（偶数） | 时间嵌入维度 |
 | $d_{\mathrm{head}}$ | 标量 | $\mathbb{Z}_{>0}$（偶数） | 注意力头维度，$d_{\mathrm{head}} = d_v / n_h$ |
@@ -728,14 +792,21 @@ $$S_i = \frac{1}{|\mathcal{N}_i|}\sum_{j \in \mathcal{N}_i} \max_{k:\,\mathbf{E}
 | $\mathcal{L}_{\mathrm{cont}}$ | 标量 | $\mathbb{R}_{\geq 0}$ | 流形向量场损失 |
 | $\mathcal{L}_{\mathrm{disc}}$ | 标量 | $\mathbb{R}_{\geq 0}$ | 边类型损失 |
 | $\mathcal{L}_{\mathrm{align}}$ | 标量 | $\mathbb{R}_{\geq 0}$ | 图-文对比损失 |
+| $\mathcal{L}_{\mathrm{mask}}$ | 标量 | $\mathbb{R}_{\geq 0}$ | 掩码节点预测损失 |
 | $\mathcal{L}$ | 标量 | $\mathbb{R}_{\geq 0}$ | 总训练损失 |
-| $\lambda, \mu$ | 标量 | $\mathbb{R}_{>0}$ | 损失权重 |
-| $\tau$ | 标量 | $\mathbb{R}_{>0}$ | 对比损失温度 |
+| $\lambda, \mu, \nu$ | 标量 | $\mathbb{R}_{\geq 0}$ | 损失权重 |
+| $\tau$ | 标量 | $\mathbb{R}_{>0}$ | 对比损失温度（$\mathcal{L}_{\mathrm{align}}$） |
+| $\tau_{\mathrm{mask}}$ | 标量 | $\mathbb{R}_{>0}$ | 掩码预测温度（$\mathcal{L}_{\mathrm{mask}}$） |
 | $w_k^+$ | 标量 | $\mathbb{R}_{>0}$ | 关系 $r_k$ 正样本权重 |
 | $w_{\max}$ | 标量 | $\mathbb{R}_{>0}$ | 正样本权重截断上限 |
 | $\mathcal{S}$ | 集合 | $\subseteq [N]^2$ | 边损失采样集 |
 | $\mathcal{B}$ | 集合 | $\subseteq [N]$ | 对比损失 mini-batch 索引 |
 | $M_{\mathrm{align}}$ | 标量 | $\mathbb{Z}_{>0}$ | 对比损失最大节点子采样数 |
+| $\mathcal{B}_{\mathrm{mask}}$ | 集合 | $\subseteq [N]$ | 被掩码节点索引集 |
+| $\mathbf{p}_i$ | 向量 | $\mathbb{R}^{D_{\mathrm{emb}}}$ | 被掩码节点投影嵌入 |
+| $\mathbf{e}_i$ | 向量 | $\mathbb{R}^{D_{\mathrm{emb}}}$ | 真实实体嵌入 |
+| $D_{\mathrm{emb}}$ | 标量 | $\mathbb{Z}_{>0}$ | 实体嵌入维度 |
+| $p_{\mathrm{mask}}^{\mathrm{node}}$ | 标量 | $(0,1)$ | 预训练节点掩码概率 |
 | $\mu_{\mathrm{LN}}, \sigma_{\mathrm{LN}}$ | 标量 | $\mathbb{R}, \mathbb{R}_{>0}$ | Logit-Normal 时间分布参数 |
 | $\epsilon_t, \epsilon_p, \epsilon_\kappa$ | 标量 | $\mathbb{R}_{>0}$ | 数值稳定/截断常数 |
 
