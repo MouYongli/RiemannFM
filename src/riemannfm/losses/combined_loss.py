@@ -45,6 +45,14 @@ def _contrastive_loss_from_pairs(
     if c.norm(dim=-1).max() < 1e-8:
         return torch.tensor(0.0, device=g.device, dtype=g.dtype)
 
+    # Remove per-batch shared mean direction before cosine similarity.
+    # Projection heads otherwise collapse to rank-1 (sigma_1/sigma_2 ~ 5.5,
+    # self-cos ~ 0.92), locking L_align at the InfoNCE trivial solution
+    # log(M). Centering forces the contrastive signal into the
+    # discriminative subspace. Same mechanism as L_mask_c.
+    g = g - g.mean(dim=0, keepdim=True)
+    c = c - c.mean(dim=0, keepdim=True)
+
     g_norm = F.normalize(g, dim=-1)
     c_norm = F.normalize(c, dim=-1)
     logits = g_norm @ c_norm.T / temperature
