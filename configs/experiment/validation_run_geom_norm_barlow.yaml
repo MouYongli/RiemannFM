@@ -1,0 +1,61 @@
+# @package _global_
+# Phase 1 variant: Barlow Twins L_align with encoder-side geometric DC
+# removal.  Pair config with validation_run_geom_norm.yaml.
+#
+# Applied structurally (see validation_run_geom_norm.yaml for the list):
+#   - Drop Lorentz x_0 at encoder input.
+#   - Block-wise LayerNorm on S and E at encoder input.
+#   - Inject κ_h, κ_s into ATH-Norm via FiLM.
+#
+# Hypothesis: Barlow's L_align oscillation in validation_run_barlow
+# (146 ↔ 260 around step 429) was caused by near-DC channels on S whose
+# batch std collapsed to ~eps, producing (1/σ+eps) amplification in the
+# cross-correlation matrix.  Removing the DC source should let Barlow
+# descend monotonically.  If L_align is still non-monotone after this,
+# the issue is internal to Barlow rather than input-side.
+#
+# Success criteria (end of run, train-side):
+#   L_align descent monotonic (no >20% rebound), and final value meets
+#   the curvature-adjusted threshold set during the run.
+defaults:
+  - override /data: wikidata_5m
+  - override /training: pretrain
+  - _self_
+
+seed: 42
+run_name: validation_run_geom_norm_barlow_${now:%Y%m%d_%H%M%S}
+
+data:
+  max_nodes: 128
+  rwpe_k: 8
+
+flow:
+  time_distribution: logit_normal
+
+model:
+  text_proj_dim: 64
+  align_proj_dim: 256
+  align_proj_depth: 3
+  pe_dim: 8
+
+training:
+  max_steps: 10000
+  warmup_steps: 1000
+  val_check_interval: 500
+  batch_size: 8
+  gradient_accumulation_steps: 8
+  lr: 1.0e-5
+  curvature_lr: 5.0e-6
+  align_lr: 1.0e-4
+  lr_min_ratio: 0.1
+  weight_decay: 0.001
+  temperature: 0.1
+  mask_c_temperature: 0.07
+  mu_align: 1.0
+  nu_mask_c: 1.0
+  nu_mask_x: 1.0
+  mask_ratio_c: 0.15
+  mask_ratio_x: 0.05
+  edge_loss_mode: softmax_ce
+  align_loss_mode: barlow
+  barlow_lambda_off: 5.0e-3
