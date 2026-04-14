@@ -178,6 +178,34 @@ class TestNodeEncoder:
         assert torch.allclose(out_a, out_b)
 
 
+    def test_block_layernorm_s_and_e(
+        self, ambient_dim: int,
+    ) -> None:
+        """Adding a shared constant to the S or E block must be absorbed
+        by the per-block LayerNorm (DC mode removal).
+        """
+        enc = RiemannFMNodeEncoder(
+            ambient_dim, 0, NODE_DIM, NODE_DIM,
+            dim_h_ambient=DIM_H + 1, dim_s_ambient=DIM_S + 1, dim_e=DIM_E,
+        ).eval()
+        x = torch.randn(B, N, ambient_dim)
+        node_text = torch.zeros(B, N, 0)
+        mask = torch.ones(B, N, dtype=torch.bool)
+        t_emb = torch.randn(B, NODE_DIM)
+        out_a = enc(x, node_text, mask, t_emb)
+
+        h_end = DIM_H + 1
+        s_end = h_end + DIM_S + 1
+        # Constant shift on S block → removed by LN(S).
+        x_s = x.clone()
+        x_s[..., h_end:s_end] += 5.0
+        assert torch.allclose(enc(x_s, node_text, mask, t_emb), out_a, atol=1e-5)
+        # Constant shift on E block → removed by LN(E).
+        x_e = x.clone()
+        x_e[..., s_end:] += 5.0
+        assert torch.allclose(enc(x_e, node_text, mask, t_emb), out_a, atol=1e-5)
+
+
 class TestEdgeEncoder:
     def test_output_shape_no_text(self) -> None:
         enc = RiemannFMEdgeEncoder(K, 16, 0, EDGE_DIM)

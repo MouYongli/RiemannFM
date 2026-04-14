@@ -24,10 +24,14 @@ class RiemannFMNodeEncoder(nn.Module):
     near-zero batch variance in the small-tangent regime.  Feeding it
     through the encoder injects a shared DC mode that drives rank-1
     collapse downstream, so the H block's x_0 is sliced off before the
-    MLP.  S and E blocks are passed through unchanged: sphere geometry
-    is rotationally symmetric across its ambient coordinates and
-    Euclidean has no constrained dimension.  Curvature information lost
-    by dropping x_0 is recovered elsewhere (FiLM via ATH-Norm).
+    MLP.  The S block keeps all d_s+1 ambient coords (sphere is
+    rotationally symmetric across them — hard-dropping the first would
+    break O(d_s+1) symmetry), but is passed through a LayerNorm to
+    remove the transient DC mode caused by points clustering near the
+    anchor pole at init (s_0 ≈ 1/√κ_s with low batch variance).  The E
+    block has no constrained dimension; a LayerNorm is applied for
+    scale consistency with S.  Curvature information stripped by the
+    block-wise normalization is recovered elsewhere (FiLM via ATH-Norm).
 
     Args:
         ambient_dim: Product manifold ambient dimension D.
@@ -68,6 +72,13 @@ class RiemannFMNodeEncoder(nn.Module):
         self.dim_s_ambient = dim_s_ambient
         self.dim_e = dim_e
 
+        # Block-wise input normalization: LN on S (kill s_0 DC, keep
+        # O(d_s+1) symmetry) and E (scale consistency).  H block is
+        # already handled by x_0 slicing; LN-ing x_{1:} would distort
+        # Lorentz geometry.
+        self.ln_s = nn.LayerNorm(dim_s_ambient) if dim_s_ambient > 0 else None
+        self.ln_e = nn.LayerNorm(dim_e) if dim_e > 0 else None
+
         # Encoded manifold dim: drop x_0 from H block (if present).
         drop_h = 1 if dim_h_ambient > 0 else 0
         encoded_manifold_dim = ambient_dim - drop_h
@@ -106,14 +117,20 @@ class RiemannFMNodeEncoder(nn.Module):
         Returns:
             Node hidden states, shape ``(B, N, node_dim)``.
         """
-        # Drop Lorentz time-like coord x_0 before feeding to MLP.
-        # Order is H (ambient d_h+1), S (ambient d_s+1), E (d_e).
+        # Drop Lorentz time-like coord x_0, then apply block-wise LN to
+        # S and E.  Order is H (ambient d_h+1), S (ambient d_s+1), E (d_e).
+        h_end = self.dim_h_ambient
+        s_end = h_end + self.dim_s_ambient
+        parts: list[Tensor] = []
         if self.dim_h_ambient > 0:
-            x_h_spatial = x[..., 1 : self.dim_h_ambient]
-            x_rest = x[..., self.dim_h_ambient :]
-            x_encoded = torch.cat([x_h_spatial, x_rest], dim=-1)
-        else:
-            x_encoded = x
+            parts.append(x[..., 1:h_end])  # drop x_0
+        if self.dim_s_ambient > 0:
+            assert self.ln_s is not None
+            parts.append(self.ln_s(x[..., h_end:s_end]))
+        if self.dim_e > 0:
+            assert self.ln_e is not None
+            parts.append(self.ln_e(x[..., s_end:]))
+        x_encoded = torch.cat(parts, dim=-1)
 
         # Concatenate inputs: [x_encoded || c_i || pe_i || m_i]
         mask_float = node_mask.unsqueeze(-1).float()  # (B, N, 1)
