@@ -19,12 +19,26 @@ class RiemannFMNodeEncoder(nn.Module):
     Concatenates [manifold_coord, text_embed, mask_scalar] and projects
     through a two-layer MLP, then adds the time embedding.
 
+    The Lorentz time-like coordinate ``x_0 = sqrt(||x_{1:}||^2 + 1/|κ_h|)``
+    is fully determined by the spatial coordinates and κ_h, and has
+    near-zero batch variance in the small-tangent regime.  Feeding it
+    through the encoder injects a shared DC mode that drives rank-1
+    collapse downstream, so the H block's x_0 is sliced off before the
+    MLP.  S and E blocks are passed through unchanged: sphere geometry
+    is rotationally symmetric across its ambient coordinates and
+    Euclidean has no constrained dimension.  Curvature information lost
+    by dropping x_0 is recovered elsewhere (FiLM via ATH-Norm).
+
     Args:
         ambient_dim: Product manifold ambient dimension D.
         text_dim: Text embedding dimension d_c (0 to disable text).
         node_dim: Output hidden dimension for nodes.
         time_dim: Time embedding dimension (added after MLP).
         pe_dim: Random-walk positional encoding dimension (0 to disable).
+        dim_h_ambient: Lorentz ambient dim (d_h + 1), 0 if H disabled.
+        dim_s_ambient: Sphere ambient dim (d_s + 1), 0 if S disabled.
+        dim_e: Euclidean dim, 0 if E disabled.  The three must sum to
+            ``ambient_dim`` and are assumed in canonical H→S→E order.
         dropout: Dropout rate.
     """
 
@@ -35,12 +49,29 @@ class RiemannFMNodeEncoder(nn.Module):
         node_dim: int,
         time_dim: int,
         pe_dim: int = 0,
+        dim_h_ambient: int = 0,
+        dim_s_ambient: int = 0,
+        dim_e: int = 0,
         dropout: float = 0.1,
     ) -> None:
         super().__init__()
         self.pe_dim = pe_dim
-        # Input: [x_i (D) || c_i (d_c) || pe_i (pe_dim) || m_i (1)]
-        in_dim = ambient_dim + text_dim + pe_dim + 1
+
+        if dim_h_ambient + dim_s_ambient + dim_e != ambient_dim:
+            msg = (
+                f"dim_h_ambient ({dim_h_ambient}) + dim_s_ambient "
+                f"({dim_s_ambient}) + dim_e ({dim_e}) must equal "
+                f"ambient_dim ({ambient_dim})"
+            )
+            raise ValueError(msg)
+        self.dim_h_ambient = dim_h_ambient
+        self.dim_s_ambient = dim_s_ambient
+        self.dim_e = dim_e
+
+        # Encoded manifold dim: drop x_0 from H block (if present).
+        drop_h = 1 if dim_h_ambient > 0 else 0
+        encoded_manifold_dim = ambient_dim - drop_h
+        in_dim = encoded_manifold_dim + text_dim + pe_dim + 1
         self.mlp = nn.Sequential(
             nn.Linear(in_dim, node_dim),
             nn.SiLU(),
@@ -75,9 +106,18 @@ class RiemannFMNodeEncoder(nn.Module):
         Returns:
             Node hidden states, shape ``(B, N, node_dim)``.
         """
-        # Concatenate inputs: [x_i || c_i || pe_i || m_i]
+        # Drop Lorentz time-like coord x_0 before feeding to MLP.
+        # Order is H (ambient d_h+1), S (ambient d_s+1), E (d_e).
+        if self.dim_h_ambient > 0:
+            x_h_spatial = x[..., 1 : self.dim_h_ambient]
+            x_rest = x[..., self.dim_h_ambient :]
+            x_encoded = torch.cat([x_h_spatial, x_rest], dim=-1)
+        else:
+            x_encoded = x
+
+        # Concatenate inputs: [x_encoded || c_i || pe_i || m_i]
         mask_float = node_mask.unsqueeze(-1).float()  # (B, N, 1)
-        features: list[Tensor] = [x]
+        features: list[Tensor] = [x_encoded]
         if node_text.shape[-1] > 0:
             features.append(node_text)
         if self.pe_dim > 0:

@@ -128,7 +128,10 @@ class TestNodeEncoder:
     def test_output_shape_no_text(
         self, ambient_dim: int,
     ) -> None:
-        enc = RiemannFMNodeEncoder(ambient_dim, 0, NODE_DIM, NODE_DIM)
+        enc = RiemannFMNodeEncoder(
+            ambient_dim, 0, NODE_DIM, NODE_DIM,
+            dim_h_ambient=DIM_H + 1, dim_s_ambient=DIM_S + 1, dim_e=DIM_E,
+        )
         x = torch.randn(B, N, ambient_dim)
         node_text = torch.zeros(B, N, 0)
         mask = torch.ones(B, N, dtype=torch.bool)
@@ -140,13 +143,39 @@ class TestNodeEncoder:
         self, ambient_dim: int,
     ) -> None:
         d_c = 16
-        enc = RiemannFMNodeEncoder(ambient_dim, d_c, NODE_DIM, NODE_DIM)
+        enc = RiemannFMNodeEncoder(
+            ambient_dim, d_c, NODE_DIM, NODE_DIM,
+            dim_h_ambient=DIM_H + 1, dim_s_ambient=DIM_S + 1, dim_e=DIM_E,
+        )
         x = torch.randn(B, N, ambient_dim)
         node_text = torch.randn(B, N, d_c)
         mask = torch.ones(B, N, dtype=torch.bool)
         t_emb = torch.randn(B, NODE_DIM)
         out = enc(x, node_text, mask, t_emb)
         assert out.shape == (B, N, NODE_DIM)
+
+
+    def test_drops_lorentz_time_coord(
+        self, ambient_dim: int,
+    ) -> None:
+        enc = RiemannFMNodeEncoder(
+            ambient_dim, 0, NODE_DIM, NODE_DIM,
+            dim_h_ambient=DIM_H + 1, dim_s_ambient=DIM_S + 1, dim_e=DIM_E,
+        ).eval()
+        # Expected input dim to first Linear: ambient_dim - 1 (drop x_0)
+        # + 0 (no text) + 0 (no pe) + 1 (mask).
+        assert enc.mlp[0].in_features == ambient_dim - 1 + 1
+
+        x = torch.randn(B, N, ambient_dim)
+        node_text = torch.zeros(B, N, 0)
+        mask = torch.ones(B, N, dtype=torch.bool)
+        t_emb = torch.randn(B, NODE_DIM)
+        out_a = enc(x, node_text, mask, t_emb)
+        # Perturbing only x_0 must leave the output unchanged.
+        x2 = x.clone()
+        x2[..., 0] += 10.0
+        out_b = enc(x2, node_text, mask, t_emb)
+        assert torch.allclose(out_a, out_b)
 
 
 class TestEdgeEncoder:
@@ -338,7 +367,10 @@ class TestEndToEndForwardPass:
         d_c = 0
         # Build all modules.
         time_emb = RiemannFMTimeEmbedding(NODE_DIM)
-        node_enc = RiemannFMNodeEncoder(ambient_dim, d_c, NODE_DIM, NODE_DIM)
+        node_enc = RiemannFMNodeEncoder(
+            ambient_dim, d_c, NODE_DIM, NODE_DIM,
+            dim_h_ambient=DIM_H + 1, dim_s_ambient=DIM_S + 1, dim_e=DIM_E,
+        )
         edge_enc = RiemannFMEdgeEncoder(K, 16, d_c, EDGE_DIM)
         edge_bias_mod = RiemannFMEdgeBias(EDGE_DIM, NUM_HEADS)
         geo_attn = RiemannFMGeodesicAttention(

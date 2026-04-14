@@ -97,6 +97,17 @@ class RiemannFM(nn.Module):
         ambient_dim = manifold.ambient_dim
         time_dim = node_dim
 
+        # Per-component ambient dims (H→S→E order), used by the node
+        # encoder to drop the Lorentz time-like coord x_0.  Absent
+        # components contribute 0.
+        dim_h_ambient = (
+            manifold.hyperbolic.ambient_dim if manifold.hyperbolic is not None else 0
+        )
+        dim_s_ambient = (
+            manifold.spherical.ambient_dim if manifold.spherical is not None else 0
+        )
+        dim_e = manifold.euclidean.ambient_dim if manifold.euclidean is not None else 0
+
         # Text projection: input_text_dim -> text_proj_dim.
         self.text_proj: nn.Linear | None
         if input_text_dim > 0 and self.text_proj_dim > 0:
@@ -114,6 +125,9 @@ class RiemannFM(nn.Module):
             node_dim=node_dim,
             time_dim=time_dim,
             pe_dim=pe_dim,
+            dim_h_ambient=dim_h_ambient,
+            dim_s_ambient=dim_s_ambient,
+            dim_e=dim_e,
             dropout=dropout,
         )
         self.edge_encoder = RiemannFMEdgeEncoder(
