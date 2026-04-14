@@ -3,11 +3,14 @@
 ATH-Norm is a time-conditioned adaptive layer normalization.
 Time-conditioned affine parameters (gamma, beta) are predicted from
 the time embedding, enabling the model to adjust normalization behavior
-across the flow trajectory.
+across the flow trajectory.  An optional auxiliary conditioning tensor
+(e.g. curvature scalars κ_h, κ_s) may be concatenated with t_emb before
+the adaLN projection so that gamma/beta also vary with manifold geometry.
 """
 
 from __future__ import annotations
 
+import torch
 from torch import Tensor, nn
 
 
@@ -16,14 +19,15 @@ class RiemannFMATHNorm(nn.Module):
 
     Steps:
       1. Layer-normalize the input features.
-      2. Apply time-conditioned affine: x' = gamma(t) * x_norm + beta(t).
-
-    This replaces standard LayerNorm with a time-aware variant that
-    allows the normalization scale/shift to vary across the flow.
+      2. Apply time-conditioned affine: x' = gamma(t, cond) * x_norm
+         + beta(t, cond), where ``cond`` is an optional auxiliary scalar
+         vector (e.g. [κ_h, κ_s]).
 
     Args:
         dim: Feature dimension (node_dim or edge_dim).
         time_dim: Dimension of the time embedding.
+        cond_dim: Extra per-batch conditioning dimensions concatenated
+            to t_emb before the adaLN projection.  0 disables.
         eps: LayerNorm epsilon.
     """
 
@@ -31,12 +35,14 @@ class RiemannFMATHNorm(nn.Module):
         self,
         dim: int,
         time_dim: int,
+        cond_dim: int = 0,
         eps: float = 1e-5,
     ) -> None:
         super().__init__()
+        self.cond_dim = cond_dim
         self.norm = nn.LayerNorm(dim, eps=eps, elementwise_affine=False)
-        # Time-conditioned affine: predict (gamma, beta) from t_emb.
-        self.adaLN = nn.Linear(time_dim, 2 * dim)
+        # Time- (and optionally curvature-) conditioned affine.
+        self.adaLN = nn.Linear(time_dim + cond_dim, 2 * dim)
         # Initialize near identity: gamma~1, beta~0.
         nn.init.zeros_(self.adaLN.weight)
         nn.init.zeros_(self.adaLN.bias)
@@ -44,6 +50,7 @@ class RiemannFMATHNorm(nn.Module):
 
     def forward(
         self, x: Tensor, t_emb: Tensor, node_mask: Tensor | None = None,
+        cond: Tensor | None = None,
     ) -> Tensor:
         """Apply adaptive layer normalization.
 
@@ -53,6 +60,8 @@ class RiemannFMATHNorm(nn.Module):
                 batch-scalar schedule, or ``(B, N, time_dim)`` for
                 per-node time (e.g. M_x/M_c labels from the collator).
             node_mask: Unused (kept for interface compatibility).
+            cond: Optional auxiliary conditioning, shape ``(B, cond_dim)``.
+                Broadcast to match t_emb's rank before concatenation.
 
         Returns:
             Normalized features, shape ``(B, N, dim)``.
@@ -60,8 +69,14 @@ class RiemannFMATHNorm(nn.Module):
         # 1. Layer-normalize.
         x_norm = self.norm(x)
 
-        # 2. Time-conditioned affine.  Predict (gamma, beta) per-batch
-        #    when t_emb is (B, time_dim); per-node when (B, N, time_dim).
+        # 2. Time- (and optionally curvature-) conditioned affine.
+        #    Predict (gamma, beta) per-batch when t_emb is (B, time_dim);
+        #    per-node when (B, N, time_dim).
+        if self.cond_dim > 0:
+            assert cond is not None, "cond required when cond_dim > 0"
+            if t_emb.dim() == 3 and cond.dim() == 2:
+                cond = cond.unsqueeze(1).expand(-1, t_emb.shape[1], -1)
+            t_emb = torch.cat([t_emb, cond], dim=-1)
         gamma_beta = self.adaLN(t_emb)
         gamma, beta = gamma_beta.chunk(2, dim=-1)
         if gamma.dim() == 2:
@@ -88,13 +103,15 @@ class RiemannFMPreNorm(nn.Module):
     def forward(
         self, x: Tensor, t_emb: Tensor | None = None,
         node_mask: Tensor | None = None,
+        cond: Tensor | None = None,
     ) -> Tensor:
-        """Apply LayerNorm (ignores t_emb and node_mask).
+        """Apply LayerNorm (ignores t_emb, node_mask, cond).
 
         Args:
             x: Input features, shape ``(B, N, dim)``.
             t_emb: Unused (kept for interface compatibility).
             node_mask: Unused.
+            cond: Unused.
 
         Returns:
             Normalized features, shape ``(B, N, dim)``.

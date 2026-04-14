@@ -108,6 +108,14 @@ class RiemannFM(nn.Module):
         )
         dim_e = manifold.euclidean.ambient_dim if manifold.euclidean is not None else 0
 
+        # Curvature conditioning dim: one scalar per curved component
+        # present in the product manifold (H, S).  Recovered into the
+        # network via ATH-Norm FiLM after x_0 / s_0 are stripped from
+        # the encoder input by the block-wise LayerNorm.
+        self._has_h_cond = manifold.hyperbolic is not None
+        self._has_s_cond = manifold.spherical is not None
+        cond_dim = int(self._has_h_cond) + int(self._has_s_cond)
+
         # Text projection: input_text_dim -> text_proj_dim.
         self.text_proj: nn.Linear | None
         if input_text_dim > 0 and self.text_proj_dim > 0:
@@ -156,8 +164,10 @@ class RiemannFM(nn.Module):
             use_edge_self_update=use_edge_self_update,
             use_dual_stream_cross=use_dual_stream_cross,
             use_text_condition=use_text_condition,
+            cond_dim=cond_dim,
             dropout=dropout,
         )
+        self._cond_dim = cond_dim
 
         # Prediction heads.
         self.vf_head = RiemannFMVFHead(node_dim, ambient_dim, manifold)
@@ -181,6 +191,26 @@ class RiemannFM(nn.Module):
         return torch.zeros(
             *x.shape[:-1], self.text_proj_dim, device=x.device, dtype=x.dtype,
         )
+
+    def _build_curvature_cond(
+        self, batch_size: int, device: torch.device, dtype: torch.dtype,
+    ) -> Tensor | None:
+        """Build per-batch curvature conditioning tensor for ATH-Norm FiLM.
+
+        Returns ``(B, cond_dim)`` with available curvature scalars in H→S
+        order, or None when no curved component is present.  Curvature
+        gradient is preserved (not detached) so FiLM adds a direct path
+        alongside the Riemannian-loss path.
+        """
+        if self._cond_dim == 0:
+            return None
+        parts: list[Tensor] = []
+        if self._has_h_cond:
+            parts.append(self.manifold.hyperbolic.curvature.reshape(1))  # type: ignore[union-attr]
+        if self._has_s_cond:
+            parts.append(self.manifold.spherical.curvature.reshape(1))  # type: ignore[union-attr]
+        cond = torch.cat(parts, dim=-1).to(device=device, dtype=dtype)
+        return cond.unsqueeze(0).expand(batch_size, -1)
 
     def forward(
         self,
@@ -221,7 +251,8 @@ class RiemannFM(nn.Module):
 
         # 3. RieFormer backbone.
         C_V = node_text_proj if self.text_proj_dim > 0 else None
-        h, g = self.backbone(h, g, x_t, t_emb, node_mask, C_V)
+        cond = self._build_curvature_cond(x_t.shape[0], x_t.device, x_t.dtype)
+        h, g = self.backbone(h, g, x_t, t_emb, node_mask, C_V, cond=cond)
 
         # 4. Prediction heads.
         V_hat = self.vf_head(h, x_t)

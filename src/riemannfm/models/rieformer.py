@@ -53,6 +53,7 @@ class RiemannFMRieFormer(nn.Module):
         use_edge_self_update: bool = True,
         use_dual_stream_cross: bool = True,
         use_text_condition: bool = True,
+        cond_dim: int = 0,
         dropout: float = 0.1,
     ) -> None:
         super().__init__()
@@ -79,6 +80,7 @@ class RiemannFMRieFormer(nn.Module):
                     use_dual_stream_cross=use_dual_stream_cross,
                     use_text_cross_attn=use_text,
                     text_dim=text_dim,
+                    cond_dim=cond_dim,
                     dropout=dropout,
                 ),
             )
@@ -94,6 +96,7 @@ class RiemannFMRieFormer(nn.Module):
         t_emb: Tensor,
         node_mask: Tensor,
         C_V: Tensor | None = None,
+        cond: Tensor | None = None,
     ) -> tuple[Tensor, Tensor]:
         """Forward pass through all L blocks.
 
@@ -104,12 +107,14 @@ class RiemannFMRieFormer(nn.Module):
             t_emb: Time embeddings, shape ``(B, time_dim)``.
             node_mask: Bool mask, shape ``(B, N)``.
             C_V: Node text embeddings, shape ``(B, N, text_dim)``.
+            cond: Auxiliary conditioning for ATH-Norm FiLM, shape
+                ``(B, cond_dim)``.  Plumbed to each block.
 
         Returns:
             Final (h, g) after L blocks, with final layer norm.
         """
         for block in self.layers:
-            h, g = block(h, g, x, t_emb, node_mask, C_V)
+            h, g = block(h, g, x, t_emb, node_mask, C_V, cond=cond)
 
         h = self.final_node_norm(h)
         g = self.final_edge_norm(g)

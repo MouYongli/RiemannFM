@@ -91,6 +91,7 @@ class RiemannFMBlock(nn.Module):
         use_dual_stream_cross: bool = True,
         use_text_cross_attn: bool = False,
         text_dim: int = 0,
+        cond_dim: int = 0,
         dropout: float = 0.1,
     ) -> None:
         super().__init__()
@@ -105,8 +106,12 @@ class RiemannFMBlock(nn.Module):
 
         # [B] Normalization (pre-norm style).
         if use_ath_norm:
-            self.norm1: nn.Module = RiemannFMATHNorm(node_dim, time_dim)
-            self.norm2: nn.Module = RiemannFMATHNorm(node_dim, time_dim)
+            self.norm1: nn.Module = RiemannFMATHNorm(
+                node_dim, time_dim, cond_dim=cond_dim,
+            )
+            self.norm2: nn.Module = RiemannFMATHNorm(
+                node_dim, time_dim, cond_dim=cond_dim,
+            )
         else:
             self.norm1 = RiemannFMPreNorm(node_dim)
             self.norm2 = RiemannFMPreNorm(node_dim)
@@ -152,6 +157,7 @@ class RiemannFMBlock(nn.Module):
         t_emb: Tensor,
         node_mask: Tensor,
         C_V: Tensor | None = None,
+        cond: Tensor | None = None,
     ) -> tuple[Tensor, Tensor]:
         """Forward pass through one RieFormer block.
 
@@ -163,13 +169,15 @@ class RiemannFMBlock(nn.Module):
             node_mask: Bool mask, shape ``(B, N)``.
             C_V: Node text embeddings for cross-attention,
                 shape ``(B, N, text_dim)``.  None to skip.
+            cond: Auxiliary conditioning for ATH-Norm (e.g. curvature
+                scalars), shape ``(B, cond_dim)``.  None when disabled.
 
         Returns:
             Updated (h, g) with same shapes.
         """
         # [A] Manifold attention with residual.
         bias = self.edge_bias(g)  # (B, H, N, N)
-        h = h + self.attn(self.norm1(h, t_emb, node_mask), x, bias, node_mask)
+        h = h + self.attn(self.norm1(h, t_emb, node_mask, cond=cond), x, bias, node_mask)
 
         # [C] Edge self-update via factorized attention (Def 5.11).
         if self.use_edge_self_update:
@@ -195,7 +203,7 @@ class RiemannFMBlock(nn.Module):
         # Feed-forward with residual.
         # NOTE: Deviation from Def 5.15 — adds FFN after text cross-attention.
         # Standard Transformer practice for additional nonlinear capacity.
-        h = h + self.ff_node(self.norm2(h, t_emb, node_mask))
+        h = h + self.ff_node(self.norm2(h, t_emb, node_mask, cond=cond))
         g = g + self.ff_edge(self.edge_norm2(g))
 
         # Mask virtual node hidden states.

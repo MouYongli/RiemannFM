@@ -115,6 +115,31 @@ class TestATHNorm:
         out.sum().backward()
         assert x.grad is not None
 
+    def test_cond_film_injection(self) -> None:
+        norm = RiemannFMATHNorm(NODE_DIM, NODE_DIM, cond_dim=2)
+        x = torch.randn(B, N, NODE_DIM)
+        t_emb = torch.randn(B, NODE_DIM)
+        cond_a = torch.tensor([[-1.0, 1.0]]).expand(B, 2)
+        cond_b = torch.tensor([[2.0, -3.0]]).expand(B, 2)
+        out_a = norm(x, t_emb, cond=cond_a)
+        out_b = norm(x, t_emb, cond=cond_b)
+        assert out_a.shape == (B, N, NODE_DIM)
+        # Different cond values must produce different outputs once the
+        # adaLN weights move off their zero init — drive a tiny grad step.
+        opt = torch.optim.SGD(norm.parameters(), lr=1.0)
+        (out_a.sum() + out_b.sum()).backward()
+        opt.step()
+        out_a2 = norm(x, t_emb, cond=cond_a)
+        out_b2 = norm(x, t_emb, cond=cond_b)
+        assert not torch.allclose(out_a2, out_b2)
+
+    def test_cond_required_when_cond_dim_set(self) -> None:
+        norm = RiemannFMATHNorm(NODE_DIM, NODE_DIM, cond_dim=2)
+        x = torch.randn(B, N, NODE_DIM)
+        t_emb = torch.randn(B, NODE_DIM)
+        with pytest.raises(AssertionError):
+            norm(x, t_emb, cond=None)
+
 
 class TestPreNorm:
     def test_output_shape(self) -> None:
