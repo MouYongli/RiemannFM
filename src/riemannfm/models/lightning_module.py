@@ -531,7 +531,7 @@ class RiemannFMPretrainModule(L.LightningModule):
             ),
             input_text_dim=input_text_dim,
             node_dim=model_cfg.node_dim,
-            d_a=int(getattr(model_cfg, "text_proj_dim", 256)),
+            d_a=int(getattr(model_cfg, "align_proj_dim", 256)),
             max_align_nodes=int(getattr(training_cfg, "max_align_nodes", 128)),
         )
 

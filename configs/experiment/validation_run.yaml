@@ -19,6 +19,7 @@ flow:
 
 model:
   text_proj_dim: 64
+  align_proj_dim: 256
   pe_dim: 8
 
 training:

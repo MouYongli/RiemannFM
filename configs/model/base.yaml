@@ -6,6 +6,7 @@ num_heads: 8
 edge_heads: 4
 rel_emb_dim: 48
 text_proj_dim: 384
+align_proj_dim: 256
 use_text_cross_attn: true
 text_cross_attn_every: 3
 dropout: 0.1
