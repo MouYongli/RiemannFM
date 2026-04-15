@@ -7,6 +7,11 @@ edge_heads: 2
 rel_emb_dim: 32
 text_proj_dim: 256
 align_proj_dim: 256
+# L_align projection depth (number of Linear layers in proj_g / proj_c).
+# 2 = Linear -> GELU -> Linear (legacy, preserves older checkpoints).
+# 3 = Linear -> LN -> GELU -> Linear -> LN -> GELU -> Linear (deeper capacity).
+align_proj_depth: 2
+align_proj_bn: false
 use_text_cross_attn: true
 text_cross_attn_every: 3
 dropout: 0.1

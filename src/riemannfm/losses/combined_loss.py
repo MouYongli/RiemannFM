@@ -29,6 +29,81 @@ if TYPE_CHECKING:
     from riemannfm.manifolds.product import RiemannFMProductManifold
 
 
+def _build_proj_mlp(
+    in_dim: int, out_dim: int, depth: int, use_bn: bool = False,
+) -> nn.Sequential:
+    """Bias-free projection MLP with LayerNorm + GELU between layers.
+
+    depth=1 -> Linear(in, out)
+    depth=2 -> Linear(in, out) -> GELU -> Linear(out, out)                     (legacy)
+    depth=3 -> Linear(in, out) -> LN -> GELU -> Linear(out, out) -> LN -> GELU -> Linear(out, out)
+
+    LayerNorm stabilises magnitudes in the widened d_a space and prevents
+    the later Linear blocks from amplifying a single dominant direction.
+
+    When ``use_bn=True`` an ``nn.BatchNorm1d(out_dim, affine=False)`` is
+    appended at the tail.  Per-feature batch standardisation counteracts
+    rank-1 collapse of the projector output (sigma_1/sigma_2 ~= 5 observed
+    at 10k steps without it): the 1/sqrt(running_var+eps) gain forces
+    every output dim to have unit variance and eliminates the near-
+    degenerate dim that otherwise amplifies Barlow's in-loss /std term.
+    affine=False keeps the projector's output scale determined entirely
+    by the contrastive / decorrelation loss, avoiding redundant learned
+    scale.
+    """
+    if depth < 1:
+        raise ValueError(f"align_proj_depth must be >= 1, got {depth}")
+    layers: list[nn.Module] = [nn.Linear(in_dim, out_dim, bias=False)]
+    for _i in range(depth - 1):
+        # Legacy depth=2 had no inter-layer LN; keep that behavior only when
+        # depth==2 to preserve checkpoint compatibility with earlier runs.
+        if depth > 2:
+            layers.append(nn.LayerNorm(out_dim))
+        layers.append(nn.GELU())
+        layers.append(nn.Linear(out_dim, out_dim, bias=False))
+    if use_bn:
+        layers.append(nn.BatchNorm1d(out_dim, affine=False))
+    return nn.Sequential(*layers)
+
+
+def _barlow_twins_loss_from_pairs(
+    g: Tensor, c: Tensor, lambda_off: float,
+) -> Tensor:
+    """Barlow Twins loss on paired (g, c) features.
+
+    Batch-standardizes each dimension (mean 0, std 1 across the M valid
+    pairs), computes the d_a x d_a cross-correlation matrix
+    ``C = g_bn.T @ c_bn / M``, and penalizes
+      L = Σ_i (1 - C_ii)^2 + λ_off * Σ_{i != j} C_ij^2
+
+    The on-diagonal term aligns matched pairs; the off-diagonal term
+    explicitly decorrelates feature dimensions, preventing the rank-1
+    collapse that traps InfoNCE.  No negatives, no temperature.
+
+    Args:
+        g: Projected graph features, shape ``(M, d_a)``.
+        c: Projected text embeddings, shape ``(M, d_a)``.
+        lambda_off: Weight on off-diagonal decorrelation term
+            (original paper: 5e-3).
+
+    Returns:
+        Scalar Barlow Twins loss.
+    """
+    if c.norm(dim=-1).max() < 1e-8 or g.shape[0] < 2:
+        return torch.tensor(0.0, device=g.device, dtype=g.dtype)
+
+    M, d_a = g.shape
+    eps = 1e-5
+    g_bn = (g - g.mean(dim=0, keepdim=True)) / (g.std(dim=0, keepdim=True) + eps)
+    c_bn = (c - c.mean(dim=0, keepdim=True)) / (c.std(dim=0, keepdim=True) + eps)
+
+    cross_corr = (g_bn.T @ c_bn) / M  # (d_a, d_a)
+
+    on_diag = (1.0 - cross_corr.diagonal()).pow(2).sum()
+    off_diag_sq_sum = cross_corr.pow(2).sum() - cross_corr.diagonal().pow(2).sum()
+    return on_diag + lambda_off * off_diag_sq_sum
+
+
 def _contrastive_loss_from_pairs(
     g: Tensor, c: Tensor, temperature: float,
 ) -> Tensor:
@@ -156,9 +231,13 @@ class RiemannFMCombinedLoss(nn.Module):
         edge_loss_mode: str = "bce",
         temperature: float = 0.07,
         mask_c_temperature: float = 0.07,
+        align_loss_mode: str = "infonce",
+        barlow_lambda_off: float = 5e-3,
         input_text_dim: int = 0,
         node_dim: int = 512,
         d_a: int = 256,
+        align_proj_depth: int = 2,
+        align_proj_bn: bool = False,
         max_align_nodes: int = 128,
     ) -> None:
         super().__init__()
@@ -171,6 +250,12 @@ class RiemannFMCombinedLoss(nn.Module):
         self.edge_loss_mode = edge_loss_mode
         self.temperature = temperature
         self.mask_c_temperature = mask_c_temperature
+        if align_loss_mode not in {"infonce", "barlow"}:
+            raise ValueError(
+                f"align_loss_mode must be 'infonce' or 'barlow', got {align_loss_mode}",
+            )
+        self.align_loss_mode = align_loss_mode
+        self.barlow_lambda_off = barlow_lambda_off
         self.max_align_nodes = max_align_nodes
 
         # L_align projections (Def 6.9).
@@ -186,15 +271,11 @@ class RiemannFMCombinedLoss(nn.Module):
             # the MLP preserves input diversity (cos-sim stays ~0.17).
             self.ln_g = nn.LayerNorm(node_dim)
             self.ln_c = nn.LayerNorm(input_text_dim)
-            self.proj_g = nn.Sequential(
-                nn.Linear(node_dim, d_a, bias=False),
-                nn.GELU(),
-                nn.Linear(d_a, d_a, bias=False),
+            self.proj_g = _build_proj_mlp(
+                node_dim, d_a, align_proj_depth, use_bn=align_proj_bn,
             )
-            self.proj_c = nn.Sequential(
-                nn.Linear(input_text_dim, d_a, bias=False),
-                nn.GELU(),
-                nn.Linear(d_a, d_a, bias=False),
+            self.proj_c = _build_proj_mlp(
+                input_text_dim, d_a, align_proj_depth, use_bn=align_proj_bn,
             )
 
         # L_mask_c head (semantic identification from geometry-real h).
@@ -311,9 +392,14 @@ class RiemannFMCombinedLoss(nn.Module):
                 assert self.ln_g is not None and self.ln_c is not None
                 g_valid = self.proj_g(self.ln_g(h_valid))
                 c_valid = self.proj_c(self.ln_c(t_valid))
-                l_align = _contrastive_loss_from_pairs(
-                    g_valid, c_valid, self.temperature,
-                )
+                if self.align_loss_mode == "barlow":
+                    l_align = _barlow_twins_loss_from_pairs(
+                        g_valid, c_valid, self.barlow_lambda_off,
+                    )
+                else:
+                    l_align = _contrastive_loss_from_pairs(
+                        g_valid, c_valid, self.temperature,
+                    )
         else:
             l_align = torch.tensor(0.0, device=V_hat.device, dtype=V_hat.dtype)
 

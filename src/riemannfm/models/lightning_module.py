@@ -529,9 +529,13 @@ class RiemannFMPretrainModule(L.LightningModule):
             mask_c_temperature=float(
                 getattr(training_cfg, "mask_c_temperature", 0.07),
             ),
+            align_loss_mode=str(getattr(training_cfg, "align_loss_mode", "infonce")),
+            barlow_lambda_off=float(getattr(training_cfg, "barlow_lambda_off", 5e-3)),
             input_text_dim=input_text_dim,
             node_dim=model_cfg.node_dim,
             d_a=int(getattr(model_cfg, "align_proj_dim", 256)),
+            align_proj_depth=int(getattr(model_cfg, "align_proj_depth", 2)),
+            align_proj_bn=bool(getattr(model_cfg, "align_proj_bn", False)),
             max_align_nodes=int(getattr(training_cfg, "max_align_nodes", 128)),
         )
 
