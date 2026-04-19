@@ -1,22 +1,28 @@
-"""Edge self-update and edge-to-attention bias (Def 5.10-5.11).
+"""Edge self-update and edge-to-attention bias (spec §12.3, §14).
 
-The edge self-update uses factorized head/tail attention to aggregate
-information from other edges sharing the same head or tail node.
-Edge bias projects edge features into per-head scalars that bias the
-attention logits.
+``RiemannFMEdgeBias``: per-head bias for A_V (spec §12.3).
+
+``RiemannFMEdgeSelfUpdate`` (sub-module C, spec §14): refines edge
+hidden states using the **current-layer** node hidden pair plus the
+geometric direction ``π^T(log_xi(xj))``.  Edge hidden dimension is
+``d_b``; node hidden dimension is ``d_v``.  ``π^T`` mirrors the node
+encoder's ``π`` — drops the Lorentz time tangent, per-block-LN on
+spherical and Euclidean tangent slices.
 """
 
 from __future__ import annotations
 
-import math
+from typing import TYPE_CHECKING
 
 import torch
-import torch.nn.functional as F
 from torch import Tensor, nn
+
+if TYPE_CHECKING:
+    from riemannfm.manifolds.product import RiemannFMProductManifold
 
 
 class RiemannFMEdgeBias(nn.Module):
-    """Project edge features into per-head attention bias (Def 5.6).
+    """Project edge features into per-head attention bias (spec §12.3).
 
     Args:
         edge_dim: Edge hidden dimension.
@@ -36,98 +42,109 @@ class RiemannFMEdgeBias(nn.Module):
         Returns:
             Per-head bias, shape ``(B, num_heads, N, N)``.
         """
-        # (B, N, N, edge_dim) -> (B, N, N, H) -> (B, H, N, N)
         result: Tensor = self.proj(g).permute(0, 3, 1, 2)
         return result
 
 
 class RiemannFMEdgeSelfUpdate(nn.Module):
-    """Factorized edge self-update via decomposed attention (Def 5.11).
+    """Edge self-update C via MLP on [h_i ‖ h_j ‖ π^T(log_xi(xj)) ‖ h_ij_bar]
+    (spec def 14.1).
 
-    For each edge (i, j), aggregates information from:
-      - Head-side: other edges sharing head node i, i.e. {h_{ip} : p != j}
-      - Tail-side: other edges sharing tail node j, i.e. {h_{pj} : p != i}
-
-    Each side uses independent QKV projections (6 matrices total).
-
-    Residual update:
-      g'_{ij} = g_{ij} + MLP([g_{ij} || g_head || g_tail])
+    ``h_ij_bar = ATH-Norm(h_ij^{(l-1)})`` is applied externally by the
+    block; this module consumes it directly.
 
     Args:
-        edge_dim: Edge hidden dimension.
+        manifold: Product manifold (used for ``log_map``).
+        node_dim: Node hidden dim ``d_v``.
+        edge_dim: Edge hidden dim ``d_b``.
+        dim_h_ambient: Lorentz ambient dim (d_h + 1); 0 disables H.
+        dim_s_ambient: Sphere ambient dim (d_s + 1); 0 disables S.
+        dim_e: Euclidean dim; 0 disables E.
         dropout: Dropout rate.
     """
 
     def __init__(
         self,
+        manifold: RiemannFMProductManifold,
+        node_dim: int,
         edge_dim: int,
+        dim_h_ambient: int,
+        dim_s_ambient: int,
+        dim_e: int,
         dropout: float = 0.1,
     ) -> None:
         super().__init__()
-        self.scale = 1.0 / math.sqrt(edge_dim)
+        self.manifold = manifold
+        self.dim_h_ambient = dim_h_ambient
+        self.dim_s_ambient = dim_s_ambient
+        self.dim_e = dim_e
 
-        # Head-side attention: query from (i,j), key/value from (i,p).
-        self.W_eq_head = nn.Linear(edge_dim, edge_dim, bias=False)
-        self.W_ek_head = nn.Linear(edge_dim, edge_dim, bias=False)
-        self.W_ev_head = nn.Linear(edge_dim, edge_dim, bias=False)
+        # π^T LN layers mirror the node encoder's π LN layers: LN on the
+        # S tangent (d_s + 1 dims, keep rotational symmetry) and LN on
+        # the E tangent (d_e dims). H tangent drops the Lorentz time
+        # dim (tangent freedom is d_h).
+        self.ln_s = nn.LayerNorm(dim_s_ambient) if dim_s_ambient > 0 else None
+        self.ln_e = nn.LayerNorm(dim_e) if dim_e > 0 else None
 
-        # Tail-side attention: query from (i,j), key/value from (p,j).
-        self.W_eq_tail = nn.Linear(edge_dim, edge_dim, bias=False)
-        self.W_ek_tail = nn.Linear(edge_dim, edge_dim, bias=False)
-        self.W_ev_tail = nn.Linear(edge_dim, edge_dim, bias=False)
+        drop_h = 1 if dim_h_ambient > 0 else 0
+        tangent_readout_dim = (
+            (dim_h_ambient - drop_h)
+            + dim_s_ambient
+            + dim_e
+        )
 
-        # Residual MLP: [g_{ij} || g_head || g_tail] -> edge_dim.
+        in_dim = 2 * node_dim + tangent_readout_dim + edge_dim
         self.mlp = nn.Sequential(
-            nn.Linear(3 * edge_dim, edge_dim),
+            nn.Linear(in_dim, edge_dim),
             nn.SiLU(),
             nn.Dropout(dropout),
             nn.Linear(edge_dim, edge_dim),
         )
 
-    def forward(self, g: Tensor) -> Tensor:
-        """Update edge features via factorized attention.
+    def _proj_tangent_readout(self, v: Tensor) -> Tensor:
+        """π^T: drop Lorentz time tangent, LN spherical & Euclidean slices."""
+        h_end = self.dim_h_ambient
+        s_end = h_end + self.dim_s_ambient
+        parts: list[Tensor] = []
+        if self.dim_h_ambient > 0:
+            parts.append(v[..., 1:h_end])  # drop tangent "time" dim
+        if self.dim_s_ambient > 0:
+            assert self.ln_s is not None
+            parts.append(self.ln_s(v[..., h_end:s_end]))
+        if self.dim_e > 0:
+            assert self.ln_e is not None
+            parts.append(self.ln_e(v[..., s_end:]))
+        return torch.cat(parts, dim=-1)
+
+    def forward(
+        self,
+        h_E_bar: Tensor,
+        h_V: Tensor,
+        x: Tensor,
+    ) -> Tensor:
+        """Compute Δh_E for residual update (spec def 14.1).
 
         Args:
-            g: Edge hidden states, shape ``(B, N, N, edge_dim)``.
+            h_E_bar: Pre-normalized edge hidden, shape ``(B, N, N, d_b)``.
+            h_V: **Current-layer** node hidden (post-A_V, per §14.2),
+                shape ``(B, N, d_v)``.
+            x: Manifold coordinates, shape ``(B, N, D)``.
 
         Returns:
-            Updated edge features, shape ``(B, N, N, edge_dim)``.
+            Edge residual Δh_E, shape ``(B, N, N, d_b)``.
         """
-        N = g.shape[1]
+        B, N, _, _ = h_E_bar.shape
 
-        # Self-exclusion mask: prevent edge (i,j) from attending to itself.
-        # For head-side: exclude p=j; for tail-side: exclude p=i.
-        # Both use the same NxN identity mask on the last two dims.
-        eye_mask = torch.eye(N, device=g.device, dtype=torch.bool)  # (N, N)
+        # Pairwise log map: v[b, i, j] = log_{x_i}(x_j) in ambient coords.
+        xi = x.unsqueeze(2).expand(B, N, N, -1)
+        xj = x.unsqueeze(1).expand(B, N, N, -1)
+        v_ij = self.manifold.log_map(xi.reshape(B * N * N, -1), xj.reshape(B * N * N, -1))
+        v_ij = v_ij.reshape(B, N, N, -1)
+        pi_v = self._proj_tangent_readout(v_ij)
 
-        # --- Head-side: fix row i, attend over columns (j queries p) ---
-        # g[:, i, j, :] queries; g[:, i, p, :] keys/values
-        # This is attention along dim 2 for each fixed i (dim 1).
-        q_head = self.W_eq_head(g)  # (B, N, N, D)
-        k_head = self.W_ek_head(g)  # (B, N, N, D)
-        v_head = self.W_ev_head(g)  # (B, N, N, D)
-        # attn_head[b, i, j, p] = q[b,i,j] · k[b,i,p] / sqrt(D)
-        attn_head = torch.matmul(q_head, k_head.transpose(-2, -1)) * self.scale  # (B, N, N, N)
-        # Mask p=j: eye_mask[j, p] is True when j==p
-        attn_head = attn_head.masked_fill(eye_mask.unsqueeze(0).unsqueeze(0), float("-inf"))
-        attn_head = F.softmax(attn_head, dim=-1)  # softmax over p
-        g_head = torch.matmul(attn_head, v_head)  # (B, N, N, D)
+        h_i = h_V.unsqueeze(2).expand(B, N, N, -1)
+        h_j = h_V.unsqueeze(1).expand(B, N, N, -1)
+        combined = torch.cat([h_i, h_j, pi_v, h_E_bar], dim=-1)
 
-        # --- Tail-side: fix col j, attend over rows (i queries p) ---
-        # g[:, i, j, :] queries; g[:, p, j, :] keys/values
-        # Transpose to (B, N_j, N_i, D), do attention along dim 2, transpose back.
-        g_t = g.permute(0, 2, 1, 3)  # (B, j, i, D)
-        q_tail = self.W_eq_tail(g_t)
-        k_tail = self.W_ek_tail(g_t)
-        v_tail = self.W_ev_tail(g_t)
-        attn_tail = torch.matmul(q_tail, k_tail.transpose(-2, -1)) * self.scale  # (B, N, N, N)
-        # Mask p=i: after transpose, dim 2 is i and dim 3 is p
-        attn_tail = attn_tail.masked_fill(eye_mask.unsqueeze(0).unsqueeze(0), float("-inf"))
-        attn_tail = F.softmax(attn_tail, dim=-1)
-        g_tail = torch.matmul(attn_tail, v_tail).permute(0, 2, 1, 3)  # (B, N, N, D)
-
-        # MLP([g || g_head || g_tail]).
-        # Residual connection is applied externally by the caller (RieFormerBlock).
-        combined = torch.cat([g, g_head, g_tail], dim=-1)  # (B, N, N, 3D)
-        result: Tensor = self.mlp(combined)
-        return result
+        out: Tensor = self.mlp(combined)
+        return out

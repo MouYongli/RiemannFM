@@ -82,7 +82,11 @@ class RiemannFMNodeEncoder(nn.Module):
         # Encoded manifold dim: drop x_0 from H block (if present).
         drop_h = 1 if dim_h_ambient > 0 else 0
         encoded_manifold_dim = ambient_dim - drop_h
-        in_dim = encoded_manifold_dim + text_dim + pe_dim + 1
+        # Three per-node scalar bits (spec def 10.4):
+        #   - node_mask     : real (1) vs virtual (0)
+        #   - m_text        : text kept (1) vs replaced by mask_emb (0)
+        #   - m_coord       : coord from data (1) vs held at prior (0)
+        in_dim = encoded_manifold_dim + text_dim + pe_dim + 3
         self.mlp = nn.Sequential(
             nn.Linear(in_dim, node_dim),
             nn.SiLU(),
@@ -100,19 +104,26 @@ class RiemannFMNodeEncoder(nn.Module):
         node_text: Tensor,
         node_mask: Tensor,
         t_emb: Tensor,
+        m_text: Tensor | None = None,
+        m_coord: Tensor | None = None,
         node_pe: Tensor | None = None,
     ) -> Tensor:
-        """Encode node inputs.
+        """Encode node inputs (spec def 10.4).
 
         Args:
             x: Manifold coordinates, shape ``(B, N, D)``.
-            node_text: Text embeddings, shape ``(B, N, d_c)``.
-            node_mask: Bool mask, shape ``(B, N)``.
+            node_text: Text embeddings (already text-masked by caller when
+                applicable), shape ``(B, N, d_c)``.
+            node_mask: Real-vs-virtual bool mask, shape ``(B, N)``.
             t_emb: Time embeddings.  Shape ``(B, time_dim)`` for a
-                batch-scalar schedule, or ``(B, N, time_dim)`` when the
-                collator assigned per-node mask labels (M_x=0 / M_c=1).
-            node_pe: Random-walk positional encoding, shape ``(B, N, pe_dim)``.
-                Required iff ``pe_dim > 0``.
+                batch-scalar schedule, or ``(B, N, time_dim)`` when a
+                per-node time is used.
+            m_text: Text-visibility bit, shape ``(B, N)``. ``None`` is
+                treated as all-ones.
+            m_coord: Coord-visibility bit, shape ``(B, N)``. ``None`` is
+                treated as all-ones.
+            node_pe: Random-walk positional encoding,
+                shape ``(B, N, pe_dim)``. Required iff ``pe_dim > 0``.
 
         Returns:
             Node hidden states, shape ``(B, N, node_dim)``.
@@ -123,7 +134,7 @@ class RiemannFMNodeEncoder(nn.Module):
         s_end = h_end + self.dim_s_ambient
         parts: list[Tensor] = []
         if self.dim_h_ambient > 0:
-            parts.append(x[..., 1:h_end])  # drop x_0
+            parts.append(x[..., 1:h_end])
         if self.dim_s_ambient > 0:
             assert self.ln_s is not None
             parts.append(self.ln_s(x[..., h_end:s_end]))
@@ -132,8 +143,17 @@ class RiemannFMNodeEncoder(nn.Module):
             parts.append(self.ln_e(x[..., s_end:]))
         x_encoded = torch.cat(parts, dim=-1)
 
-        # Concatenate inputs: [x_encoded || c_i || pe_i || m_i]
-        mask_float = node_mask.unsqueeze(-1).float()  # (B, N, 1)
+        B, N = node_mask.shape
+        mask_float = node_mask.unsqueeze(-1).to(x.dtype)  # (B, N, 1)
+        if m_text is None:
+            m_text_bit = torch.ones(B, N, 1, dtype=x.dtype, device=x.device)
+        else:
+            m_text_bit = m_text.unsqueeze(-1).to(x.dtype)
+        if m_coord is None:
+            m_coord_bit = torch.ones(B, N, 1, dtype=x.dtype, device=x.device)
+        else:
+            m_coord_bit = m_coord.unsqueeze(-1).to(x.dtype)
+
         features: list[Tensor] = [x_encoded]
         if node_text.shape[-1] > 0:
             features.append(node_text)
@@ -141,28 +161,31 @@ class RiemannFMNodeEncoder(nn.Module):
             assert node_pe is not None, "pe_dim>0 requires node_pe"
             features.append(node_pe.to(x.dtype))
         features.append(mask_float)
-        cat = torch.cat(features, dim=-1)  # (B, N, D + d_c + pe_dim + 1)
+        features.append(m_text_bit)
+        features.append(m_coord_bit)
+        cat = torch.cat(features, dim=-1)
 
-        h: Tensor = self.mlp(cat)  # (B, N, node_dim)
-        # Add time conditioning.  Broadcast along N when scalar per batch;
-        # use per-node projection when the embedding already carries N.
+        h: Tensor = self.mlp(cat)
         t_proj = self.time_proj(t_emb)
         if t_proj.dim() == 2:
-            t_proj = t_proj.unsqueeze(1)  # (B, 1, node_dim)
+            t_proj = t_proj.unsqueeze(1)
         h = h + t_proj
         return h
 
 
 class RiemannFMEdgeEncoder(nn.Module):
-    """Encode edge inputs into initial hidden representations (Def 5.4).
+    """Encode edge inputs into initial hidden representations (spec def 10.6).
 
-    For each edge (i,j), combines the multi-hot edge type vector with
-    learnable relation embeddings and optional relation text embeddings.
+    ``h_{ij}^{E,(0)} = MLP_edge([E_t·R ‖ E_t·C_R ‖ μ_{t,ij}])``
+
+    The relation embedding ``R`` is owned at the top level (shared with
+    the edge type head, see ``RiemannFM.rel_emb``) and passed at forward
+    time so there is a single global matrix.
 
     Args:
         num_edge_types: Number of relation types K.
         rel_emb_dim: Dimension of learnable relation embeddings.
-        text_dim: Relation text embedding dimension d_c (0 to disable).
+        text_dim: Relation text embedding dimension d_c (0 disables).
         edge_dim: Output hidden dimension for edges.
         dropout: Dropout rate.
     """
@@ -177,14 +200,9 @@ class RiemannFMEdgeEncoder(nn.Module):
     ) -> None:
         super().__init__()
         self.num_edge_types = num_edge_types
-        # Learnable per-relation embeddings: W_rel in R^{K x rel_emb_dim}.
-        self.W_rel = nn.Parameter(
-            nn.init.xavier_uniform_(
-                Tensor(num_edge_types, rel_emb_dim),
-            ),
-        )
-        # Input dim: weighted sum of W_rel (rel_emb_dim) + weighted C_R (text_dim)
-        in_dim = rel_emb_dim + (text_dim if text_dim > 0 else 0)
+        self.rel_emb_dim = rel_emb_dim
+        # +1 for μ_{t,ij} bit (spec def 10.6).
+        in_dim = rel_emb_dim + (text_dim if text_dim > 0 else 0) + 1
         self.mlp = nn.Sequential(
             nn.Linear(in_dim, edge_dim),
             nn.SiLU(),
@@ -195,27 +213,93 @@ class RiemannFMEdgeEncoder(nn.Module):
     def forward(
         self,
         E_t: Tensor,
+        R: Tensor,
+        mu_t: Tensor,
         C_R: Tensor | None = None,
     ) -> Tensor:
         """Encode edge inputs.
 
         Args:
             E_t: Interpolated edge types, shape ``(B, N, N, K)``.
-            C_R: Relation text embeddings, shape ``(K, d_c)``.
-                None if text conditioning is disabled.
+            R: Global relation embedding, shape ``(K, rel_emb_dim)``.
+            mu_t: Mask indicator (1 = masked), shape ``(B, N, N)``.
+            C_R: Relation text embeddings, shape ``(K, d_c)``. ``None``
+                when text conditioning is disabled.
 
         Returns:
             Edge hidden states, shape ``(B, N, N, edge_dim)``.
         """
-        # Weighted sum of relation embeddings: E_t @ W_rel -> (B, N, N, rel_emb_dim)
-        rel_feat = E_t @ self.W_rel  # (B,N,N,K) @ (K, rel_emb_dim)
+        rel_feat = E_t @ R  # (B, N, N, rel_emb_dim)
 
+        features: list[Tensor] = [rel_feat]
         if C_R is not None and C_R.shape[-1] > 0:
-            # Weighted sum of relation text embeddings.
-            text_feat = E_t @ C_R  # (B,N,N,K) @ (K, d_c) -> (B,N,N,d_c)
-            edge_input = torch.cat([rel_feat, text_feat], dim=-1)
-        else:
-            edge_input = rel_feat
+            features.append(E_t @ C_R)  # (B, N, N, d_c)
+        features.append(mu_t.to(rel_feat.dtype).unsqueeze(-1))  # (B, N, N, 1)
+        edge_input = torch.cat(features, dim=-1)
 
-        result: Tensor = self.mlp(edge_input)  # (B, N, N, edge_dim)
-        return result
+        out: Tensor = self.mlp(edge_input)
+        return out
+
+
+class RiemannFMRelationEncoder(nn.Module):
+    """Encode relation inputs into initial hidden representations (spec def 10.5).
+
+    ``h_k^{R,(0)} = MLP_rel([r_k ‖ c_{r_k}]) + W_tp^R · t_emb``
+
+    Args:
+        rel_emb_dim: Dimension of learnable relation embeddings d_r.
+        text_dim: Relation text embedding dimension d_c (0 disables).
+        rel_dim: Output relation-hidden dimension (= d_r by default).
+        time_dim: Time embedding dimension.
+        dropout: Dropout rate.
+    """
+
+    def __init__(
+        self,
+        rel_emb_dim: int,
+        text_dim: int,
+        rel_dim: int,
+        time_dim: int,
+        dropout: float = 0.1,
+    ) -> None:
+        super().__init__()
+        self.rel_emb_dim = rel_emb_dim
+        in_dim = rel_emb_dim + (text_dim if text_dim > 0 else 0)
+        self.mlp = nn.Sequential(
+            nn.Linear(in_dim, rel_dim),
+            nn.SiLU(),
+            nn.Dropout(dropout),
+            nn.Linear(rel_dim, rel_dim),
+        )
+        self.time_proj = nn.Linear(time_dim, rel_dim)
+
+    def forward(
+        self,
+        R: Tensor,
+        t_emb: Tensor,
+        C_R: Tensor | None = None,
+    ) -> Tensor:
+        """Encode relation inputs.
+
+        Args:
+            R: Relation embedding parameter, shape ``(K, rel_emb_dim)``.
+            t_emb: Time embedding, shape ``(B, time_dim)``.
+            C_R: Relation text embeddings, shape ``(K, d_c)``. ``None``
+                when text conditioning is disabled.
+
+        Returns:
+            Relation hidden states, shape ``(B, K, rel_dim)``.
+        """
+        parts: list[Tensor] = [R]
+        if C_R is not None and C_R.shape[-1] > 0:
+            parts.append(C_R.to(R.dtype))
+        rel_in = torch.cat(parts, dim=-1)  # (K, in_dim)
+
+        rel_hidden: Tensor = self.mlp(rel_in)  # (K, rel_dim)
+        # Broadcast to batch: (B, K, rel_dim).
+        B = t_emb.shape[0]
+        rel_hidden = rel_hidden.unsqueeze(0).expand(B, -1, -1)
+
+        t_proj: Tensor = self.time_proj(t_emb).unsqueeze(1)  # (B, 1, rel_dim)
+        out: Tensor = rel_hidden + t_proj
+        return out

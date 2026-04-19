@@ -1,7 +1,8 @@
-"""RieFormer: stack of L RieFormer blocks.
+"""RieFormer: stack of L RieFormer blocks (spec §11–16).
 
-Takes encoded node/edge hidden states and applies L transformer blocks,
-each with manifold attention, edge updates, and optional text injection.
+Threads the three evolving streams — node ``H^V``, relation ``H^R``, and
+edge ``H^E`` — through ``num_layers`` identical blocks, then applies a
+final per-stream LayerNorm.
 """
 
 from __future__ import annotations
@@ -17,106 +18,118 @@ if TYPE_CHECKING:
 
 
 class RiemannFMRieFormer(nn.Module):
-    """Stack of L RieFormer transformer blocks.
+    """Stack of L RieFormer transformer blocks (spec §11).
 
     Args:
-        num_layers: Number of transformer blocks L.
-        node_dim: Node hidden dimension.
-        edge_dim: Edge hidden dimension.
-        num_heads: Number of attention heads.
-        edge_heads: Number of edge factorization heads.
+        num_layers: L.
         manifold: Product manifold.
-        time_dim: Time embedding dimension.
-        text_dim: Text embedding dimension (0 to disable).
-        text_cross_attn_every: Insert text cross-attention every N layers.
-        use_geodesic_kernel: Enable geodesic kernel in attention.
-        use_ath_norm: Use ATH-Norm or plain LayerNorm.
-        use_edge_self_update: Enable edge self-update.
-        use_dual_stream_cross: Enable edge↔node cross-interaction.
-        use_text_condition: Enable text conditioning globally.
+        node_dim / rel_dim / edge_dim: Hidden dims d_v / d_r / d_b.
+        num_edge_types / rel_emb_dim: Config for A_R's bias matrix.
+        num_heads_V / num_heads_R: Head counts for V- and R-side
+            attentions.
+        time_dim: Time embedding dim.
+        cond_dim: Curvature-conditioning dim for A_V's ATH-Norm.
+        text_dim: Projected text dim (0 disables E_V / E_R globally).
+        dim_h_ambient / dim_s_ambient / dim_e: Product-manifold ambient
+            dims per component, forwarded to edge self-update's π^T.
+        use_a_r / use_c / use_d_vr / use_d_ve / use_e_v / use_e_r:
+            Module-level ablation toggles.
+        use_geodesic_kernel / use_relation_similarity_bias: Attention
+            ablation toggles.
+        ff_mult: FFN hidden multiplier.
         dropout: Dropout rate.
     """
 
     def __init__(
         self,
         num_layers: int,
-        node_dim: int,
-        edge_dim: int,
-        num_heads: int,
-        edge_heads: int,
         manifold: RiemannFMProductManifold,
+        node_dim: int,
+        rel_dim: int,
+        edge_dim: int,
+        num_edge_types: int,
+        rel_emb_dim: int,
+        num_heads_V: int,
+        num_heads_R: int,
         time_dim: int,
-        text_dim: int = 0,
-        text_cross_attn_every: int = 999,
-        use_geodesic_kernel: bool = True,
-        use_ath_norm: bool = True,
-        use_edge_self_update: bool = True,
-        use_dual_stream_cross: bool = True,
-        use_text_condition: bool = True,
         cond_dim: int = 0,
+        text_dim: int = 0,
+        dim_h_ambient: int = 0,
+        dim_s_ambient: int = 0,
+        dim_e: int = 0,
+        use_a_r: bool = True,
+        use_c: bool = True,
+        use_d_vr: bool = True,
+        use_d_ve: bool = True,
+        use_e_v: bool = True,
+        use_e_r: bool = True,
+        use_geodesic_kernel: bool = True,
+        use_relation_similarity_bias: bool = True,
+        ff_mult: int = 4,
         dropout: float = 0.1,
     ) -> None:
         super().__init__()
 
-        self.layers = nn.ModuleList()
-        for i in range(num_layers):
-            # Text cross-attention is inserted every N layers.
-            use_text = (
-                use_text_condition
-                and text_dim > 0
-                and (i + 1) % text_cross_attn_every == 0
+        self.layers = nn.ModuleList([
+            RiemannFMBlock(
+                manifold=manifold,
+                node_dim=node_dim,
+                rel_dim=rel_dim,
+                edge_dim=edge_dim,
+                num_edge_types=num_edge_types,
+                rel_emb_dim=rel_emb_dim,
+                num_heads_V=num_heads_V,
+                num_heads_R=num_heads_R,
+                time_dim=time_dim,
+                cond_dim=cond_dim,
+                text_dim=text_dim,
+                dim_h_ambient=dim_h_ambient,
+                dim_s_ambient=dim_s_ambient,
+                dim_e=dim_e,
+                use_a_r=use_a_r,
+                use_c=use_c,
+                use_d_vr=use_d_vr,
+                use_d_ve=use_d_ve,
+                use_e_v=use_e_v,
+                use_e_r=use_e_r,
+                use_geodesic_kernel=use_geodesic_kernel,
+                use_relation_similarity_bias=use_relation_similarity_bias,
+                ff_mult=ff_mult,
+                dropout=dropout,
             )
-            self.layers.append(
-                RiemannFMBlock(
-                    node_dim=node_dim,
-                    edge_dim=edge_dim,
-                    num_heads=num_heads,
-                    edge_heads=edge_heads,
-                    manifold=manifold,
-                    time_dim=time_dim,
-                    use_geodesic_kernel=use_geodesic_kernel,
-                    use_ath_norm=use_ath_norm,
-                    use_edge_self_update=use_edge_self_update,
-                    use_dual_stream_cross=use_dual_stream_cross,
-                    use_text_cross_attn=use_text,
-                    text_dim=text_dim,
-                    cond_dim=cond_dim,
-                    dropout=dropout,
-                ),
-            )
+            for _ in range(num_layers)
+        ])
 
         self.final_node_norm = nn.LayerNorm(node_dim)
+        self.final_rel_norm = nn.LayerNorm(rel_dim)
         self.final_edge_norm = nn.LayerNorm(edge_dim)
 
     def forward(
         self,
-        h: Tensor,
-        g: Tensor,
+        h_V: Tensor,
+        h_R: Tensor,
+        h_E: Tensor,
         x: Tensor,
+        R: Tensor,
         t_emb: Tensor,
         node_mask: Tensor,
         C_V: Tensor | None = None,
+        C_R: Tensor | None = None,
         cond: Tensor | None = None,
-    ) -> tuple[Tensor, Tensor]:
-        """Forward pass through all L blocks.
-
-        Args:
-            h: Node hidden states, shape ``(B, N, node_dim)``.
-            g: Edge hidden states, shape ``(B, N, N, edge_dim)``.
-            x: Manifold coordinates, shape ``(B, N, D)``.
-            t_emb: Time embeddings, shape ``(B, time_dim)``.
-            node_mask: Bool mask, shape ``(B, N)``.
-            C_V: Node text embeddings, shape ``(B, N, text_dim)``.
-            cond: Auxiliary conditioning for ATH-Norm FiLM, shape
-                ``(B, cond_dim)``.  Plumbed to each block.
+    ) -> tuple[Tensor, Tensor, Tensor]:
+        """Forward pass through all L blocks (spec §18.1).
 
         Returns:
-            Final (h, g) after L blocks, with final layer norm.
+            Final ``(h_V, h_R, h_E)`` after the L blocks + final
+            per-stream LayerNorm.
         """
         for block in self.layers:
-            h, g = block(h, g, x, t_emb, node_mask, C_V, cond=cond)
+            h_V, h_R, h_E = block(
+                h_V, h_R, h_E, x, R, t_emb, node_mask,
+                C_V=C_V, C_R=C_R, cond=cond,
+            )
 
-        h = self.final_node_norm(h)
-        g = self.final_edge_norm(g)
-
-        return h, g
+        h_V = self.final_node_norm(h_V)
+        h_R = self.final_rel_norm(h_R)
+        h_E = self.final_edge_norm(h_E)
+        return h_V, h_R, h_E

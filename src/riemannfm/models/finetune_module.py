@@ -392,7 +392,7 @@ class RiemannFMKGCModule(L.LightningModule):
         )
 
         manifold = pretrained.manifold
-        entity_emb = pretrained.entity_emb
+        entity_emb = pretrained.pretrain_heads.entity_emb
         ambient_dim = manifold.ambient_dim
 
         # Build task head.

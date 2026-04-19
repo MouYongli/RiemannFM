@@ -1,9 +1,19 @@
-"""Single RieFormer transformer block.
+"""Single RieFormer transformer block (spec §11).
 
-Composes: Manifold Attention (A) → ATH-Norm (B) → Edge Self-Update (C)
-→ Cross-Interaction (D) → [Text Injection (E)] → Feed-Forward.
+Eight-stage composition per spec §11.1 (Pre-Norm residuals throughout):
 
-Each sub-module is gated by ablation flags from the config.
+  1. [A_V]  Node manifold self-attention (spec §12)
+  2. [A_R]  Relation self-attention (spec §13)
+  3. [C]    Edge self-update, MLP on [h_i ‖ h_j ‖ π^T(log_xi xj) ‖ h_E]
+            (spec §14)
+  4. [D_VR] Bidirectional node ↔ relation cross-attention (spec §15.1)
+  5. [D_VE] Node ← edge cross-attention + edge ← node MLP (spec §15.2)
+  6. [E_V]  Node-text cross-attention (spec §16.1)
+  7. [E_R]  Relation-text cross-attention (spec §16.2)
+  8. [FFN]  Independent feed-forwards for V, R, E (spec §16.4)
+
+Only A_V's ATH-Norm receives the curvature conditioning vector (§12.4);
+the rest use ATH-Norm without the curvature channel (§13.2, §15, §16).
 """
 
 from __future__ import annotations
@@ -12,24 +22,32 @@ from typing import TYPE_CHECKING
 
 from torch import Tensor, nn
 
+from riemannfm.models.attention.cross import (
+    RiemannFMNodeEdgeCross,
+    RiemannFMNodeRelationCross,
+)
 from riemannfm.models.attention.edge import (
     RiemannFMEdgeBias,
     RiemannFMEdgeSelfUpdate,
 )
 from riemannfm.models.attention.geodesic import RiemannFMGeodesicAttention
-from riemannfm.models.heads import RiemannFMDualStreamCross
-from riemannfm.models.normalization import RiemannFMATHNorm, RiemannFMPreNorm
+from riemannfm.models.attention.relation import RiemannFMRelationSelfAttention
+from riemannfm.models.normalization import RiemannFMATHNorm
+from riemannfm.models.text_condition import (
+    RiemannFMNodeTextCross,
+    RiemannFMRelationTextCross,
+)
 
 if TYPE_CHECKING:
     from riemannfm.manifolds.product import RiemannFMProductManifold
 
 
 class RiemannFMFeedForward(nn.Module):
-    """Two-layer feed-forward with SiLU activation and residual.
+    """Two-layer FFN with SiLU (spec def 11.2).
 
     Args:
-        dim: Input/output dimension.
-        mult: Hidden dimension multiplier.
+        dim: Input / output dimension.
+        mult: Hidden-dim multiplier (default 4).
         dropout: Dropout rate.
     """
 
@@ -46,168 +64,234 @@ class RiemannFMFeedForward(nn.Module):
         )
 
     def forward(self, x: Tensor) -> Tensor:
-        result: Tensor = self.net(x)
-        return result
+        out: Tensor = self.net(x)
+        return out
 
 
 class RiemannFMBlock(nn.Module):
-    """Single RieFormer transformer block.
-
-    Architecture per block:
-      1. [A] Geodesic manifold attention (node self-attention with geo kernel)
-      2. [B] ATH-Norm (or pre-norm fallback)
-      3. [C] Edge self-update (factorized head/tail aggregation)
-      4. [D] Cross-interaction (edge↔node bidirectional)
-      5. [E] Text cross-attention (optional, every ``text_cross_attn_every`` layers)
-      6. Feed-forward (node and edge)
+    """Single RieFormer transformer block (spec §11.1).
 
     Args:
-        node_dim: Node hidden dimension.
-        edge_dim: Edge hidden dimension.
-        num_heads: Number of attention heads.
-        edge_heads: Number of edge factorization heads.
         manifold: Product manifold.
-        time_dim: Time embedding dimension (for ATH-Norm).
-        use_geodesic_kernel: Enable geodesic distance kernel in attention.
-        use_ath_norm: Use ATH-Norm (True) or plain LayerNorm (False).
-        use_edge_self_update: Enable edge self-update module.
-        use_dual_stream_cross: Enable edge↔node cross-interaction.
-        use_text_cross_attn: Enable text cross-attention in this block.
-        text_dim: Text embedding dimension (0 to disable text injection).
+        node_dim: d_v.
+        rel_dim: d_r (relation hidden dim).
+        edge_dim: d_b.
+        num_edge_types: K.
+        rel_emb_dim: Raw R dim (= d_r by default).
+        num_heads_V: Heads for A_V, D_VR (V-side), D_VE (V-side), E_V.
+        num_heads_R: Heads for A_R, D_VR (R-side), E_R.
+        time_dim: ATH-Norm time embedding dim.
+        cond_dim: Curvature-conditioning dim for A_V's ATH-Norm only.
+        text_dim: Projected text dim (0 disables E_V / E_R in this block).
+        dim_h_ambient / dim_s_ambient / dim_e: Product-manifold ambient
+            dims per component, used by C's π^T.
+        use_a_r / use_c / use_d_vr / use_d_ve / use_e_v / use_e_r:
+            Per-module ablation toggles (all default True).
+        use_geodesic_kernel: Forwarded to A_V.
+        use_relation_similarity_bias: Forwarded to A_R.
+        ff_mult: FFN hidden multiplier.
         dropout: Dropout rate.
     """
 
     def __init__(
         self,
-        node_dim: int,
-        edge_dim: int,
-        num_heads: int,
-        edge_heads: int,
         manifold: RiemannFMProductManifold,
+        node_dim: int,
+        rel_dim: int,
+        edge_dim: int,
+        num_edge_types: int,
+        rel_emb_dim: int,
+        num_heads_V: int,
+        num_heads_R: int,
         time_dim: int,
-        use_geodesic_kernel: bool = True,
-        use_ath_norm: bool = True,
-        use_edge_self_update: bool = True,
-        use_dual_stream_cross: bool = True,
-        use_text_cross_attn: bool = False,
-        text_dim: int = 0,
         cond_dim: int = 0,
+        text_dim: int = 0,
+        dim_h_ambient: int = 0,
+        dim_s_ambient: int = 0,
+        dim_e: int = 0,
+        use_a_r: bool = True,
+        use_c: bool = True,
+        use_d_vr: bool = True,
+        use_d_ve: bool = True,
+        use_e_v: bool = True,
+        use_e_r: bool = True,
+        use_geodesic_kernel: bool = True,
+        use_relation_similarity_bias: bool = True,
+        ff_mult: int = 4,
         dropout: float = 0.1,
     ) -> None:
         super().__init__()
+        self.use_a_r = use_a_r
+        self.use_c = use_c
+        self.use_d_vr = use_d_vr
+        self.use_d_ve = use_d_ve
+        self.use_e_v = use_e_v and text_dim > 0
+        self.use_e_r = use_e_r and text_dim > 0
 
-        # [A] Manifold attention.
-        self.attn = RiemannFMGeodesicAttention(
-            node_dim, num_heads, manifold,
+        # [A_V] Node manifold self-attention (curvature-conditioned ATH-Norm).
+        self.norm_a_v = RiemannFMATHNorm(node_dim, time_dim, cond_dim=cond_dim)
+        self.a_v = RiemannFMGeodesicAttention(
+            node_dim, num_heads_V, manifold,
             use_geodesic_kernel=use_geodesic_kernel,
             dropout=dropout,
         )
-        self.edge_bias = RiemannFMEdgeBias(edge_dim, num_heads)
+        self.edge_bias = RiemannFMEdgeBias(edge_dim, num_heads_V)
 
-        # [B] Normalization (pre-norm style).
-        if use_ath_norm:
-            self.norm1: nn.Module = RiemannFMATHNorm(
-                node_dim, time_dim, cond_dim=cond_dim,
-            )
-            self.norm2: nn.Module = RiemannFMATHNorm(
-                node_dim, time_dim, cond_dim=cond_dim,
-            )
-        else:
-            self.norm1 = RiemannFMPreNorm(node_dim)
-            self.norm2 = RiemannFMPreNorm(node_dim)
-        self.edge_norm1 = nn.LayerNorm(edge_dim)
-        self.edge_norm2 = nn.LayerNorm(edge_dim)
-
-        # [C] Edge self-update.
-        self.use_edge_self_update = use_edge_self_update
-        if use_edge_self_update:
-            self.edge_update = RiemannFMEdgeSelfUpdate(
-                edge_dim, dropout=dropout,
-            )
-
-        # [D] Cross-interaction.
-        self.use_dual_stream_cross = use_dual_stream_cross
-        if use_dual_stream_cross:
-            self.cross = RiemannFMDualStreamCross(
-                node_dim, edge_dim, dropout=dropout,
-            )
-
-        # [E] Text cross-attention (optional).
-        self.use_text_cross_attn = use_text_cross_attn and text_dim > 0
-        if self.use_text_cross_attn:
-            self.text_cross_attn = nn.MultiheadAttention(
-                embed_dim=node_dim,
-                num_heads=num_heads,
-                kdim=text_dim,
-                vdim=text_dim,
+        # [A_R]
+        if self.use_a_r:
+            self.norm_a_r = RiemannFMATHNorm(rel_dim, time_dim, cond_dim=0)
+            self.a_r = RiemannFMRelationSelfAttention(
+                rel_dim=rel_dim,
+                num_heads=num_heads_R,
+                rel_emb_dim=rel_emb_dim,
+                use_similarity_bias=use_relation_similarity_bias,
                 dropout=dropout,
-                batch_first=True,
             )
-            self.text_norm = nn.LayerNorm(node_dim)
 
-        # Feed-forward.
-        self.ff_node = RiemannFMFeedForward(node_dim, dropout=dropout)
-        self.ff_edge = RiemannFMFeedForward(edge_dim, dropout=dropout)
+        # [C]
+        if self.use_c:
+            self.norm_c = RiemannFMATHNorm(edge_dim, time_dim, cond_dim=0)
+            self.edge_update = RiemannFMEdgeSelfUpdate(
+                manifold=manifold,
+                node_dim=node_dim,
+                edge_dim=edge_dim,
+                dim_h_ambient=dim_h_ambient,
+                dim_s_ambient=dim_s_ambient,
+                dim_e=dim_e,
+                dropout=dropout,
+            )
+
+        # [D_VR]
+        if self.use_d_vr:
+            self.norm_d_vr_v = RiemannFMATHNorm(node_dim, time_dim, cond_dim=0)
+            self.norm_d_vr_r = RiemannFMATHNorm(rel_dim, time_dim, cond_dim=0)
+            self.d_vr = RiemannFMNodeRelationCross(
+                node_dim=node_dim,
+                rel_dim=rel_dim,
+                num_heads_V=num_heads_V,
+                num_heads_R=num_heads_R,
+                dropout=dropout,
+            )
+
+        # [D_VE]
+        if self.use_d_ve:
+            self.norm_d_ve_v = RiemannFMATHNorm(node_dim, time_dim, cond_dim=0)
+            self.norm_d_ve_e = RiemannFMATHNorm(edge_dim, time_dim, cond_dim=0)
+            self.d_ve = RiemannFMNodeEdgeCross(
+                node_dim=node_dim,
+                edge_dim=edge_dim,
+                num_heads=num_heads_V,
+                dropout=dropout,
+            )
+
+        # [E_V]
+        if self.use_e_v:
+            self.norm_e_v = RiemannFMATHNorm(node_dim, time_dim, cond_dim=0)
+            self.e_v = RiemannFMNodeTextCross(
+                node_dim=node_dim,
+                text_dim=text_dim,
+                num_heads=num_heads_V,
+                dropout=dropout,
+            )
+
+        # [E_R]
+        if self.use_e_r:
+            self.norm_e_r = RiemannFMATHNorm(rel_dim, time_dim, cond_dim=0)
+            self.e_r = RiemannFMRelationTextCross(
+                rel_dim=rel_dim,
+                text_dim=text_dim,
+                num_heads=num_heads_R,
+                dropout=dropout,
+            )
+
+        # [FFN_V / FFN_R / FFN_E]
+        self.norm_ff_v = RiemannFMATHNorm(node_dim, time_dim, cond_dim=0)
+        self.norm_ff_r = RiemannFMATHNorm(rel_dim, time_dim, cond_dim=0)
+        self.norm_ff_e = RiemannFMATHNorm(edge_dim, time_dim, cond_dim=0)
+        self.ff_v = RiemannFMFeedForward(node_dim, mult=ff_mult, dropout=dropout)
+        self.ff_r = RiemannFMFeedForward(rel_dim, mult=ff_mult, dropout=dropout)
+        self.ff_e = RiemannFMFeedForward(edge_dim, mult=ff_mult, dropout=dropout)
 
     def forward(
         self,
-        h: Tensor,
-        g: Tensor,
+        h_V: Tensor,
+        h_R: Tensor,
+        h_E: Tensor,
         x: Tensor,
+        R: Tensor,
         t_emb: Tensor,
         node_mask: Tensor,
         C_V: Tensor | None = None,
+        C_R: Tensor | None = None,
         cond: Tensor | None = None,
-    ) -> tuple[Tensor, Tensor]:
-        """Forward pass through one RieFormer block.
+    ) -> tuple[Tensor, Tensor, Tensor]:
+        """Forward pass through one RieFormer block (spec §11.1).
 
         Args:
-            h: Node hidden states, shape ``(B, N, node_dim)``.
-            g: Edge hidden states, shape ``(B, N, N, edge_dim)``.
+            h_V: Node hidden, shape ``(B, N, d_v)``.
+            h_R: Relation hidden, shape ``(B, K, d_r)``.
+            h_E: Edge hidden, shape ``(B, N, N, d_b)``.
             x: Manifold coordinates, shape ``(B, N, D)``.
-            t_emb: Time embeddings, shape ``(B, time_dim)``.
+            R: Raw relation embedding parameter ``(K, rel_emb_dim)`` (used
+                by A_R's cosine-similarity bias).
+            t_emb: Time embedding, shape ``(B, time_dim)``.
             node_mask: Bool mask, shape ``(B, N)``.
-            C_V: Node text embeddings for cross-attention,
-                shape ``(B, N, text_dim)``.  None to skip.
-            cond: Auxiliary conditioning for ATH-Norm (e.g. curvature
-                scalars), shape ``(B, cond_dim)``.  None when disabled.
+            C_V: Projected node text (already text-masked),
+                shape ``(B, N, text_dim)`` or ``None``.
+            C_R: Projected relation text, shape ``(K, text_dim)`` or
+                ``(B, K, text_dim)`` or ``None``.
+            cond: ATH-Norm curvature conditioning ``(B, cond_dim)`` for A_V.
 
         Returns:
-            Updated (h, g) with same shapes.
+            Updated ``(h_V, h_R, h_E)``.
         """
-        # [A] Manifold attention with residual.
-        bias = self.edge_bias(g)  # (B, H, N, N)
-        h = h + self.attn(self.norm1(h, t_emb, node_mask, cond=cond), x, bias, node_mask)
+        # [A_V]: node self-attention with M-RoPE + geodesic kernel + edge bias.
+        bias = self.edge_bias(h_E)
+        h_V_bar = self.norm_a_v(h_V, t_emb, cond=cond)
+        h_V = h_V + self.a_v(h_V_bar, x, bias, node_mask)
 
-        # [C] Edge self-update via factorized attention (Def 5.11).
-        if self.use_edge_self_update:
-            g = g + self.edge_update(self.edge_norm1(g))
+        # [A_R]: relation self-attention.
+        if self.use_a_r:
+            h_R_bar = self.norm_a_r(h_R, t_emb)
+            h_R = h_R + self.a_r(h_R_bar, R)
 
-        # [D] Cross-interaction.
-        if self.use_dual_stream_cross:
-            h_cross, g_cross = self.cross(h, g, node_mask)
-            h = h_cross
-            g = g_cross
+        # [C]: edge self-update uses the **post-A_V** node hidden.
+        if self.use_c:
+            h_E_bar = self.norm_c(h_E, t_emb)
+            h_E = h_E + self.edge_update(h_E_bar, h_V, x)
 
-        # [E] Text cross-attention.
-        if self.use_text_cross_attn and C_V is not None:
-            h_normed = self.text_norm(h)
-            # key_padding_mask: True = ignore. ~node_mask masks virtual nodes.
-            key_padding_mask = ~node_mask if node_mask is not None else None
-            h_text, _ = self.text_cross_attn(
-                h_normed, C_V, C_V,
-                key_padding_mask=key_padding_mask,
-            )
-            h = h + h_text
+        # [D_VR]: bidirectional node ↔ relation cross.
+        if self.use_d_vr:
+            v_bar = self.norm_d_vr_v(h_V, t_emb)
+            r_bar = self.norm_d_vr_r(h_R, t_emb)
+            dv, dr = self.d_vr(v_bar, r_bar, node_mask)
+            h_V = h_V + dv
+            h_R = h_R + dr
 
-        # Feed-forward with residual.
-        # NOTE: Deviation from Def 5.15 — adds FFN after text cross-attention.
-        # Standard Transformer practice for additional nonlinear capacity.
-        h = h + self.ff_node(self.norm2(h, t_emb, node_mask, cond=cond))
-        g = g + self.ff_edge(self.edge_norm2(g))
+        # [D_VE]: node ← edge cross-attn + edge ← node MLP.
+        if self.use_d_ve:
+            v_bar = self.norm_d_ve_v(h_V, t_emb)
+            e_bar = self.norm_d_ve_e(h_E, t_emb)
+            dv, de = self.d_ve(v_bar, e_bar, h_V, node_mask)
+            h_V = h_V + dv
+            h_E = h_E + de
 
-        # Mask virtual node hidden states.
-        if node_mask is not None:
-            h = h * node_mask.unsqueeze(-1)
+        # [E_V]: node text conditioning.
+        if self.use_e_v and C_V is not None:
+            v_bar = self.norm_e_v(h_V, t_emb)
+            h_V = h_V + self.e_v(v_bar, C_V, node_mask)
 
-        return h, g
+        # [E_R]: relation text conditioning.
+        if self.use_e_r and C_R is not None:
+            r_bar = self.norm_e_r(h_R, t_emb)
+            h_R = h_R + self.e_r(r_bar, C_R)
+
+        # [FFN] per-stream.
+        h_V = h_V + self.ff_v(self.norm_ff_v(h_V, t_emb))
+        h_R = h_R + self.ff_r(self.norm_ff_r(h_R, t_emb))
+        h_E = h_E + self.ff_e(self.norm_ff_e(h_E, t_emb))
+
+        # Mask virtual-node rows so they don't contribute downstream.
+        h_V = h_V * node_mask.unsqueeze(-1)
+
+        return h_V, h_R, h_E
