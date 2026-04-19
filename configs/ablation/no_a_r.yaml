@@ -1,5 +1,5 @@
-# All modules enabled (default). Matches spec §11-16.
-use_a_r: true
+# Ablation §34: disable relation self-attention A_R (spec §13).
+use_a_r: false
 use_c: true
 use_d_vr: true
 use_d_ve: true

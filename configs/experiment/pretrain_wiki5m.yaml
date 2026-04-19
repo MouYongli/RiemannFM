@@ -21,6 +21,7 @@ training:
   gradient_accumulation_steps: 8
   # Fill in from HP search (stage 2) before running:
   # lr: ???
-  # lambda_disc: ???
-  # mu_align: ???
-  # temperature: ???
+  # lambda_X: ???
+  # lambda_ex: ???
+  # lambda_ty: ???
+  # lambda_align_R: ???

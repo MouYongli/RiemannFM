@@ -1,9 +1,9 @@
-# All modules enabled (default). Matches spec §11-16.
+# Ablation: disable relation-text cross E_R (spec §16.2).
 use_a_r: true
 use_c: true
 use_d_vr: true
 use_d_ve: true
 use_e_v: true
-use_e_r: true
+use_e_r: false
 use_geodesic_kernel: true
 use_relation_similarity_bias: true

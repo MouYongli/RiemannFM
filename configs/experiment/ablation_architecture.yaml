@@ -24,4 +24,4 @@ hydra:
   mode: MULTIRUN
   sweeper:
     params:
-      ablation: full,no_mrope,no_geok,no_mrope_geok,no_ath,no_edge_self,no_cross,no_text_cond
+      ablation: full,no_geok,no_a_r,no_c,no_d_vr,no_d_ve,no_e_v,no_e_r

@@ -1,45 +1,41 @@
 _target_: riemannfm.models.lightning_module.RiemannFMPretrainModule
 
-# Use max_steps (not epochs) — subgraph sampling is an infinite data stream.
+# Max_steps (not epochs) — subgraph sampling is an infinite data stream.
 max_steps: 500000
 val_check_interval: 10000
 
 batch_size: 8
 gradient_accumulation_steps: 8
+
+# Optimizer (spec §20).
 lr: 1.0e-4
-curvature_lr: 1.0e-4
-align_lr: 1.0e-4
+curvature_lr: 1.0e-5
+relation_lr: 3.3e-5          # spec §20.2: lr / 3
 weight_decay: 0.01
 warmup_steps: 10000
 max_grad_norm: 1.0
 mixed_precision: bf16
-# Cosine decay floor: final LR = peak × lr_min_ratio (0 = decay to zero,
-# 0.1 keeps 10% of peak so the tail of training retains learning signal).
 lr_min_ratio: 0.0
-
-# Loss weights
-lambda_disc: 10.0
-mu_align: 0.5
-nu_mask_c: 1.0          # semantic masked-node identification (L_mask_c)
-nu_mask_x: 1.0          # geometric masked-node reconstruction (L_mask_x)
-temperature: 0.07
-mask_c_temperature: 0.07
-neg_ratio: 1.0
-# L_disc formulation: "bce" (per-channel, multi-hot compatible) or
-# "softmax_ce" (K-way CE on positive pairs + zero-BCE on negatives).
-# softmax_ce removes the 1/K channel dilution; use on single-hot KGs
-# (wikidata_5m has 0% multi-hot pairs).
-edge_loss_mode: bce
-max_align_nodes: 128
-
-# Node-partition mask ratios (Def 6.9a).  Disjoint; REAL anchors get the
-# remainder.  M_c: text ← mask_emb, geometry kept (t=1).
-#                  M_x: geometry ← noise at t=0, text kept.
-mask_ratio_c: 0.15
-mask_ratio_x: 0.05
-
-# Optimization
 use_riemannian_optim: true
 
-# Validation
+# Loss weights (spec §19.6).
+lambda_X: 1.0
+lambda_ex: 1.0
+lambda_ty: 0.5
+lambda_align_R: 0.02         # optional relation-text InfoNCE
+align_tau: 0.1
+d_p: 128                     # L_align^R projection dim
+
+# Modality masking (spec §9).  Defaults match §9.2.
+modality_mask:
+  p_full: 0.70
+  p_tm: 0.15
+  p_cm: 0.15
+  rho_tm: 0.30
+  rho_cm: 0.15
+  # Text-mask mode t-distribution (spec §9.6): Beta(a, b), biased toward 1.
+  beta_a_text_mask: 5.0
+  beta_b_text_mask: 1.0
+
+# Validation.
 limit_val_batches: 8

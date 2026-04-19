@@ -1,7 +1,7 @@
 _target_: riemannfm.flow.joint_flow.RiemannFMJointFlow
 num_inference_steps: 100
-time_distribution: uniform
-avg_edge_density: 0.05
+time_distribution: logit_normal
+edge_schedule: cosine
 ode_method: euler
 ode_atol: 1.0e-5
 ode_rtol: 1.0e-5

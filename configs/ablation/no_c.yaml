@@ -1,6 +1,6 @@
-# All modules enabled (default). Matches spec §11-16.
+# Ablation: disable edge self-update C (spec §14).
 use_a_r: true
-use_c: true
+use_c: false
 use_d_vr: true
 use_d_ve: true
 use_e_v: true

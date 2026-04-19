@@ -1,17 +1,11 @@
 _target_: riemannfm.models.riemannfm.RiemannFM
 num_layers: 6
 node_dim: 384
+rel_dim: 128
 edge_dim: 128
-num_heads: 6
-edge_heads: 2
+num_heads_V: 6
+num_heads_R: 4
 rel_emb_dim: 32
 text_proj_dim: 256
-align_proj_dim: 256
-# L_align projection depth (number of Linear layers in proj_g / proj_c).
-# 2 = Linear -> GELU -> Linear (legacy, preserves older checkpoints).
-# 3 = Linear -> LN -> GELU -> Linear -> LN -> GELU -> Linear (deeper capacity).
-align_proj_depth: 2
-align_proj_bn: false
-use_text_cross_attn: true
-text_cross_attn_every: 3
+ff_mult: 4
 dropout: 0.1

@@ -1,14 +1,13 @@
-"""RiemannFM pretraining CLI.
+"""RiemannFM pretraining CLI (spec §22).
 
-Launch pretraining with Hydra configuration:
-    python -m riemannfm.cli.pretrain
-    python -m riemannfm.cli.pretrain model=small data=wikidata_5m_mini
+    uv run python -m riemannfm.cli.pretrain
+    uv run python -m riemannfm.cli.pretrain model=small data=wikidata_5m_mini
 
-Logger selection (standard Hydra config group):
-    python -m riemannfm.cli.pretrain logger=default      # wandb + csv (default)
-    python -m riemannfm.cli.pretrain logger=wandb    # wandb only
-    python -m riemannfm.cli.pretrain logger=csv      # csv only (offline)
-    python -m riemannfm.cli.pretrain logger=none           # no logger
+Logger selection:
+    uv run python -m riemannfm.cli.pretrain logger=default   # wandb+csv
+    uv run python -m riemannfm.cli.pretrain logger=wandb
+    uv run python -m riemannfm.cli.pretrain logger=csv
+    uv run python -m riemannfm.cli.pretrain logger=none
 """
 
 import logging
@@ -26,10 +25,9 @@ from lightning.pytorch.callbacks import (
 from omegaconf import DictConfig, OmegaConf
 
 from riemannfm.losses.combined_loss import RiemannFMCombinedLoss
+from riemannfm.models.pretrain_heads import RiemannFMPretrainHeads
 
 logger = logging.getLogger(__name__)
-
-
 
 
 def _resolve_precision(mixed_precision: str | None) -> str:
@@ -42,11 +40,7 @@ def _resolve_precision(mixed_precision: str | None) -> str:
 
 
 def _find_wandb_run_id(ckpt_path: str) -> str | None:
-    """Extract wandb run id from a previous run's output directory.
-
-    Searches for ``wandb/latest-run/run-<id>.wandb`` relative to the
-    checkpoint's parent output directory.
-    """
+    """Extract wandb run id from a previous run's output directory."""
     output_dir = Path(ckpt_path).resolve().parent.parent
     latest_run = output_dir / "wandb" / "latest-run"
     if not latest_run.exists():
@@ -57,11 +51,7 @@ def _find_wandb_run_id(ckpt_path: str) -> str | None:
 
 
 def _carry_over_csv_logs(ckpt_path: str, csv_logger: object) -> None:
-    """Copy previous CSV metrics into the new CSVLogger directory.
-
-    CSVLogger appends when ``metrics.csv`` already exists, so copying
-    the old file ensures continuous logs across resume boundaries.
-    """
+    """Copy previous CSV metrics into the new CSVLogger directory."""
     old_output = Path(ckpt_path).resolve().parent.parent
     old_metrics = list(old_output.glob("csv/*/metrics.csv"))
     if not old_metrics:
@@ -77,12 +67,6 @@ def _carry_over_csv_logs(ckpt_path: str, csv_logger: object) -> None:
 
 
 def _instantiate_loggers(cfg: DictConfig, ckpt_path: str | None = None) -> list:
-    """Instantiate loggers from cfg.logger dict.
-
-    Each key in cfg.logger is a logger config with a ``_target_`` field.
-    When *ckpt_path* is given, wandb loggers are configured to resume
-    the previous run and CSV logs are carried over.
-    """
     if not cfg.get("logger"):
         return []
 
@@ -107,25 +91,36 @@ def _instantiate_loggers(cfg: DictConfig, ckpt_path: str | None = None) -> list:
 @hydra.main(version_base=None, config_path="../../../configs", config_name="config")
 def main(cfg: DictConfig) -> None:
     """RiemannFM pretraining entry point."""
-    # Suppress noisy warnings from Lightning internals.
     warnings.filterwarnings("ignore", message=".*LeafSpec.*")
     warnings.filterwarnings("ignore", message=".*pin_memory.*MPS.*")
     warnings.filterwarnings("ignore", message=".*AccumulateGrad.*stream.*")
 
-    # Enable TF32 for H100/A100 Tensor Cores (trades minimal precision for speed).
     torch.set_float32_matmul_precision("medium")
 
     logger.info("Config:\n%s", OmegaConf.to_yaml(cfg))
 
-    # Seed.
     L.seed_everything(cfg.seed, workers=True)
 
-    # 1. Data — instantiate DataModule from cfg.data + batch_size.
+    # Modality masking (spec §9) lives on the training config but
+    # spans the data (mode sampling + per-node bits) and flow (text-mask
+    # Beta distribution) modules.
+    mm = cfg.training.get("modality_mask", {})
+    mode_probs = (
+        float(mm.get("p_full", 1.0)),
+        float(mm.get("p_tm", 0.0)),
+        float(mm.get("p_cm", 0.0)),
+    )
+    rho_tm = float(mm.get("rho_tm", 0.30))
+    rho_cm = float(mm.get("rho_cm", 0.15))
+    beta_a_text_mask = float(mm.get("beta_a_text_mask", 5.0))
+    beta_b_text_mask = float(mm.get("beta_b_text_mask", 1.0))
+
     dm = instantiate(
         cfg.data,
         batch_size=cfg.training.batch_size,
-        mask_ratio_c=float(getattr(cfg.training, "mask_ratio_c", 0.0)),
-        mask_ratio_x=float(getattr(cfg.training, "mask_ratio_x", 0.0)),
+        mode_probs=mode_probs,
+        rho_tm=rho_tm,
+        rho_cm=rho_cm,
     )
     dm.setup("fit")
 
@@ -133,63 +128,63 @@ def main(cfg: DictConfig) -> None:
     num_entities = cfg.data.num_entities
     max_steps = cfg.training.max_steps
 
-    # Text dimension is auto-detected from disk after dm.setup().
     input_text_dim = dm.dim_text_emb
-
-    # Global relation text embeddings C_R (shared across all subgraphs).
     C_R = dm.relation_text if input_text_dim > 0 else None
 
-    # 2. Manifold — all primitives, direct instantiate.
     manifold = instantiate(cfg.manifold)
 
-    # 3. Model — pass manifold + ablation flags + runtime data.
+    # Ablation flags (spec §11-16 per-module toggles).
+    ab = cfg.ablation
     model = instantiate(
         cfg.model,
         manifold=manifold,
         num_edge_types=num_edge_types,
         input_text_dim=input_text_dim,
-        use_geodesic_kernel=cfg.ablation.use_geodesic_kernel,
-        use_ath_norm=cfg.ablation.use_ath_norm,
-        use_edge_self_update=cfg.ablation.use_edge_self_update,
-        use_dual_stream_cross=cfg.ablation.use_dual_stream_cross,
-        use_text_condition=cfg.ablation.use_text_condition,
+        use_a_r=bool(getattr(ab, "use_a_r", True)),
+        use_c=bool(getattr(ab, "use_c", True)),
+        use_d_vr=bool(getattr(ab, "use_d_vr", True)),
+        use_d_ve=bool(getattr(ab, "use_d_ve", True)),
+        use_e_v=bool(getattr(ab, "use_e_v", True)),
+        use_e_r=bool(getattr(ab, "use_e_r", True)),
+        use_geodesic_kernel=bool(getattr(ab, "use_geodesic_kernel", True)),
+        use_relation_similarity_bias=bool(
+            getattr(ab, "use_relation_similarity_bias", True),
+        ),
     )
 
-    # 4. Flow — pass shared manifold.
-    flow = instantiate(cfg.flow, manifold=manifold)
+    flow = instantiate(
+        cfg.flow,
+        manifold=manifold,
+        beta_a_text_mask=beta_a_text_mask,
+        beta_b_text_mask=beta_b_text_mask,
+    )
 
-    # 5. Loss — constructed directly from training + flow params.
+    lambda_align_R = float(getattr(cfg.training, "lambda_align_R", 0.0))
     loss_fn = RiemannFMCombinedLoss(
         manifold=manifold,
-        lambda_disc=cfg.training.lambda_disc,
-        mu_align=cfg.training.mu_align,
-        nu_mask_c=float(getattr(cfg.training, "nu_mask_c", 0.0)),
-        nu_mask_x=float(getattr(cfg.training, "nu_mask_x", 0.0)),
-        neg_ratio=float(getattr(cfg.training, "neg_ratio", 1.0)),
-        edge_loss_mode=str(getattr(cfg.training, "edge_loss_mode", "bce")),
-        temperature=cfg.training.temperature,
-        mask_c_temperature=float(
-            getattr(cfg.training, "mask_c_temperature", 0.07),
-        ),
-        align_loss_mode=str(getattr(cfg.training, "align_loss_mode", "infonce")),
-        barlow_lambda_off=float(getattr(cfg.training, "barlow_lambda_off", 5e-3)),
-        input_text_dim=input_text_dim,
-        node_dim=cfg.model.node_dim,
-        d_a=int(getattr(cfg.model, "align_proj_dim", 256)),
-        align_proj_depth=int(getattr(cfg.model, "align_proj_depth", 2)),
-        align_proj_bn=bool(getattr(cfg.model, "align_proj_bn", False)),
-        max_align_nodes=int(getattr(cfg.training, "max_align_nodes", 128)),
+        lambda_X=float(getattr(cfg.training, "lambda_X", 1.0)),
+        lambda_ex=float(getattr(cfg.training, "lambda_ex", 1.0)),
+        lambda_ty=float(getattr(cfg.training, "lambda_ty", 0.5)),
+        lambda_align_R=lambda_align_R,
+        align_tau=float(getattr(cfg.training, "align_tau", 0.1)),
     )
 
-    # 6. LitModule — pass all pre-built objects.
+    pretrain_heads = RiemannFMPretrainHeads(
+        manifold=manifold,
+        num_entities=num_entities,
+        input_text_dim=input_text_dim,
+        lambda_align_R=lambda_align_R,
+        d_p=int(getattr(cfg.training, "d_p", 128)),
+        rel_emb_dim=cfg.model.rel_emb_dim,
+    )
+
     module = instantiate(
         cfg.training,
         manifold=manifold,
         model=model,
         flow=flow,
         loss_fn=loss_fn,
-        num_entities=num_entities,
-        input_text_dim=input_text_dim,
+        pretrain_heads=pretrain_heads,
         C_R=C_R,
     )
 
@@ -197,18 +192,11 @@ def main(cfg: DictConfig) -> None:
     trainable = sum(p.numel() for p in module.parameters() if p.requires_grad)
     logger.info("Parameters: %s total, %s trainable", f"{total_params:,}", f"{trainable:,}")
 
-    # 7. Loggers (standard Hydra dict-of-loggers).
     ckpt_path = cfg.paths.get("ckpt_path")
     loggers = _instantiate_loggers(cfg, ckpt_path=ckpt_path) or None
 
-    # 8. Callbacks.
     ckpt_dir = f"{cfg.paths.output_dir}/checkpoints"
     callbacks = [
-        # Save top-3 checkpoints by val/loss with metric in filename.
-        # No `every_n_train_steps`: with `monitor` set, ModelCheckpoint fires
-        # at validation_end so the val/loss baked into the filename is always
-        # the freshly logged one (the train-step trigger could fire before
-        # validation and stamp a stale value).
         ModelCheckpoint(
             dirpath=ckpt_dir,
             filename="step={step}-val_loss={val/loss:.4f}",
@@ -216,12 +204,11 @@ def main(cfg: DictConfig) -> None:
             monitor="val/loss",
             mode="min",
             auto_insert_metric_name=False,
-            save_last=True,  # always save last.ckpt for easy resume
+            save_last=True,
         ),
         LearningRateMonitor(logging_interval="step"),
     ]
 
-    # 9. Trainer — instantiate from accelerator config + training overrides.
     trainer = instantiate(
         cfg.accelerator,
         max_steps=max_steps,
@@ -229,9 +216,9 @@ def main(cfg: DictConfig) -> None:
         accumulate_grad_batches=cfg.training.gradient_accumulation_steps,
         gradient_clip_val=cfg.training.max_grad_norm,
         val_check_interval=cfg.training.val_check_interval,
-        check_val_every_n_epoch=None,  # interpret val_check_interval as global steps
+        check_val_every_n_epoch=None,
         limit_val_batches=cfg.training.limit_val_batches,
-        num_sanity_val_steps=0,  # skip sanity check (slow with multi-t)
+        num_sanity_val_steps=0,
         logger=loggers,
         callbacks=callbacks,
         enable_checkpointing=True,
@@ -239,7 +226,6 @@ def main(cfg: DictConfig) -> None:
         deterministic=False,
     )
 
-    # Train (resume from checkpoint if provided).
     if ckpt_path:
         logger.info("Resuming from checkpoint: %s", ckpt_path)
     else:

@@ -1,6 +1,6 @@
-# Stage 1: broad search on small model — find loss weights + lr.
+# Stage 1 HP search: broad sweep on the small model.
 # Run with: experiment=pretrain_search sweep=pretrain --multirun
-# Multi-GPU: launch on 3 GPUs with same study_name, Optuna syncs via SQLite.
+# Multi-GPU: launch on N GPUs with the same study_name, Optuna syncs via SQLite.
 sampler: tpe
 n_trials: 20
 direction: minimize
@@ -15,18 +15,18 @@ search_space:
   training.curvature_lr:
     type: categorical
     choices: [1.0e-5, 5.0e-5, 1.0e-4, 5.0e-4]
-  training.lambda_disc:
+  training.lambda_X:
     type: categorical
-    choices: [10.0, 50.0, 100.0, 200.0]
-  training.neg_ratio:
+    choices: [0.5, 1.0, 2.0]
+  training.lambda_ex:
     type: categorical
-    choices: [1.0, 2.0, 5.0]
-  training.mu_align:
+    choices: [0.5, 1.0, 2.0]
+  training.lambda_ty:
     type: categorical
-    choices: [0.1, 0.5, 1.0, 2.0]
-  training.temperature:
+    choices: [0.25, 0.5, 1.0]
+  training.lambda_align_R:
     type: categorical
-    choices: [0.05, 0.07, 0.1, 0.2]
+    choices: [0.0, 0.02, 0.05]
   training.weight_decay:
     type: categorical
     choices: [0.01, 0.05, 0.1]

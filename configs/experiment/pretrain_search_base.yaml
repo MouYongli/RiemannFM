@@ -1,7 +1,7 @@
 # @package _global_
-# Phase 2b (Stage 2): Fine-tune lr on base model — loss weights from stage 1.
-# 6 trials x 10k steps on base model, ~2 days on 1x H100.
-# Before running: fill in best lambda_disc, mu_align, temperature from stage 1.
+# Phase 2b: Fine-tune lr on base model — loss weights from stage 1.
+# 6 trials × 10k steps on base model, ~2 days on 1× H100.
+# Before running: fill in best lambda_X, lambda_ex, lambda_ty from stage 1.
 defaults:
   - override /model: base
   - override /data: wikidata_5m
@@ -21,6 +21,6 @@ training:
   batch_size: 4
   gradient_accumulation_steps: 8
   # Fill in from stage 1 best trial:
-  # lambda_disc: ???
-  # mu_align: ???
-  # temperature: ???
+  # lambda_X: ???
+  # lambda_ex: ???
+  # lambda_ty: ???
