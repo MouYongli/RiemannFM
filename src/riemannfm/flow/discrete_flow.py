@@ -1,60 +1,79 @@
-"""Discrete flow matching for edge types (Def 6.4).
+"""Masked discrete flow matching for edges (spec §8).
 
-Interpolation between noise edge types E_0 and data edge types E_1
-using a shared Bernoulli mask z_ij that is shared across all K relation
-types for each node pair (i, j).
+Per §8.1-8.3 of math_CN.v1.0.1, the edge state space is augmented with an
+explicit mask indicator μ_{t,ij} ∈ {0, 1}. The forward process samples
+μ_{t,ij} ~ Bernoulli(1 - α(t)) independently at each (i, j), where α(t)
+is a monotonically increasing schedule with α(0)=0 and α(1)=1. At masked
+positions the edge value tensor is set to 0_K; at unmasked positions it
+equals the data value E_{1,ij}.
 """
 
 from __future__ import annotations
+
+import math
 
 import torch
 from torch import Tensor
 
 
-def discrete_interpolation(
-    E_0: Tensor,
-    E_1: Tensor,
-    t: Tensor,
-    generator: torch.Generator | None = None,
-) -> Tensor:
-    """Discrete interpolation with shared mask (Def 6.4).
+def schedule_alpha(t: Tensor, kind: str = "cosine") -> Tensor:
+    """Edge schedule α(t) (Def 8.1).
 
-    For each node pair (i, j), sample a single Bernoulli variable:
-        z_ij ~ Bernoulli(t)
-
-    Then for ALL relation types k:
-        E_t[i,j,k] = z_ij * E_1[i,j,k] + (1 - z_ij) * E_0[i,j,k]
-
-    The key insight is that z_ij is shared across K, ensuring that
-    edges switch from noise to data atomically per node pair.
+    α(t) is the expected decoded coverage Pr[μ_{t,ij} = 0]. Satisfies
+    α(0) = 0, α(1) = 1 and is monotonically increasing.
 
     Args:
-        E_0: Noise edge types, shape ``(B, N, N, K)``.
+        t: Time, any shape; values in [0, 1].
+        kind: One of ``"linear"``, ``"cosine"``, ``"concave"``.
+
+    Returns:
+        α(t), same shape as ``t``.
+    """
+    if kind == "linear":
+        return t
+    if kind == "cosine":
+        return 1.0 - torch.cos(math.pi * t / 2.0)
+    if kind == "concave":
+        return 1.0 - (1.0 - t) ** 2
+    raise ValueError(f"Unknown schedule kind: {kind!r}")
+
+
+def discrete_interpolation(
+    E_1: Tensor,
+    t: Tensor,
+    schedule: str = "cosine",
+    generator: torch.Generator | None = None,
+) -> tuple[Tensor, Tensor]:
+    """Masked-flow forward process for edges (spec §8.3).
+
+    Given the data edge tensor E_1 and time t, sample the mask indicator
+    μ_t ~ Bernoulli(1 - α(t)) per position (shared across K relations,
+    since the mask covers a (i, j) slot as a whole), and zero out masked
+    positions in the edge value tensor.
+
+    Args:
         E_1: Data edge types, shape ``(B, N, N, K)``.
-        t: Time steps, shape ``(B,)`` or ``(B, 1)`` or ``(B, 1, 1)``.
+        t: Time, shape ``(B,)`` or ``(B, 1)`` or ``(B, 1, 1)``.
+        schedule: Schedule kind for α(t).
         generator: Optional RNG.
 
     Returns:
-        Interpolated edge types E_t, shape ``(B, N, N, K)``.
+        ``(E_t, mu_t)`` where ``E_t`` has shape ``(B, N, N, K)`` (data
+        values at unmasked positions, zeros at masked) and ``mu_t`` has
+        shape ``(B, N, N)`` (1 = masked, 0 = decoded).
     """
     B, N, _, _K = E_1.shape
 
-    # Ensure t has shape (B, 1, 1) for z_ij sampling.
     if t.dim() == 1:
-        t = t.unsqueeze(-1).unsqueeze(-1)
+        t = t.unsqueeze(-1).unsqueeze(-1)  # (B, 1, 1)
     elif t.dim() == 2:
         t = t.unsqueeze(-1)
 
-    # Sample z_ij ~ Bernoulli(t), shared across K.
-    z = torch.bernoulli(
-        t.expand(B, N, N),
-        generator=generator,
-    )  # (B, N, N), binary
+    alpha = schedule_alpha(t, kind=schedule)  # same broadcast shape as t
+    mask_prob = (1.0 - alpha).expand(B, N, N)
 
-    # Expand z to match edge dimensions: (B, N, N, 1) for broadcast over K.
-    z = z.unsqueeze(-1)  # (B, N, N, 1)
+    mu_t = torch.bernoulli(mask_prob, generator=generator).to(E_1.dtype)  # (B, N, N)
+    keep = (1.0 - mu_t).unsqueeze(-1)  # (B, N, N, 1), 1 at decoded positions
+    E_t = keep * E_1
 
-    # Interpolate: when z=1 use data, when z=0 use noise.
-    E_t = z * E_1 + (1.0 - z) * E_0
-
-    return E_t
+    return E_t, mu_t

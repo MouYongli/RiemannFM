@@ -107,17 +107,21 @@ def sample_time(
     distribution: str = "uniform",
     logit_normal_mu: float = 0.0,
     logit_normal_sigma: float = 1.0,
+    beta_a: float = 1.0,
+    beta_b: float = 1.0,
 ) -> Tensor:
-    """Sample time steps from the specified distribution.
+    """Sample time steps from the specified distribution (spec §7.5).
 
     Args:
         batch_size: Number of time steps to sample.
         device: Target device.
         dtype: Target dtype.
         generator: Optional RNG.
-        distribution: ``"uniform"`` or ``"logit_normal"``.
-        logit_normal_mu: Mean of the normal in logit space (logit_normal only).
-        logit_normal_sigma: Std of the normal in logit space (logit_normal only).
+        distribution: ``"uniform"``, ``"logit_normal"``, or ``"beta"``.
+        logit_normal_mu: Mean of the normal in logit space.
+        logit_normal_sigma: Std of the normal in logit space.
+        beta_a: Alpha parameter of the Beta distribution.
+        beta_b: Beta parameter of the Beta distribution.
 
     Returns:
         Time steps, shape ``(B,)``.
@@ -127,6 +131,19 @@ def sample_time(
             batch_size, device=device, dtype=dtype, generator=generator,
         )
         return torch.sigmoid(logit_normal_mu + logit_normal_sigma * z)
+    if distribution == "beta":
+        # torch.distributions.Beta does not accept ``generator`` — the
+        # host-wide RNG handled by ``L.seed_everything`` is adequate for
+        # this per-step scalar draw.
+        work_dtype = dtype if dtype is not None else torch.float32
+        beta_dist = torch.distributions.Beta(
+            torch.tensor(beta_a, dtype=work_dtype),
+            torch.tensor(beta_b, dtype=work_dtype),
+        )
+        t: Tensor = beta_dist.sample((batch_size,))
+        if device is not None:
+            t = t.to(device)
+        return t
     # Default: uniform [0, 1).
     return torch.rand(
         batch_size, device=device, dtype=dtype, generator=generator,
