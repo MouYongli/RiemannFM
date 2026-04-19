@@ -110,18 +110,25 @@ class RiemannFM(nn.Module):
         self.rel_emb = nn.Parameter(torch.empty(num_edge_types, rel_emb_dim))
         nn.init.xavier_uniform_(self.rel_emb)
 
-        # Text projection to the internal text_proj_dim. The trailing
-        # LayerNorm stabilizes the scale fed into downstream cross-attention
-        # so the text branch and the manifold branch enter the backbone on
-        # comparable footings regardless of the text encoder's output norm.
-        self.text_proj: nn.Sequential | None
+        # Text projection to the internal text_proj_dim. Two parallel
+        # projections so that entity-text (long, descriptive) and
+        # relation-text (short predicate labels) do not compete for the
+        # same low-dim subspace. Each path is followed by LayerNorm to
+        # stabilize the scale fed into downstream cross-attention.
+        self.entity_text_proj: nn.Sequential | None
+        self.relation_text_proj: nn.Sequential | None
         if input_text_dim > 0 and self.text_proj_dim > 0:
-            self.text_proj = nn.Sequential(
+            self.entity_text_proj = nn.Sequential(
+                nn.Linear(input_text_dim, self.text_proj_dim),
+                nn.LayerNorm(self.text_proj_dim),
+            )
+            self.relation_text_proj = nn.Sequential(
                 nn.Linear(input_text_dim, self.text_proj_dim),
                 nn.LayerNorm(self.text_proj_dim),
             )
         else:
-            self.text_proj = None
+            self.entity_text_proj = None
+            self.relation_text_proj = None
 
         self.time_emb = RiemannFMTimeEmbedding(time_dim)
 
@@ -189,10 +196,19 @@ class RiemannFM(nn.Module):
             num_edge_types=num_edge_types,
         )
 
-    def _project_text(self, x: Tensor) -> Tensor:
-        """Project raw text embeddings to ``text_proj_dim``."""
-        if self.text_proj is not None and x.shape[-1] > 0:
-            out: Tensor = self.text_proj(x)
+    def _project_entity_text(self, x: Tensor) -> Tensor:
+        """Project raw entity (node) text embeddings to ``text_proj_dim``."""
+        if self.entity_text_proj is not None and x.shape[-1] > 0:
+            out: Tensor = self.entity_text_proj(x)
+            return out
+        return torch.zeros(
+            *x.shape[:-1], self.text_proj_dim, device=x.device, dtype=x.dtype,
+        )
+
+    def _project_relation_text(self, x: Tensor) -> Tensor:
+        """Project raw relation text embeddings to ``text_proj_dim``."""
+        if self.relation_text_proj is not None and x.shape[-1] > 0:
+            out: Tensor = self.relation_text_proj(x)
             return out
         return torch.zeros(
             *x.shape[:-1], self.text_proj_dim, device=x.device, dtype=x.dtype,
@@ -243,9 +259,10 @@ class RiemannFM(nn.Module):
         Returns:
             ``(V_hat, ell_ex, ell_type, h_V)``.
         """
-        node_text_proj = self._project_text(node_text)
+        node_text_proj = self._project_entity_text(node_text)
         relation_text_proj = (
-            self._project_text(relation_text) if relation_text is not None else None
+            self._project_relation_text(relation_text)
+            if relation_text is not None else None
         )
 
         t_emb = self.time_emb(t)
