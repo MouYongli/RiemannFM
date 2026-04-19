@@ -300,6 +300,10 @@ class RiemannFMPretrainModule(L.LightningModule):
             weight_decay=weight_decay,
             use_riemannian_optim=use_riemannian_optim,
         )
+        assert len(optimizer.param_groups) == 4, (
+            f"expected 4 param groups [main, curvature, relation, no_decay], "
+            f"got {len(optimizer.param_groups)}"
+        )
 
         def warmup_cosine(step: int) -> float:
             if step < warmup:
@@ -309,7 +313,8 @@ class RiemannFMPretrainModule(L.LightningModule):
             return min_ratio + (1.0 - min_ratio) * cos_term
 
         scheduler = torch.optim.lr_scheduler.LambdaLR(
-            optimizer, [warmup_cosine, warmup_cosine, warmup_cosine],
+            optimizer,
+            [warmup_cosine, warmup_cosine, warmup_cosine, warmup_cosine],
         )
 
         return {
