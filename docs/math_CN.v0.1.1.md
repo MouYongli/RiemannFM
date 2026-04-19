@@ -28,7 +28,7 @@
     - [5.2 输入编码层](#52-输入编码层)
     - [5.3 RieFormer 块](#53-rieformer-块)
       - [5.3.1 子模块 A：流形感知多头注意力](#531-子模块-a流形感知多头注意力)
-      - [5.3.1 子模块 A：流形感知多头注意力](#531-子模块-a流形感知多头注意力-1)
+      - [5.3.2 共享组件：ATH-Norm 与 FFN](#532-共享组件ath-norm-与-ffn)
       - [5.3.3 子模块 C：边流自更新](#533-子模块-c边流自更新)
       - [5.3.4 子模块 D：双向交叉交互](#534-子模块-d双向交叉交互)
       - [5.3.5 子模块 E：文本条件注入](#535-子模块-e文本条件注入)
@@ -122,8 +122,9 @@ $$\mathbf{E}_{ij}^{(k)} = \mathbb{1}[(v_i, r_k, v_j) \in \mathcal{E}_\mathcal{G}
 固定 $(i, j)$ 时，$\mathbf{E}_{ij} \in \{0,1\}^K$ 为多热向量：$\mathbf{E}_{ij} = \mathbf{0}_K$ 表示 $i$ 到 $j$ 无边，$\|\mathbf{E}_{ij}\|_1 \in \{0, 1, \ldots, K\}$ 表示 $i$ 到 $j$ 的关系类型数。
 
 **性质**：
-- **非对称**：一般地 $\mathbf{E}_{ij} \neq \mathbf{E}_{ji}$；
-- **多重性**：$\|\mathbf{E}_{ij}\|_1$ 可大于 $1$。
+- **有向性**：$\mathbf{E}$ 作为有向张量不强制对称，一般地 $\mathbf{E}_{ij} \neq \mathbf{E}_{ji}$；
+- **近似对称子集**：存在语义对称关系子集 $\mathcal{R}_{\mathrm{sym}} \subseteq \mathcal{R}$（如 spouse、sibling、shares border with、twin city），在数据中对任意 $r_k \in \mathcal{R}_{\mathrm{sym}}$ 有 $\mathbf{E}_{ij}^{(k)} \approx \mathbf{E}_{ji}^{(k)}$（实测 Wikidata5M 上反向边覆盖率 $\sim 90\text{--}99\%$，其余为标注缺失）；
+- **多重性**：$\|\mathbf{E}_{ij}\|_1$ 可大于 $1$；
 - **稀疏性**：平均出度 $\bar{d} = \frac{1}{N}\sum_{i=1}^{N} |\{j \in [N] : \mathbf{E}_{ij} \neq \mathbf{0}_K\}| \ll N$。
 
 ### 3.4 文本条件
@@ -266,32 +267,64 @@ $$f_\theta(\mathbf{X}_t, \mathbf{E}_t, t, \mathbf{C}_\mathcal{V}, \mathbf{C}_\ma
 
 $\theta$ 包含所有可学习参数，含曲率 $\kappa_h, \kappa_s$。
 
+**架构语义约定。**
+
+- $\mathbf{x}_{t,i} \in \mathcal{M}$、$\mathbf{E}_{t,ij} \in \{0,1\}^K$ 为**几何/离散状态**（state），在 $L$ 层 RieFormer 中保持不变，仅作为 attention 偏置与归一化条件被反复读取；
+- $\mathbf{h}_i^{V,(l)} \in \mathbb{R}^{d_v}$、$\mathbf{h}_{ij}^{E,(l)} \in \mathbb{R}^{d_{e'}}$ 为**隐藏嵌入**（latent），完全生活在 Euclidean 空间，承担层间信息流。
+
+几何信息仅通过三个接口与 $\mathbf{h}$ 对接：(i) 入口 $\pi$ 的实际实现式（定义 5.3）；(ii) attention 的 M-RoPE / Geodesic Kernel（定义 5.8–5.9）与 ATH-Norm 的曲率 FiLM（定义 5.11）；(iii) 出口的切空间投影（定义 5.18）。因此多头注意力本质为 Euclidean 算子，与流形保结构目标不冲突——流形约束不施加于 $\mathbf{h}$，而是体现在 attention 的 inductive bias 与最终 $\hat{\mathbf{v}} \in T_{\mathbf{x}_t}\mathcal{M}$ 的投影闭合上。
+
 ### 5.2 输入编码层
 
 **记号**：$[\mathbf{a} \| \mathbf{b}]$ 表示向量拼接（concatenation）。
 
-**定义 5.2（文本投影）。** 预训练文本编码器的输出维度 $d_c$ 随编码器选择而变化（如 Qwen3-Embedding $d_c = 1024$，SBERT $d_c = 768$）。为解耦模型与文本编码器，引入共享线性投影 $\mathbf{W}_{\mathrm{text}} \in \mathbb{R}^{d_p \times d_c}$ 将文本条件映射到模型内部维度 $d_p$：
+**定义 5.2（文本投影）。** 预训练文本编码器的输出维度 $d_c$ 随编码器选择而变化（如 本工作Qwen3-Embedding $d_c = 768$）。为解耦模型与文本编码器，引入共享线性投影 $\mathbf{W}_{\mathrm{c}} \in \mathbb{R}^{d_p \times d_c}$ 将文本条件映射到模型内部维度 $d_p$：
 
-$$\bar{\mathbf{C}}_\mathcal{V} = \mathbf{C}_\mathcal{V} \mathbf{W}_{\mathrm{text}}^\top \in \mathbb{R}^{N \times d_p}, \qquad \bar{\mathbf{C}}_\mathcal{R} = \mathbf{C}_\mathcal{R} \mathbf{W}_{\mathrm{text}}^\top \in \mathbb{R}^{K \times d_p}$$
+$$\bar{\mathbf{C}}_\mathcal{V} = \mathbf{C}_\mathcal{V} \mathbf{W}_{\mathrm{c}}^\top \in \mathbb{R}^{N \times d_p}, \qquad \bar{\mathbf{C}}_\mathcal{R} = \mathbf{C}_\mathcal{R} \mathbf{W}_{\mathrm{c}}^\top \in \mathbb{R}^{K \times d_p}$$
 
 节点文本与关系文本**共享同一投影矩阵**。后续所有公式中 $\bar{\mathbf{c}}_i \in \mathbb{R}^{d_p}$ 和 $\bar{\mathbf{c}}_{r_k} \in \mathbb{R}^{d_p}$ 分别指投影后的节点和关系文本条件向量。
 
 **定义 5.3（坐标投影）。** $\pi: \mathcal{M} \to \mathbb{R}^D$：
 $$\pi(\mathbf{x}) = [\mathbf{x}^{\mathbb{H}} \| \mathbf{x}^{\mathbb{S}} \| \mathbf{x}^{\mathbb{R}}]$$
 
-**定义 5.4（节点初始嵌入）。**
-$$\mathbf{h}_i^{V,(0)} = \mathrm{MLP}_{\mathrm{node}}\!\left([\pi(\mathbf{x}_{t,i}) \| \bar{\mathbf{c}}_i \| m_i]\right) + \mathbf{W}_{\mathrm{tp}}\,\mathbf{t}_{\mathrm{emb}} \in \mathbb{R}^{d_v}$$
-其中输入维度为 $D + d_p + 1$，$d_v$ 为节点隐藏维度，$\mathbf{W}_{\mathrm{tp}} \in \mathbb{R}^{d_v \times d_v}$ 为时间投影矩阵，$\mathbf{t}_{\mathrm{emb}}$ 为定义 5.6 的时间嵌入。此时间投影与 ATH-Norm（定义 5.10）的逐层时间条件互补：前者在输入层提供全局时间锚点，后者在每层自适应调节归一化参数。
 
-**定义 5.5（边初始嵌入）。**
-$$\mathbf{h}_{ij}^{E,(0)} = \mathrm{MLP}_{\mathrm{edge}}\!\left([\mathbf{E}_{t,ij}\mathbf{W}_{\mathrm{rel}} \| \mathbf{E}_{t,ij}\bar{\mathbf{C}}_\mathcal{R}]\right) \in \mathbb{R}^{d_{e'}}$$
-其中 $\mathbf{W}_{\mathrm{rel}} \in \mathbb{R}^{K \times d_r}$ 为可学习关系嵌入矩阵，$\mathbf{E}_{t,ij}\mathbf{W}_{\mathrm{rel}} \in \mathbb{R}^{d_r}$ 为激活关系类型的嵌入之和，$\mathbf{E}_{t,ij}\bar{\mathbf{C}}_\mathcal{R} \in \mathbb{R}^{d_p}$ 为激活关系类型的投影文本嵌入之和。输入维度为 $d_r + d_p$。
+然而，在实际实现中，我们采用如下如下方法：$\pi: \mathcal{M} \to \mathbb{R}^{D-\mathbb{1}}$：
+$$\pi(\mathbf{x}) = \Big[\,\mathbf{x}^{\mathbb{H}}_{1:d_h}\ \Big\|\ \mathrm{LN}_{\mathbb{S}}(\mathbf{x}^{\mathbb{S}})\ \Big\|\ \mathrm{LN}_{\mathbb{R}}(\mathbf{x}^{\mathbb{R}})\,\Big]$$
 
-**定义 5.6（时间嵌入）。** 设 $d_t \in \mathbb{Z}_{>0}$ 为偶数，正弦位置编码采用块拼接形式：
+其中：
+- $\mathbf{x}^{\mathbb{H}}_{1:d_h}$ 表示丢弃 Lorentz 时轴 $x_0$，仅保留空间分量。理由：$x_0 = \sqrt{\|\mathbf{x}^{\mathbb{H}}_{1:}\|^2 + 1/|\kappa_h|}$ 是空间坐标与 $\kappa_h$ 的确定性函数，小‑tangent 区批间方差近零，作为 MLP 输入会注入 batch‑wide DC 偏置；
+- $\mathrm{LN}_{\mathbb{S}}, \mathrm{LN}_{\mathbb{R}}$ 分别为作用于 $\mathbb{S}, \mathbb{R}$ 分量的独立 LayerNorm，用以剥离 anchor 锚点（$s_0 \approx 1/\sqrt{\kappa_s}$、$\mathbf{0}_{d_e}$）附近的尺度 DC；
+- 不对 $\mathbf{x}^{\mathbb{H}}_{1:d_h}$ 施加 LN，以保留 Lorentz 几何结构（LN 会混淆签名 $(-,+,\ldots,+)$）。
+
+**设计理由。** 入口 DC 会经 MLP 放大为投影头的 rank‑1 塌缩（$L_{\mathrm{align}}$ 冻结在 $\log M$），本变换是消除该吸引子的最小入口修复。
+
+**代价与补偿。** $\pi_{\mathrm{enc}}$ 截断了曲率 $\kappa_h, \kappa_s$ 到 encoder 入口的梯度通路，由 ATH‑Norm（定义 5.11）将 $[\kappa_h, \kappa_s]$ 作为 FiLM 条件注入每一层以回补。
+
+
+**定义 5.4（位置编码，RWPE）。** $\mathbf{p}_i \in \mathbb{R}^{d_{\mathrm{pe}}}$ 为节点 $i$ 的 $k$-步随机游走位置编码（RWPE, Dwivedi et al. 2022）：
+
+$$\mathbf{p}_i = \big[(\tilde{\mathbf{A}})_{ii},\, (\tilde{\mathbf{A}}^2)_{ii},\, \ldots,\, (\tilde{\mathbf{A}}^k)_{ii}\big],$$
+
+其中 $\tilde{\mathbf{A}} = \mathbf{D}^{-1}\mathbf{A}$ 为行归一化邻接矩阵（$\mathbf{A}$ 由 $\mathbf{E}_t$ 对 $K$ 维求和并二值化得到），$d_{\mathrm{pe}} = k$ 为 RWPE 步数（超参）。
+
+**RWPE 的作用。** 对 MASK_C 节点（其文本侧被共享 `mask_emb` 替换），若几何侧 $\mathbf{x}$ 又相似，backbone 无法区分同构位置上的不同 entity，$L_{\mathrm{mask\_c}}$ 退化到 $\log M$。RWPE 是 identity-free 的结构签名（仅依赖邻接），打破该符号对称性而不泄漏 entity 身份。
+
+**定义 5.5（时间嵌入）。** 设 $d_t \in \mathbb{Z}_{>0}$ 为偶数，正弦位置编码采用块拼接形式：
 $$\boldsymbol{\psi}(t) = [\sin(\omega_1 t),\, \ldots,\, \sin(\omega_{d_t/2} t),\, \cos(\omega_1 t),\, \ldots,\, \cos(\omega_{d_t/2} t)] \in \mathbb{R}^{d_t}$$
 其中 $\omega_l = 10000^{-2l/d_t}$，$l \in [d_t/2]$。经两层 MLP 投影：
 $$\mathbf{t}_{\mathrm{emb}} = \mathbf{W}_2\,\sigma\!\left(\mathbf{W}_1 \boldsymbol{\psi}(t) + \mathbf{b}_1\right) + \mathbf{b}_2 \in \mathbb{R}^{d_t}$$
 其中 $\mathbf{W}_1 \in \mathbb{R}^{d_t \times d_t}$，$\mathbf{W}_2 \in \mathbb{R}^{d_t \times d_t}$，$\sigma(\cdot) = \mathrm{SiLU}$。两层 MLP 相比单层线性提供更丰富的时间条件表达能力。
+
+**定义 5.6（节点初始嵌入）。**
+$$\mathbf{h}_i^{V,(0)} = \mathrm{MLP}_{\mathrm{node}}\!\left([\pi(\mathbf{x}_{t,i}) \| \bar{\mathbf{c}}_i \| \mathbf{p}_i \| m_i]\right) + \mathbf{W}_{\mathrm{tp}}\,\mathbf{t}_{\mathrm{emb}} \in \mathbb{R}^{d_v}$$
+
+其中 $\pi$ 取定义 5.3 的实际实现式，$\mathbf{p}_i$ 为定义 5.4 的 RWPE，$\mathbf{t}_{\mathrm{emb}}$ 为定义 5.5 的时间嵌入。输入维度为 $(D - \mathbb{1}[d_h > 0]) + d_p + d_{\mathrm{pe}} + 1$，$d_v$ 为节点隐藏维度，$\mathbf{W}_{\mathrm{tp}} \in \mathbb{R}^{d_v \times d_v}$ 为时间投影矩阵。
+
+此时间投影与 ATH-Norm（定义 5.11）的逐层时间条件互补：前者在输入层提供全局时间锚点，后者在每层自适应调节归一化参数。
+
+**定义 5.7（边初始嵌入）。**
+$$\mathbf{h}_{ij}^{E,(0)} = \mathrm{MLP}_{\mathrm{edge}}\!\left([\mathbf{E}_{t,ij}\mathbf{W}_{\mathrm{rel}} \| \mathbf{E}_{t,ij}\bar{\mathbf{C}}_\mathcal{R}]\right) \in \mathbb{R}^{d_{e'}}$$
+其中 $\mathbf{W}_{\mathrm{rel}} \in \mathbb{R}^{K \times d_r}$ 为可学习关系嵌入矩阵，$\mathbf{E}_{t,ij}\mathbf{W}_{\mathrm{rel}} \in \mathbb{R}^{d_r}$ 为激活关系类型的嵌入之和，$\mathbf{E}_{t,ij}\bar{\mathbf{C}}_\mathcal{R} \in \mathbb{R}^{d_p}$ 为激活关系类型的投影文本嵌入之和。输入维度为 $d_r + d_p$。
 
 ### 5.3 RieFormer 块
 
@@ -307,17 +340,15 @@ RieFormer 由 $L \in \mathbb{Z}_{>0}$ 个相同结构的块堆叠而成。第 $l
 
 #### 5.3.1 子模块 A：流形感知多头注意力
 
-#### 5.3.1 子模块 A：流形感知多头注意力
-
 设 $n_h \in \mathbb{Z}_{>0}$ 为注意力头数，$d_{\mathrm{head}} = d_v / n_h$（要求 $n_h \mid d_v$ 且 $2 \mid d_{\mathrm{head}}$）。
 
-**定义 5.7（Manifold RoPE）。** 对第 $s$ 个注意力头（$s \in [n_h]$），频率 $\omega_l^{(s)} = 10000^{-2l/d_{\mathrm{head}}}$，$l \in [d_{\mathrm{head}}/2]$。对节点对 $(i, j)$，定义角度：
+**定义 5.8（Manifold RoPE）。** 对第 $s$ 个注意力头（$s \in [n_h]$），频率 $\omega_l^{(s)} = 10000^{-2l/d_{\mathrm{head}}}$，$l \in [d_{\mathrm{head}}/2]$。对节点对 $(i, j)$，定义角度：
 $$\theta_{ij,l}^{(s)} = \omega_l^{(s)} \cdot d_\mathcal{M}(\mathbf{x}_{t,i}, \mathbf{x}_{t,j})$$
 
 旋转矩阵 $\mathbf{R}(\boldsymbol{\theta}_{ij}^{(s)}) \in \mathbb{R}^{d_{\mathrm{head}} \times d_{\mathrm{head}}}$ 为块对角矩阵，由 $d_{\mathrm{head}}/2$ 个 $2 \times 2$ 旋转块组成：
 $$\mathbf{R}(\boldsymbol{\theta}_{ij}^{(s)}) = \mathrm{diag}\!\left(\begin{pmatrix} \cos\theta_{ij,1}^{(s)} & -\sin\theta_{ij,1}^{(s)} \\ \sin\theta_{ij,1}^{(s)} & \cos\theta_{ij,1}^{(s)} \end{pmatrix}, \ldots, \begin{pmatrix} \cos\theta_{ij,d_{\mathrm{head}}/2}^{(s)} & -\sin\theta_{ij,d_{\mathrm{head}}/2}^{(s)} \\ \sin\theta_{ij,d_{\mathrm{head}}/2}^{(s)} & \cos\theta_{ij,d_{\mathrm{head}}/2}^{(s)} \end{pmatrix}\right)$$
 
-**定义 5.8（Geodesic Kernel）。** 对第 $s$ 个注意力头：
+**定义 5.9（Geodesic Kernel）。** 对第 $s$ 个注意力头：
 $$\kappa^{(s)}(\mathbf{x}_{t,i}, \mathbf{x}_{t,j}) = w_{\mathbb{H}}^{(s)} \kappa_{\mathbb{H}}(\mathbf{x}_{t,i}^{\mathbb{H}}, \mathbf{x}_{t,j}^{\mathbb{H}}) + w_{\mathbb{S}}^{(s)} \kappa_{\mathbb{S}}(\mathbf{x}_{t,i}^{\mathbb{S}}, \mathbf{x}_{t,j}^{\mathbb{S}}) + w_{\mathbb{R}}^{(s)} \kappa_{\mathbb{R}}(\mathbf{x}_{t,i}^{\mathbb{R}}, \mathbf{x}_{t,j}^{\mathbb{R}})$$
 其中：
 - $\kappa_{\mathbb{H}}(\mathbf{a}, \mathbf{b}) = -d_{\mathbb{H}}(\mathbf{a}, \mathbf{b})$
@@ -326,7 +357,7 @@ $$\kappa^{(s)}(\mathbf{x}_{t,i}, \mathbf{x}_{t,j}) = w_{\mathbb{H}}^{(s)} \kappa
 
 $w_{\mathbb{H}}^{(s)}, w_{\mathbb{S}}^{(s)}, w_{\mathbb{R}}^{(s)} \in \mathbb{R}$ 为每头独立的可学习权重。
 
-**定义 5.9（流形感知注意力，Pre-Norm 风格）。** 先对节点嵌入做 ATH-Norm（定义 5.10），再计算注意力：
+**定义 5.10（流形感知注意力，Pre-Norm 风格）。** 先对节点嵌入做 ATH-Norm（定义 5.11），再计算注意力：
 
 $$\bar{\mathbf{h}}_i^{V} = \mathrm{ATH\text{-}Norm}(\mathbf{h}_i^{V,(l-1)},\, \mathbf{t}_{\mathrm{emb}})$$
 
@@ -349,11 +380,33 @@ $$\mathrm{MHA}_i = \mathbf{W}_O [\mathbf{o}_i^{(1)} \| \cdots \| \mathbf{o}_i^{(
 
 残差连接（跳过归一化前的原始嵌入）：$\tilde{\mathbf{h}}_i^V = \mathbf{h}_i^{V,(l-1)} + \mathrm{MHA}_i$。
 
+#### 5.3.2 共享组件：ATH-Norm 与 FFN
+
+子模块 A 与 E 均在 Pre-Norm 位置调用 ATH-Norm，子模块 E 的末尾以 FFN 作残差后处理。为完整起见将其独立定义；原图中"子模块 B"即指本节内容，已并入 A 与 E 的 Pre-Norm 残差结构中，不再单列前向步骤。
+
+**定义 5.11（ATH-Norm，自适应时间条件归一化）。** 设 $d \in \mathbb{Z}_{>0}$ 为特征维度（节点用 $d_v$、边用 $d_{e'}$），$d_t \in \mathbb{Z}_{>0}$ 为时间嵌入维度，$d_{\mathrm{cond}} \in \mathbb{Z}_{\geq 0}$ 为可选辅助条件维度（如曲率标量 $[\kappa_h, \kappa_s]$，$d_{\mathrm{cond}} = 0$ 时该通道关闭）。对输入 $\mathbf{h} \in \mathbb{R}^d$、时间嵌入 $\mathbf{t}_{\mathrm{emb}} \in \mathbb{R}^{d_t}$ 及可选条件 $\mathbf{c}_{\mathrm{cond}} \in \mathbb{R}^{d_{\mathrm{cond}}}$：
+
+$$\mathrm{ATH\text{-}Norm}(\mathbf{h},\, \mathbf{t}_{\mathrm{emb}},\, \mathbf{c}_{\mathrm{cond}}) = \boldsymbol{\gamma}(\mathbf{t}_{\mathrm{emb}}, \mathbf{c}_{\mathrm{cond}}) \odot \mathrm{LN}(\mathbf{h}) + \boldsymbol{\beta}(\mathbf{t}_{\mathrm{emb}}, \mathbf{c}_{\mathrm{cond}})$$
+
+其中 $\mathrm{LN}$ 为无仿射参数的 LayerNorm（均值方差归一化后不乘可学习 $\gamma, \beta$）；自适应仿射由单个线性层 FiLM 风格给出：
+
+$$[\boldsymbol{\gamma} \| \boldsymbol{\beta}] = \mathbf{W}_a [\mathbf{t}_{\mathrm{emb}} \| \mathbf{c}_{\mathrm{cond}}] + \mathbf{b}_a$$
+
+$\mathbf{W}_a \in \mathbb{R}^{2d \times (d_t + d_{\mathrm{cond}})}$ 初始化为 $\mathbf{0}$，$\mathbf{b}_a \in \mathbb{R}^{2d}$ 的前 $d$ 维初始化为 $1$、后 $d$ 维初始化为 $0$，保证训练开始时 $\mathrm{ATH\text{-}Norm}$ 近似为恒等 LayerNorm。时间嵌入可为子图级 $\mathbf{t}_{\mathrm{emb}} \in \mathbb{R}^{B \times d_t}$ 或逐节点 $\mathbf{t}_{\mathrm{emb}} \in \mathbb{R}^{B \times N \times d_t}$（对应定义 6.10 的节点三分区）。当 `use_ath_norm = false` 时退化为标准 LayerNorm（消融开关）。
+
+**定义 5.12（FFN 块）。** 节点与边 FFN 均为两层前馈网络，采用 SiLU 激活、扩张因子 $r_{\mathrm{ffn}} \in \mathbb{Z}_{>0}$（默认 $r_{\mathrm{ffn}} = 4$）与 Dropout：
+
+$$\mathrm{FFN}_V(\mathbf{h}) = \mathbf{W}_2^V\, \mathrm{Drop}\!\left(\mathrm{SiLU}(\mathbf{W}_1^V \mathbf{h} + \mathbf{b}_1^V)\right) + \mathbf{b}_2^V$$
+
+$$\mathrm{FFN}_E(\mathbf{h}) = \mathbf{W}_2^E\, \mathrm{Drop}\!\left(\mathrm{SiLU}(\mathbf{W}_1^E \mathbf{h} + \mathbf{b}_1^E)\right) + \mathbf{b}_2^E$$
+
+其中 $\mathbf{W}_1^V \in \mathbb{R}^{r_{\mathrm{ffn}} d_v \times d_v}$，$\mathbf{W}_2^V \in \mathbb{R}^{d_v \times r_{\mathrm{ffn}} d_v}$；$\mathbf{W}_1^E \in \mathbb{R}^{r_{\mathrm{ffn}} d_{e'} \times d_{e'}}$，$\mathbf{W}_2^E \in \mathbb{R}^{d_{e'} \times r_{\mathrm{ffn}} d_{e'}}$。$\mathrm{Drop}(\cdot)$ 为 Dropout。节点 FFN 使用 Pre-Norm 式残差（归一化位于残差前，见定义 5.17）；边 FFN 使用标准 LayerNorm Pre-Norm。
+
 #### 5.3.3 子模块 C：边流自更新
 
 边嵌入通过分解注意力独立更新：对边 $(i, j)$，分别聚合头节点 $i$ 的其他出边和尾节点 $j$ 的其他入边的信息。
 
-**定义 5.12（分解边注意力）。** 对边 $(i, j)$：
+**定义 5.13（分解边注意力）。** 对边 $(i, j)$：
 
 头侧聚合（$i$ 的其他出边）：
 $$\mathbf{g}_{ij}^{\mathrm{head}} = \sum_{p \in [N] \setminus \{j\}} \gamma_{ip \to ij}^{\mathrm{head}} \cdot \mathbf{W}_{\mathrm{Ev}}^{\mathrm{head}} \mathbf{h}_{ip}^{E,(l-1)}$$
@@ -375,26 +428,26 @@ $$\tilde{\mathbf{h}}_{ij}^E = \mathbf{h}_{ij}^{E,(l-1)} + \mathrm{MLP}_{\mathrm{
 
 #### 5.3.4 子模块 D：双向交叉交互
 
-**定义 5.13（边→节点聚合）。** 对节点 $i$，聚合其相关边嵌入：
+**定义 5.14（边→节点聚合）。** 对节点 $i$，聚合其相关边嵌入：
 $$\hat{\mathbf{h}}_i^V = \bar{\mathbf{h}}_i^V + \mathrm{MLP}_{E \to V}\!\left(\sum_{j=1}^N \alpha_{ij}^{E \to V} \cdot \mathbf{W}_{\mathrm{Ev2n}} \bar{\mathbf{h}}_{ij}^E\right)$$
 其中 $\mathbf{W}_{\mathrm{Ev2n}} \in \mathbb{R}^{d_v \times d_{e'}}$，$\mathrm{MLP}_{E \to V}: \mathbb{R}^{d_v} \to \mathbb{R}^{d_v}$。注意力权重：
 $$\alpha_{ij}^{E \to V} = \mathrm{softmax}_j\!\left(\frac{(\mathbf{W}_Q^{E \to V} \bar{\mathbf{h}}_i^V)^\top (\mathbf{W}_K^{E \to V} \bar{\mathbf{h}}_{ij}^E)}{\sqrt{d_v}}\right)$$
 其中 $\mathbf{W}_Q^{E \to V} \in \mathbb{R}^{d_v \times d_v}$，$\mathbf{W}_K^{E \to V} \in \mathbb{R}^{d_v \times d_{e'}}$。
 
-**定义 5.14（节点→边注入）。** 对边 $(i, j)$：
+**定义 5.15（节点→边注入）。** 对边 $(i, j)$：
 $$\hat{\mathbf{h}}_{ij}^E = \bar{\mathbf{h}}_{ij}^E + \mathrm{MLP}_{V \to E}\!\left([\hat{\mathbf{h}}_i^V \| \hat{\mathbf{h}}_j^V \| \hat{\mathbf{h}}_i^V \odot \hat{\mathbf{h}}_j^V]\right)$$
 其中 $\mathrm{MLP}_{V \to E}: \mathbb{R}^{3d_v} \to \mathbb{R}^{d_{e'}}$。
 
 #### 5.3.5 子模块 E：文本条件注入
 
-**定义 5.15（文本交叉注意力）。** 对节点 $i$，以节点嵌入为 query、投影后文本条件为 key/value：
+**定义 5.16（文本交叉注意力）。** 对节点 $i$，以节点嵌入为 query、投影后文本条件为 key/value：
 $$\mathbf{q}_i^{\mathrm{text}} = \mathbf{W}_Q^{\mathrm{text}} \hat{\mathbf{h}}_i^V, \quad \mathbf{k}_j^{\mathrm{text}} = \mathbf{W}_K^{\mathrm{text}} \bar{\mathbf{c}}_j, \quad \mathbf{v}_j^{\mathrm{text}} = \mathbf{W}_V^{\mathrm{text}} \bar{\mathbf{c}}_j$$
 其中 $\mathbf{W}_Q^{\mathrm{text}} \in \mathbb{R}^{d_v \times d_v}$，$\mathbf{W}_K^{\mathrm{text}}, \mathbf{W}_V^{\mathrm{text}} \in \mathbb{R}^{d_v \times d_p}$。
 
 交叉注意力：
 $$\mathrm{CrossAttn}_i = \sum_{j=1}^N \mathrm{softmax}_j\!\left(\frac{\mathbf{q}_i^{\mathrm{text}\top} \mathbf{k}_j^{\mathrm{text}}}{\sqrt{d_v}}\right) \cdot \mathbf{v}_j^{\mathrm{text}}$$
 
-**定义 5.16（第 $l$ 层输出）。** 文本交叉注意力残差后，分别经 ATH-Norm + FFN 残差得到最终输出：
+**定义 5.17（第 $l$ 层输出）。** 文本交叉注意力残差后，分别经 ATH-Norm + FFN 残差得到最终输出：
 
 - 节点文本残差：$\mathbf{h}_i^{V,\mathrm{text}} = \hat{\mathbf{h}}_i^V + \mathrm{CrossAttn}_i$
 - 节点 FFN：$\mathbf{h}_i^{V,(l)} = \mathbf{h}_i^{V,\mathrm{text}} + \mathrm{FFN}_V\!\left(\mathrm{ATH\text{-}Norm}(\mathbf{h}_i^{V,\mathrm{text}},\, \mathbf{t}_{\mathrm{emb}})\right)$
@@ -406,18 +459,18 @@ $$\mathrm{CrossAttn}_i = \sum_{j=1}^N \mathrm{softmax}_j\!\left(\frac{\mathbf{q}
 
 #### 5.4.1 向量场输出头
 
-**定义 5.17（切空间投影）。** 对任意 $\hat{\mathbf{u}} \in \mathbb{R}^D$，按坐标投影 $\pi$ 的逆序拆分为 $\hat{\mathbf{u}}^{\mathbb{H}} \in \mathbb{R}^{d_h+1}$，$\hat{\mathbf{u}}^{\mathbb{S}} \in \mathbb{R}^{d_s+1}$，$\hat{\mathbf{u}}^{\mathbb{R}} \in \mathbb{R}^{d_e}$。投影到 $T_{\mathbf{x}_t}\mathcal{M}$：
+**定义 5.18（切空间投影）。** 对任意 $\hat{\mathbf{u}} \in \mathbb{R}^D$，按坐标投影 $\pi$ 的逆序拆分为 $\hat{\mathbf{u}}^{\mathbb{H}} \in \mathbb{R}^{d_h+1}$，$\hat{\mathbf{u}}^{\mathbb{S}} \in \mathbb{R}^{d_s+1}$，$\hat{\mathbf{u}}^{\mathbb{R}} \in \mathbb{R}^{d_e}$。投影到 $T_{\mathbf{x}_t}\mathcal{M}$：
 $$\hat{\mathbf{v}}^{\mathbb{H}} = \hat{\mathbf{u}}^{\mathbb{H}} - \kappa_h \langle \hat{\mathbf{u}}^{\mathbb{H}}, \mathbf{x}_t^{\mathbb{H}} \rangle_{\mathrm{L}} \cdot \mathbf{x}_t^{\mathbb{H}} \in T_{\mathbf{x}_t^{\mathbb{H}}}\mathbb{H}$$
 $$\hat{\mathbf{v}}^{\mathbb{S}} = \hat{\mathbf{u}}^{\mathbb{S}} - \kappa_s (\mathbf{x}_t^{\mathbb{S}\top} \hat{\mathbf{u}}^{\mathbb{S}}) \cdot \mathbf{x}_t^{\mathbb{S}} \in T_{\mathbf{x}_t^{\mathbb{S}}}\mathbb{S}$$
 $$\hat{\mathbf{v}}^{\mathbb{R}} = \hat{\mathbf{u}}^{\mathbb{R}} \in \mathbb{R}^{d_e}$$
 
-**定义 5.18（向量场预测）。** 对节点 $i$：
+**定义 5.19（向量场预测）。** 对节点 $i$：
 $$\hat{\mathbf{u}}_i = \mathrm{MLP}_{\mathrm{vec}}(\mathbf{h}_i^{V,(L)}) \in \mathbb{R}^D$$
-其中 $\mathrm{MLP}_{\mathrm{vec}}: \mathbb{R}^{d_v} \to \mathbb{R}^D$。经定义 5.17 投影后得 $\hat{\mathbf{v}}_i = (\hat{\mathbf{v}}_i^{\mathbb{H}}, \hat{\mathbf{v}}_i^{\mathbb{S}}, \hat{\mathbf{v}}_i^{\mathbb{R}}) \in T_{\mathbf{x}_{t,i}}\mathcal{M}$。
+其中 $\mathrm{MLP}_{\mathrm{vec}}: \mathbb{R}^{d_v} \to \mathbb{R}^D$。经定义 5.18 投影后得 $\hat{\mathbf{v}}_i = (\hat{\mathbf{v}}_i^{\mathbb{H}}, \hat{\mathbf{v}}_i^{\mathbb{S}}, \hat{\mathbf{v}}_i^{\mathbb{R}}) \in T_{\mathbf{x}_{t,i}}\mathcal{M}$。
 
 #### 5.4.2 边类型输出头
 
-**定义 5.19（双线性关系匹配）。** 将边嵌入投影到匹配空间，并构造关系原型向量：
+**定义 5.20（双线性关系匹配）。** 将边嵌入投影到匹配空间，并构造关系原型向量：
 
 - 边投影：$\mathbf{g}_{ij}^{\mathrm{proj}} = \mathrm{MLP}_{\mathrm{edge\text{-}proj}}(\mathbf{h}_{ij}^{E,(L)}) \in \mathbb{R}^{d_{e'}}$，其中 $\mathrm{MLP}_{\mathrm{edge\text{-}proj}}: \mathbb{R}^{d_{e'}} \to \mathbb{R}^{d_{e'}}$（两层 MLP：Linear → SiLU → Linear）。
 - 关系原型：
@@ -426,13 +479,13 @@ $$\hat{\mathbf{u}}_i = \mathrm{MLP}_{\mathrm{vec}}(\mathbf{h}_i^{V,(L)}) \in \ma
 
 记 $\mathbf{P}_{\mathrm{proto}} = (\mathbf{p}_1, \ldots, \mathbf{p}_K)^\top \in \mathbb{R}^{K \times d_{e'}}$ 为关系原型矩阵。
 
-**定义 5.20（边类型概率）。** 通过内积打分与逐关系偏置：
+**定义 5.21（边类型概率）。** 通过内积打分与逐关系偏置：
 $$\hat{\mathbf{P}}_{ij}^{(k)} = \sigma\!\left(\langle \mathbf{g}_{ij}^{\mathrm{proj}},\, \mathbf{p}_k \rangle + b_k\right) \in [0,1]$$
 其中 $\sigma(\cdot)$ 为 sigmoid 函数，$\mathbf{b} = (b_1, \ldots, b_K)^\top \in \mathbb{R}^K$ 为可学习逐关系偏置（初始化为零），用于非对称阈值校准。各关系类型独立预测（对应多热标签）。
 
 矩阵形式：$\hat{\mathbf{P}}_{ij} = \sigma\!\left(\mathbf{P}_{\mathrm{proto}}\,\mathbf{g}_{ij}^{\mathrm{proj}} + \mathbf{b}\right) \in [0,1]^K$。
 
-**设计理由**：相比拼接边嵌入与关系文本后经关系维度自注意力交互的方案，双线性匹配的计算复杂度对 $K$ 为线性（$O(N^2 K d_{e'})$ vs $O(N^2 K^2 d_{e'})$），适用于关系类型数 $K$ 较大的知识图谱（如 Wikidata $K > 800$）。关系间的依赖已通过 $L$ 层边自更新（定义 5.12）和双向交叉交互（定义 5.13–5.14）隐式建模。
+**设计理由**：相比拼接边嵌入与关系文本后经关系维度自注意力交互的方案，双线性匹配的计算复杂度对 $K$ 为线性（$O(N^2 K d_{e'})$ vs $O(N^2 K^2 d_{e'})$），适用于关系类型数 $K$ 较大的知识图谱（如 Wikidata $K > 800$）。关系间的依赖已通过 $L$ 层边自更新（定义 5.13）和双向交叉交互（定义 5.14–5.15）隐式建模。
 
 ### 5.5 排列等变性
 
@@ -524,7 +577,7 @@ $$\mathcal{L}_{\mathrm{align}} = \frac{1}{2}\left(\mathcal{L}_{\mathrm{align}}^{
 $$\mathcal{L}_{\mathrm{align}}^{g \to c} = -\frac{1}{|\mathcal{B}|}\sum_{i \in \mathcal{B}} \log \frac{\exp(\mathrm{sim}(\mathbf{g}_i, \tilde{\mathbf{c}}_i) / \tau)}{\sum_{j \in \mathcal{B}} \exp(\mathrm{sim}(\mathbf{g}_i, \tilde{\mathbf{c}}_j) / \tau)}$$
 $\mathcal{L}_{\mathrm{align}}^{c \to g}$ 对称定义。$\tau > 0$ 为温度超参数。
 
-**定义 6.9a（节点三分区）。** 在预训练阶段，对每个子图将真实节点索引集 $\mathcal{V}_{\mathrm{real}} \subseteq [N]$ 按互斥比例 $(p_c, p_x)$ 随机划分为三个不相交子集：
+**定义 6.10（节点三分区）。** 在预训练阶段，对每个子图将真实节点索引集 $\mathcal{V}_{\mathrm{real}} \subseteq [N]$ 按互斥比例 $(p_c, p_x)$ 随机划分为三个不相交子集：
 
 $$\mathcal{V}_{\mathrm{real}} = \mathcal{U} \sqcup \mathcal{M}_c \sqcup \mathcal{M}_x$$
 
@@ -581,7 +634,7 @@ $$\mathcal{L} = \mathcal{L}_{\mathrm{cont}} + \lambda\,\mathcal{L}_{\mathrm{disc
 **输入**：训练子图 $(\mathbf{X}_1, \mathbf{E}_1, \mathbf{C}_\mathcal{V}, \mathbf{C}_\mathcal{R}, \mathbf{m})$，参数 $\theta$
 **输出**：损失 $\mathcal{L}$
 
-1. Collator 输出节点三分区 $\{\mathcal{U}, \mathcal{M}_c, \mathcal{M}_x\}$ 与每节点时间标签 $t_{\mathrm{node}} \in \mathbb{R}^{B \times N}$（定义 6.9a）：$\mathcal{M}_x$ 位置写入 $0$，$\mathcal{M}_c$ 位置写入 $1$，$\mathcal{U}$ 位置暂留占位
+1. Collator 输出节点三分区 $\{\mathcal{U}, \mathcal{M}_c, \mathcal{M}_x\}$ 与每节点时间标签 $t_{\mathrm{node}} \in \mathbb{R}^{B \times N}$（定义 6.10）：$\mathcal{M}_x$ 位置写入 $0$，$\mathcal{M}_c$ 位置写入 $1$，$\mathcal{U}$ 位置暂留占位
 2. 采样子图级标量 $t \sim p_t$（$p_t$ 为 Uniform 或 Logit-Normal，见定义 6.5 注释），广播填充 $t_{\mathrm{node}}$ 占位位置
 3. 对 $i \in \mathcal{M}_c$：将其输入文本替换为 $\mathbf{e}_{\mathrm{mask}}$（几何保留 $\mathbf{x}_{1,i}$，由 $t_i = 1$ 保证）
 4. 对 $i \in [N]$：采样 $\mathbf{x}_{0,i} \sim p_0^{\mathcal{M}}$（定义 6.1）
