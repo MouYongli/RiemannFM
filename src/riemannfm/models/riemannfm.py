@@ -110,10 +110,16 @@ class RiemannFM(nn.Module):
         self.rel_emb = nn.Parameter(torch.empty(num_edge_types, rel_emb_dim))
         nn.init.xavier_uniform_(self.rel_emb)
 
-        # Text projection to the internal text_proj_dim.
-        self.text_proj: nn.Linear | None
+        # Text projection to the internal text_proj_dim. The trailing
+        # LayerNorm stabilizes the scale fed into downstream cross-attention
+        # so the text branch and the manifold branch enter the backbone on
+        # comparable footings regardless of the text encoder's output norm.
+        self.text_proj: nn.Sequential | None
         if input_text_dim > 0 and self.text_proj_dim > 0:
-            self.text_proj = nn.Linear(input_text_dim, self.text_proj_dim)
+            self.text_proj = nn.Sequential(
+                nn.Linear(input_text_dim, self.text_proj_dim),
+                nn.LayerNorm(self.text_proj_dim),
+            )
         else:
             self.text_proj = None
 
