@@ -129,7 +129,7 @@ def main(cfg: DictConfig) -> None:
     max_steps = cfg.training.max_steps
 
     input_text_dim = dm.dim_text_emb
-    C_R = dm.relation_text if input_text_dim > 0 else None
+    relation_text = dm.relation_text if input_text_dim > 0 else None
 
     manifold = instantiate(cfg.manifold)
 
@@ -185,7 +185,7 @@ def main(cfg: DictConfig) -> None:
         flow=flow,
         loss_fn=loss_fn,
         pretrain_heads=pretrain_heads,
-        C_R=C_R,
+        relation_text=relation_text,
     )
 
     total_params = sum(p.numel() for p in module.parameters())

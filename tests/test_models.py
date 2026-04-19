@@ -185,8 +185,8 @@ class TestEdgeEncoder:
         E_t = torch.rand(B, N, N, K)
         R = torch.randn(K, rel_emb_dim)
         mu_t = torch.randint(0, 2, (B, N, N)).float()
-        C_R = torch.randn(K, d_c)
-        out = enc(E_t, R, mu_t, C_R)
+        relation_text = torch.randn(K, d_c)
+        out = enc(E_t, R, mu_t, relation_text)
         assert out.shape == (B, N, N, EDGE_DIM)
 
     def test_mu_t_bit_is_consumed(self) -> None:
@@ -214,9 +214,9 @@ class TestRelationEncoder:
         d_c = 16
         enc = RiemannFMRelationEncoder(REL_EMB_DIM, d_c, REL_DIM, NODE_DIM)
         R = torch.randn(K, REL_EMB_DIM)
-        C_R = torch.randn(K, d_c)
+        relation_text = torch.randn(K, d_c)
         t_emb = torch.randn(B, NODE_DIM)
-        out = enc(R, t_emb, C_R)
+        out = enc(R, t_emb, relation_text)
         assert out.shape == (B, K, REL_DIM)
 
 
@@ -378,15 +378,15 @@ class TestRelationTextCross:
         text_dim = 24
         mod = RiemannFMRelationTextCross(REL_DIM, text_dim, REL_HEADS)
         h_R = torch.randn(B, K, REL_DIM)
-        C_R = torch.randn(K, text_dim)  # 2D, auto-broadcast to batch
-        assert mod(h_R, C_R).shape == (B, K, REL_DIM)
+        relation_text = torch.randn(K, text_dim)  # 2D, auto-broadcast to batch
+        assert mod(h_R, relation_text).shape == (B, K, REL_DIM)
 
     def test_output_shape_3d_text(self) -> None:
         text_dim = 24
         mod = RiemannFMRelationTextCross(REL_DIM, text_dim, REL_HEADS)
         h_R = torch.randn(B, K, REL_DIM)
-        C_R = torch.randn(B, K, text_dim)
-        assert mod(h_R, C_R).shape == (B, K, REL_DIM)
+        relation_text = torch.randn(B, K, text_dim)
+        assert mod(h_R, relation_text).shape == (B, K, REL_DIM)
 
 
 class TestVFHead:
@@ -468,14 +468,14 @@ class TestEndToEndModel:
         t = torch.rand(B)
         node_text = torch.randn(B, N, 16)
         node_mask = torch.ones(B, N, dtype=torch.bool)
-        C_R = torch.randn(K, 16)
+        relation_text = torch.randn(K, 16)
         m_text = torch.ones(B, N, dtype=torch.bool)
         m_coord = torch.ones(B, N, dtype=torch.bool)
 
         V_hat, ell_ex, ell_type, h = model(
             x_t=x_t, E_t=E_t, mu_t=mu_t, t=t,
             node_text=node_text, node_mask=node_mask,
-            C_R=C_R, m_text=m_text, m_coord=m_coord,
+            relation_text=relation_text, m_text=m_text, m_coord=m_coord,
         )
         assert V_hat.shape == (B, N, ambient_dim)
         assert ell_ex.shape == (B, N, N)

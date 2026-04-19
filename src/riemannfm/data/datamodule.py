@@ -168,7 +168,7 @@ class RiemannFMDataModule(LightningDataModule):
 
     @property
     def relation_text(self) -> Tensor:
-        """Global relation text matrix C_R in R^{Kxd_c} (Def 3.6).
+        """Global relation text matrix (spec C_R) in R^{Kxd_c} (Def 3.6).
 
         Shared across all subgraphs. Access after setup().
         """

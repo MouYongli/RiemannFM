@@ -222,7 +222,7 @@ class RiemannFMBlock(nn.Module):
         t_emb: Tensor,
         node_mask: Tensor,
         C_V: Tensor | None = None,
-        C_R: Tensor | None = None,
+        relation_text: Tensor | None = None,
         cond: Tensor | None = None,
     ) -> tuple[Tensor, Tensor, Tensor]:
         """Forward pass through one RieFormer block (spec §11.1).
@@ -238,7 +238,7 @@ class RiemannFMBlock(nn.Module):
             node_mask: Bool mask, shape ``(B, N)``.
             C_V: Projected node text (already text-masked),
                 shape ``(B, N, text_dim)`` or ``None``.
-            C_R: Projected relation text, shape ``(K, text_dim)`` or
+            relation_text: Projected relation text, shape ``(K, text_dim)`` or
                 ``(B, K, text_dim)`` or ``None``.
             cond: ATH-Norm curvature conditioning ``(B, cond_dim)`` for A_V.
 
@@ -282,9 +282,9 @@ class RiemannFMBlock(nn.Module):
             h_V = h_V + self.e_v(v_bar, C_V, node_mask)
 
         # [E_R]: relation text conditioning.
-        if self.use_e_r and C_R is not None:
+        if self.use_e_r and relation_text is not None:
             r_bar = self.norm_e_r(h_R, t_emb)
-            h_R = h_R + self.e_r(r_bar, C_R)
+            h_R = h_R + self.e_r(r_bar, relation_text)
 
         # [FFN] per-stream.
         h_V = h_V + self.ff_v(self.norm_ff_v(h_V, t_emb))

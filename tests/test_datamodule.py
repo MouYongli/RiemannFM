@@ -314,8 +314,8 @@ class TestDataModule:
         dm = RiemannFMDataModule(**self._DM_KWARGS)
         dm.setup("fit")
 
-        C_R = dm.relation_text
-        assert C_R.shape == (822, 768)
+        relation_text = dm.relation_text
+        assert relation_text.shape == (822, 768)
 
     def test_val_dataloader(self):
         from riemannfm.data.datamodule import RiemannFMDataModule

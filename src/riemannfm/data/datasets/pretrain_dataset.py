@@ -173,7 +173,7 @@ class RiemannFMKGDataset(Dataset[RiemannFMGraphData]):
 
     @property
     def relation_text(self) -> Tensor:
-        """Global relation text matrix C_R ∈ R^{Kxd_c} (Def 3.6).
+        """Global relation text matrix (spec C_R) ∈ R^{Kxd_c} (Def 3.6).
 
         Shared across all subgraphs.
         """

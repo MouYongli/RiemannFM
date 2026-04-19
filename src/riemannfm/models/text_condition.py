@@ -2,7 +2,7 @@
 
 Standard cross-attention with pre-norm via ATH-Norm (applied by the
 caller).  Both modules operate on the **already text-masked** C_V
-(spec §9.3: text-mask positions carry ``mask_emb``) and C_R.
+(spec §9.3: text-mask positions carry ``mask_emb``) and relation_text.
 """
 
 from __future__ import annotations
@@ -130,19 +130,19 @@ class RiemannFMRelationTextCross(nn.Module):
         super().__init__()
         self.cross = _TextCross(rel_dim, text_dim, num_heads, dropout)
 
-    def forward(self, h_R_bar: Tensor, C_R: Tensor) -> Tensor:
+    def forward(self, h_R_bar: Tensor, relation_text: Tensor) -> Tensor:
         """Cross-attend from relation tokens to relation-text rows.
 
         Args:
             h_R_bar: Pre-normalised relation hidden, shape ``(B, K, d_r)``.
-            C_R: Projected relation text, shape ``(B, K, text_dim)`` or
+            relation_text: Projected relation text, shape ``(B, K, text_dim)`` or
                 ``(K, text_dim)``.
 
         Returns:
             Additive update for the relation stream, shape ``(B, K, d_r)``.
         """
-        if C_R.dim() == 2:
+        if relation_text.dim() == 2:
             B = h_R_bar.shape[0]
-            C_R = C_R.unsqueeze(0).expand(B, -1, -1)
-        out: Tensor = self.cross(h_R_bar, C_R)
+            relation_text = relation_text.unsqueeze(0).expand(B, -1, -1)
+        out: Tensor = self.cross(h_R_bar, relation_text)
         return out

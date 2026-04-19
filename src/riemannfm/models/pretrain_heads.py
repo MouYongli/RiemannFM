@@ -83,13 +83,13 @@ class RiemannFMPretrainHeads(nn.Module):
             self.W_p_c = None
 
     def project_relation_align(
-        self, R: Tensor, C_R: Tensor,
+        self, R: Tensor, relation_text: Tensor,
     ) -> tuple[Tensor, Tensor]:
         """Project relation embeddings + text for L_align^R.
 
         Args:
             R: Relation embedding parameter, shape ``(K, rel_emb_dim)``.
-            C_R: Relation text embeddings, shape ``(K, input_text_dim)``.
+            relation_text: Relation text embeddings, shape ``(K, input_text_dim)``.
 
         Returns:
             ``(z_R, z_C)`` each of shape ``(K, d_p)``.
@@ -98,4 +98,4 @@ class RiemannFMPretrainHeads(nn.Module):
             "L_align^R heads not instantiated (lambda_align_R == 0 or "
             "input_text_dim == 0)"
         )
-        return self.W_p(R), self.W_p_c(C_R.to(R.dtype))
+        return self.W_p(R), self.W_p_c(relation_text.to(R.dtype))

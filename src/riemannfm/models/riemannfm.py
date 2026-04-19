@@ -214,7 +214,7 @@ class RiemannFM(nn.Module):
         t: Tensor,
         node_text: Tensor,
         node_mask: Tensor,
-        C_R: Tensor | None = None,
+        relation_text: Tensor | None = None,
         node_pe: Tensor | None = None,
         m_text: Tensor | None = None,
         m_coord: Tensor | None = None,
@@ -229,7 +229,8 @@ class RiemannFM(nn.Module):
             node_text: Node text embeddings (already text-masked),
                 shape ``(B, N, input_text_dim)``.
             node_mask: Real-vs-virtual bool mask, shape ``(B, N)``.
-            C_R: Relation text embeddings, shape ``(K, input_text_dim)``.
+            relation_text: Relation text embeddings (spec C_R),
+                shape ``(K, input_text_dim)``.
             node_pe: Random-walk PE, shape ``(B, N, pe_dim)``.
             m_text / m_coord: Per-node modality-mask bits (spec §9.3).
 
@@ -237,7 +238,9 @@ class RiemannFM(nn.Module):
             ``(V_hat, ell_ex, ell_type, h_V)``.
         """
         node_text_proj = self._project_text(node_text)
-        C_R_proj = self._project_text(C_R) if C_R is not None else None
+        relation_text_proj = (
+            self._project_text(relation_text) if relation_text is not None else None
+        )
 
         t_emb = self.time_emb(t)
 
@@ -245,14 +248,14 @@ class RiemannFM(nn.Module):
             x_t, node_text_proj, node_mask, t_emb,
             m_text=m_text, m_coord=m_coord, node_pe=node_pe,
         )
-        h_R = self.rel_encoder(self.rel_emb, t_emb, C_R_proj)
-        h_E = self.edge_encoder(E_t, self.rel_emb, mu_t, C_R_proj)
+        h_R = self.rel_encoder(self.rel_emb, t_emb, relation_text_proj)
+        h_E = self.edge_encoder(E_t, self.rel_emb, mu_t, relation_text_proj)
 
         C_V = node_text_proj if self.text_proj_dim > 0 else None
         cond = self._build_curvature_cond(x_t.shape[0], x_t.device, x_t.dtype)
         h_V, h_R, h_E = self.backbone(
             h_V, h_R, h_E, x_t, self.rel_emb, t_emb, node_mask,
-            C_V=C_V, C_R=C_R_proj, cond=cond,
+            C_V=C_V, relation_text=relation_text_proj, cond=cond,
         )
 
         V_hat = self.vf_head(h_V, x_t)

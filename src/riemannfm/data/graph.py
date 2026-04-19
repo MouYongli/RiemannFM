@@ -9,7 +9,8 @@ A subgraph sample is the 5-tuple (X, E, C_V, C_R, m):
 
 At the data-pipeline level we do NOT produce manifold coordinates X;
 those are created by the flow-matching training loop (noise prior + interpolation).
-C_R is global and shared across all subgraphs -- loaded once by the DataModule.
+The relation text matrix (spec C_R) is global and shared across all subgraphs --
+loaded once by the DataModule (exposed as ``DataModule.relation_text``).
 """
 
 from __future__ import annotations

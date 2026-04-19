@@ -80,7 +80,7 @@ ignore = [
     "E501",   # line too long (handled by formatter)
     "B905",   # zip-without-strict (too noisy for torch code)
     "N802",   # function name should be lowercase (math convention: test_L_X, apply_FiLM)
-    "N803",   # argument name should be lowercase (math convention: E_t, C_R, C_V)
+    "N803",   # argument name should be lowercase (math convention: E_t, C_V)
     "N806",   # variable in function should be lowercase (math convention: N, B, K, D)
     "N812",   # lowercase imported as non-lowercase (common in torch: F = nn.functional)
     "RUF001", # ambiguous unicode in strings (math notation: ·, ‖, ⊙)

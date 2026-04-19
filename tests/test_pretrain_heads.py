@@ -59,8 +59,8 @@ class TestProjectRelationAlign:
             rel_emb_dim=d_r,
         )
         R = torch.randn(K, d_r)
-        C_R = torch.randn(K, d_c)
-        z_R, z_C = heads.project_relation_align(R, C_R)
+        relation_text = torch.randn(K, d_c)
+        z_R, z_C = heads.project_relation_align(R, relation_text)
         assert z_R.shape == (K, d_p)
         assert z_C.shape == (K, d_p)
 

@@ -1,7 +1,7 @@
 """Input encoding for RiemannFM (Def 5.3-5.4).
 
 Node encoder:  h_i^0 = MLP([pi(x_i) || c_i || m_i]) + t_emb
-Edge encoder:  g_{ij}^0 = MLP([E_{ij,t} * W_rel || E_{ij,t} * C_R_mean])
+Edge encoder:  g_{ij}^0 = MLP([E_{ij,t} * W_rel || E_{ij,t} * relation_text_mean])
 
 Where pi(x_i) is the manifold coordinate projected into the hidden space,
 c_i is the text embedding, and m_i is the node mask (real vs virtual).
@@ -176,7 +176,7 @@ class RiemannFMNodeEncoder(nn.Module):
 class RiemannFMEdgeEncoder(nn.Module):
     """Encode edge inputs into initial hidden representations (spec def 10.6).
 
-    ``h_{ij}^{E,(0)} = MLP_edge([E_t·R ‖ E_t·C_R ‖ μ_{t,ij}])``
+    ``h_{ij}^{E,(0)} = MLP_edge([E_t·R ‖ E_t·relation_text ‖ μ_{t,ij}])``
 
     The relation embedding ``R`` is owned at the top level (shared with
     the edge type head, see ``RiemannFM.rel_emb``) and passed at forward
@@ -215,7 +215,7 @@ class RiemannFMEdgeEncoder(nn.Module):
         E_t: Tensor,
         R: Tensor,
         mu_t: Tensor,
-        C_R: Tensor | None = None,
+        relation_text: Tensor | None = None,
     ) -> Tensor:
         """Encode edge inputs.
 
@@ -223,7 +223,7 @@ class RiemannFMEdgeEncoder(nn.Module):
             E_t: Interpolated edge types, shape ``(B, N, N, K)``.
             R: Global relation embedding, shape ``(K, rel_emb_dim)``.
             mu_t: Mask indicator (1 = masked), shape ``(B, N, N)``.
-            C_R: Relation text embeddings, shape ``(K, d_c)``. ``None``
+            relation_text: Relation text embeddings, shape ``(K, d_c)``. ``None``
                 when text conditioning is disabled.
 
         Returns:
@@ -232,8 +232,8 @@ class RiemannFMEdgeEncoder(nn.Module):
         rel_feat = E_t @ R  # (B, N, N, rel_emb_dim)
 
         features: list[Tensor] = [rel_feat]
-        if C_R is not None and C_R.shape[-1] > 0:
-            features.append(E_t @ C_R)  # (B, N, N, d_c)
+        if relation_text is not None and relation_text.shape[-1] > 0:
+            features.append(E_t @ relation_text)  # (B, N, N, d_c)
         features.append(mu_t.to(rel_feat.dtype).unsqueeze(-1))  # (B, N, N, 1)
         edge_input = torch.cat(features, dim=-1)
 
@@ -277,22 +277,22 @@ class RiemannFMRelationEncoder(nn.Module):
         self,
         R: Tensor,
         t_emb: Tensor,
-        C_R: Tensor | None = None,
+        relation_text: Tensor | None = None,
     ) -> Tensor:
         """Encode relation inputs.
 
         Args:
             R: Relation embedding parameter, shape ``(K, rel_emb_dim)``.
             t_emb: Time embedding, shape ``(B, time_dim)``.
-            C_R: Relation text embeddings, shape ``(K, d_c)``. ``None``
+            relation_text: Relation text embeddings, shape ``(K, d_c)``. ``None``
                 when text conditioning is disabled.
 
         Returns:
             Relation hidden states, shape ``(B, K, rel_dim)``.
         """
         parts: list[Tensor] = [R]
-        if C_R is not None and C_R.shape[-1] > 0:
-            parts.append(C_R.to(R.dtype))
+        if relation_text is not None and relation_text.shape[-1] > 0:
+            parts.append(relation_text.to(R.dtype))
         rel_in = torch.cat(parts, dim=-1)  # (K, in_dim)
 
         rel_hidden: Tensor = self.mlp(rel_in)  # (K, rel_dim)

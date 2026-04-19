@@ -38,7 +38,7 @@ class RiemannFMPretrainModule(L.LightningModule):
         loss_fn: Combined loss (parameter-free orchestrator).
         pretrain_heads: Pretrain-only parameters (entity_emb, mask_emb,
             optional W_p / W_p_c for L_align^R).
-        C_R: Global relation text embeddings, shape ``(K, d_c)``.
+        relation_text: Global relation text embeddings, shape ``(K, d_c)``.
         lr: Base learning rate (main group).
         curvature_lr: Curvature-group learning rate.
         relation_lr: Relation-group learning rate (``rel_emb`` +
@@ -58,7 +58,7 @@ class RiemannFMPretrainModule(L.LightningModule):
         flow: RiemannFMJointFlow,
         loss_fn: RiemannFMCombinedLoss,
         pretrain_heads: RiemannFMPretrainHeads,
-        C_R: Tensor | None = None,
+        relation_text: Tensor | None = None,
         lr: float = 1e-4,
         curvature_lr: float = 1e-5,
         relation_lr: float | None = None,
@@ -72,7 +72,7 @@ class RiemannFMPretrainModule(L.LightningModule):
     ) -> None:
         super().__init__()
         self.save_hyperparameters(
-            ignore=["manifold", "model", "flow", "loss_fn", "pretrain_heads", "C_R"],
+            ignore=["manifold", "model", "flow", "loss_fn", "pretrain_heads", "relation_text"],
         )
 
         self.manifold = manifold
@@ -81,10 +81,10 @@ class RiemannFMPretrainModule(L.LightningModule):
         self.loss_fn = loss_fn
         self.pretrain_heads = pretrain_heads
 
-        if C_R is not None:
-            self.register_buffer("C_R", C_R)
+        if relation_text is not None:
+            self.register_buffer("relation_text", relation_text)
         else:
-            self.C_R = None
+            self.relation_text = None
 
     def _get_manifold_coords(
         self, node_ids: Tensor, node_mask: Tensor,
@@ -105,15 +105,15 @@ class RiemannFMPretrainModule(L.LightningModule):
     def _compute_relation_align_pairs(
         self,
     ) -> tuple[Tensor, Tensor] | tuple[None, None]:
-        """Pre-project R and C_R for L_align^R (spec def 19.1)."""
+        """Pre-project R and relation_text for L_align^R (spec def 19.1)."""
         if (
             self.loss_fn.lambda_align_R <= 0
             or self.pretrain_heads.W_p is None
-            or self.C_R is None
+            or self.relation_text is None
         ):
             return None, None
         R = self._raw_model().rel_emb
-        z_R, z_C = self.pretrain_heads.project_relation_align(R, self.C_R)
+        z_R, z_C = self.pretrain_heads.project_relation_align(R, self.relation_text)
         return z_R, z_C
 
     def _raw_model(self) -> RiemannFM:
@@ -191,7 +191,7 @@ class RiemannFMPretrainModule(L.LightningModule):
             t=sample.t,
             node_text=node_text_masked,
             node_mask=node_mask,
-            C_R=self.C_R,
+            relation_text=self.relation_text,
             node_pe=batch.get("node_pe"),
             m_text=m_text,
             m_coord=m_coord,

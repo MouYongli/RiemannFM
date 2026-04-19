@@ -114,7 +114,7 @@ class RiemannFMRieFormer(nn.Module):
         t_emb: Tensor,
         node_mask: Tensor,
         C_V: Tensor | None = None,
-        C_R: Tensor | None = None,
+        relation_text: Tensor | None = None,
         cond: Tensor | None = None,
     ) -> tuple[Tensor, Tensor, Tensor]:
         """Forward pass through all L blocks (spec §18.1).
@@ -126,7 +126,7 @@ class RiemannFMRieFormer(nn.Module):
         for block in self.layers:
             h_V, h_R, h_E = block(
                 h_V, h_R, h_E, x, R, t_emb, node_mask,
-                C_V=C_V, C_R=C_R, cond=cond,
+                C_V=C_V, relation_text=relation_text, cond=cond,
             )
 
         h_V = self.final_node_norm(h_V)
