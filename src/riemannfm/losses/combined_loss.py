@@ -1,15 +1,19 @@
-"""Combined loss for RiemannFM pretraining.
+"""Combined pretraining loss (spec §19).
 
-L_total = L_cont
-        + lambda_disc * L_disc
-        + mu_align * L_align
-        + nu_mask_c * L_mask_c      (semantic masked-node ID)
-        + nu_mask_x * L_mask_x      (geometric masked-node reconstruction)
+``L = λ_X · L_X + λ_ex · L_ex + λ_ty · L_ty + λ_align^R · L_align^R``
 
-L_mask_x is an explicit term — structurally it is ``continuous_flow_loss``
-restricted to the ``MASK_X`` subset (where the collator forced t=0 so
-``x_t = x_0`` is pure noise).  Keeping it named separately makes the
-ablation/metrics/math-doc story crisp.
+  - L_X       : node continuous flow matching (def 7.2).
+  - L_ex      : edge existence BCE on masked positions (def 8.2).
+  - L_ty      : edge type BCE on masked-and-positive positions (def 8.3).
+  - L_align^R : optional relation-text InfoNCE (def 19.1).
+
+Node-text alignment and text-/geometry-masked reconstruction losses
+were removed per spec §9.7 — modality masking data augmentation covers
+the same role as the old L_align / L_mask_c / L_mask_x.
+
+Parameter-free orchestrator: projections for the optional
+``L_align^R`` live in ``riemannfm.models.pretrain_heads``; this module
+consumes pre-projected ``z_R, z_C`` tensors.
 """
 
 from __future__ import annotations
@@ -17,433 +21,108 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import torch
-import torch.nn.functional as F
 from torch import Tensor, nn
 
 from riemannfm.losses.flow_matching_loss import (
     continuous_flow_loss,
-    discrete_flow_loss,
+    edge_existence_loss,
+    edge_type_loss,
 )
+from riemannfm.losses.relation_align import relation_align_infonce
 
 if TYPE_CHECKING:
     from riemannfm.manifolds.product import RiemannFMProductManifold
 
 
-def _build_proj_mlp(
-    in_dim: int, out_dim: int, depth: int, use_bn: bool = False,
-) -> nn.Sequential:
-    """Bias-free projection MLP with LayerNorm + GELU between layers.
-
-    depth=1 -> Linear(in, out)
-    depth=2 -> Linear(in, out) -> GELU -> Linear(out, out)                     (legacy)
-    depth=3 -> Linear(in, out) -> LN -> GELU -> Linear(out, out) -> LN -> GELU -> Linear(out, out)
-
-    LayerNorm stabilises magnitudes in the widened d_a space and prevents
-    the later Linear blocks from amplifying a single dominant direction.
-
-    When ``use_bn=True`` an ``nn.BatchNorm1d(out_dim, affine=False)`` is
-    appended at the tail.  Per-feature batch standardisation counteracts
-    rank-1 collapse of the projector output (sigma_1/sigma_2 ~= 5 observed
-    at 10k steps without it): the 1/sqrt(running_var+eps) gain forces
-    every output dim to have unit variance and eliminates the near-
-    degenerate dim that otherwise amplifies Barlow's in-loss /std term.
-    affine=False keeps the projector's output scale determined entirely
-    by the contrastive / decorrelation loss, avoiding redundant learned
-    scale.
-    """
-    if depth < 1:
-        raise ValueError(f"align_proj_depth must be >= 1, got {depth}")
-    layers: list[nn.Module] = [nn.Linear(in_dim, out_dim, bias=False)]
-    for _i in range(depth - 1):
-        # Legacy depth=2 had no inter-layer LN; keep that behavior only when
-        # depth==2 to preserve checkpoint compatibility with earlier runs.
-        if depth > 2:
-            layers.append(nn.LayerNorm(out_dim))
-        layers.append(nn.GELU())
-        layers.append(nn.Linear(out_dim, out_dim, bias=False))
-    if use_bn:
-        layers.append(nn.BatchNorm1d(out_dim, affine=False))
-    return nn.Sequential(*layers)
-
-
-def _barlow_twins_loss_from_pairs(
-    g: Tensor, c: Tensor, lambda_off: float,
-) -> Tensor:
-    """Barlow Twins loss on paired (g, c) features.
-
-    Batch-standardizes each dimension (mean 0, std 1 across the M valid
-    pairs), computes the d_a x d_a cross-correlation matrix
-    ``C = g_bn.T @ c_bn / M``, and penalizes
-      L = Σ_i (1 - C_ii)^2 + λ_off * Σ_{i != j} C_ij^2
-
-    The on-diagonal term aligns matched pairs; the off-diagonal term
-    explicitly decorrelates feature dimensions, preventing the rank-1
-    collapse that traps InfoNCE.  No negatives, no temperature.
-
-    Args:
-        g: Projected graph features, shape ``(M, d_a)``.
-        c: Projected text embeddings, shape ``(M, d_a)``.
-        lambda_off: Weight on off-diagonal decorrelation term
-            (original paper: 5e-3).
-
-    Returns:
-        Scalar Barlow Twins loss.
-    """
-    if c.norm(dim=-1).max() < 1e-8 or g.shape[0] < 2:
-        return torch.tensor(0.0, device=g.device, dtype=g.dtype)
-
-    M, d_a = g.shape
-    eps = 1e-5
-    g_bn = (g - g.mean(dim=0, keepdim=True)) / (g.std(dim=0, keepdim=True) + eps)
-    c_bn = (c - c.mean(dim=0, keepdim=True)) / (c.std(dim=0, keepdim=True) + eps)
-
-    cross_corr = (g_bn.T @ c_bn) / M  # (d_a, d_a)
-
-    on_diag = (1.0 - cross_corr.diagonal()).pow(2).sum()
-    off_diag_sq_sum = cross_corr.pow(2).sum() - cross_corr.diagonal().pow(2).sum()
-    return on_diag + lambda_off * off_diag_sq_sum
-
-
-def _contrastive_loss_from_pairs(
-    g: Tensor, c: Tensor, temperature: float,
-) -> Tensor:
-    """Symmetric InfoNCE on pre-gathered valid node pairs.
-
-    Args:
-        g: Projected graph features for valid nodes, shape ``(M, d_a)``.
-        c: Projected text embeddings for valid nodes, shape ``(M, d_a)``.
-        temperature: InfoNCE temperature.
-
-    Returns:
-        Scalar contrastive loss.
-    """
-    if c.norm(dim=-1).max() < 1e-8:
-        return torch.tensor(0.0, device=g.device, dtype=g.dtype)
-
-    # Remove per-batch shared mean direction before cosine similarity.
-    # Projection heads otherwise collapse to rank-1 (sigma_1/sigma_2 ~ 5.5,
-    # self-cos ~ 0.92), locking L_align at the InfoNCE trivial solution
-    # log(M). Centering forces the contrastive signal into the
-    # discriminative subspace. Same mechanism as L_mask_c.
-    g = g - g.mean(dim=0, keepdim=True)
-    c = c - c.mean(dim=0, keepdim=True)
-
-    g_norm = F.normalize(g, dim=-1)
-    c_norm = F.normalize(c, dim=-1)
-    logits = g_norm @ c_norm.T / temperature
-    labels = torch.arange(logits.shape[0], device=logits.device)
-    loss_g2c = F.cross_entropy(logits, labels)
-    loss_c2g = F.cross_entropy(logits.T, labels)
-    return (loss_g2c + loss_c2g) / 2
-
-
-def masked_node_loss(
-    h_masked: Tensor,
-    proj_mask: nn.Module,
-    true_emb: Tensor,
-    temperature: float = 0.07,
-) -> Tensor:
-    """In-batch contrastive masked node prediction loss (L_mask_c).
-
-    Each masked node must identify its true text embedding among all
-    other M_c nodes' text embeddings in the same batch.  Symmetric
-    InfoNCE over the (M_c x M_c) similarity matrix.
-
-    Args:
-        h_masked: Backbone hidden states for M_c nodes, ``(M, node_dim)``.
-        proj_mask: Projection head ``node_dim -> d_c``.
-        true_emb: True text embeddings for M_c nodes, ``(M, d_c)``.
-        temperature: InfoNCE temperature.
-
-    Returns:
-        Scalar loss.
-    """
-    if h_masked.shape[0] < 2:
-        return torch.tensor(0.0, device=h_masked.device, dtype=h_masked.dtype)
-
-    pred = proj_mask(h_masked)  # (M, d_c)
-
-    # Remove per-batch shared mean direction before cosine similarity.
-    # entity_emb collapses to ‖mean‖/mean(‖x‖) ≈ 0.9, hiding real
-    # discriminability under a single shared component.
-    pred = pred - pred.mean(dim=0, keepdim=True)
-    true_emb = true_emb - true_emb.mean(dim=0, keepdim=True)
-
-    pred_norm = F.normalize(pred, dim=-1)
-    true_norm = F.normalize(true_emb, dim=-1)
-
-    logits = pred_norm @ true_norm.T / temperature  # (M, M)
-    labels = torch.arange(logits.shape[0], device=logits.device)
-    loss_p2t = F.cross_entropy(logits, labels)
-    loss_t2p = F.cross_entropy(logits.T, labels)
-    return (loss_p2t + loss_t2p) / 2
-
-
 class RiemannFMCombinedLoss(nn.Module):
-    """Combined pretraining loss (Algorithm 1).
-
-    L_total = L_cont
-            + lambda_disc * L_disc
-            + mu_align   * L_align
-            + nu_mask_c  * L_mask_c
-            + nu_mask_x  * L_mask_x
-
-    Node partition (Def 6.9a) — each real node is exactly one of:
-      - ``REAL``  : both x and c real   — contributes to L_cont + L_align
-      - ``MASK_C``: text masked (c ← mask_emb), geometry real (t=1)
-                    — contributes to L_mask_c
-      - ``MASK_X``: geometry masked (x = x_0 at t=0), text real
-                    — contributes to L_mask_x (via continuous_flow_loss)
-
-    Learnable projection heads:
-      - proj_g      : R^{node_dim} -> R^{d_a}  (L_align graph side)
-      - proj_c      : R^{d_c}     -> R^{d_a}  (L_align text side)
-      - proj_mask_c : R^{node_dim} -> R^{d_c}  (L_mask_c; InfoNCE to text)
-
-    L_mask_x reuses the backbone's V_hat output — no new head.
+    """Combined pretraining loss (spec §19).
 
     Args:
-        manifold: Product manifold for tangent norm in L_cont / L_mask_x.
-        lambda_disc: Weight for discrete flow loss.
-        mu_align: Weight for contrastive alignment loss.
-        nu_mask_c: Weight for L_mask_c (text-masked nodes).
-        nu_mask_x: Weight for L_mask_x (geometry-masked nodes at t=0).
-        neg_ratio: Ratio of negative to positive pairs for L_disc sampling.
-        edge_loss_mode: L_disc formulation, ``"bce"`` (multi-hot per-channel)
-            or ``"softmax_ce"`` (K-way on positive pairs).
-        temperature: InfoNCE temperature for L_align.
-        mask_c_temperature: InfoNCE temperature for L_mask_c.
-        input_text_dim: Raw text embedding dimension d_c (0 to disable
-            alignment and L_mask_c).
-        node_dim: Backbone hidden state dimension for graph-side projection.
-        d_a: Alignment space dimension for projection layers.
-        max_align_nodes: Maximum nodes for L_align contrastive matrix.
+        manifold: Product manifold for the tangent norm in L_X.
+        lambda_X: Weight for node flow matching (default 1.0).
+        lambda_ex: Weight for edge existence (default 1.0).
+        lambda_ty: Weight for edge type (default 0.5).
+        lambda_align_R: Weight for relation-text alignment (default 0.02).
+        align_tau: Temperature for L_align^R (default 0.1).
     """
 
     def __init__(
         self,
         manifold: RiemannFMProductManifold,
-        lambda_disc: float = 1.0,
-        mu_align: float = 0.1,
-        nu_mask_c: float = 0.0,
-        nu_mask_x: float = 0.0,
-        neg_ratio: float = 1.0,
-        edge_loss_mode: str = "bce",
-        temperature: float = 0.07,
-        mask_c_temperature: float = 0.07,
-        align_loss_mode: str = "infonce",
-        barlow_lambda_off: float = 5e-3,
-        input_text_dim: int = 0,
-        node_dim: int = 512,
-        d_a: int = 256,
-        align_proj_depth: int = 2,
-        align_proj_bn: bool = False,
-        max_align_nodes: int = 128,
+        lambda_X: float = 1.0,
+        lambda_ex: float = 1.0,
+        lambda_ty: float = 0.5,
+        lambda_align_R: float = 0.0,
+        align_tau: float = 0.1,
     ) -> None:
         super().__init__()
         self.manifold = manifold
-        self.lambda_disc = lambda_disc
-        self.mu_align = mu_align
-        self.nu_mask_c = nu_mask_c
-        self.nu_mask_x = nu_mask_x
-        self.neg_ratio = neg_ratio
-        self.edge_loss_mode = edge_loss_mode
-        self.temperature = temperature
-        self.mask_c_temperature = mask_c_temperature
-        if align_loss_mode not in {"infonce", "barlow"}:
-            raise ValueError(
-                f"align_loss_mode must be 'infonce' or 'barlow', got {align_loss_mode}",
-            )
-        self.align_loss_mode = align_loss_mode
-        self.barlow_lambda_off = barlow_lambda_off
-        self.max_align_nodes = max_align_nodes
-
-        # L_align projections (Def 6.9).
-        self.ln_g: nn.LayerNorm | None = None
-        self.ln_c: nn.LayerNorm | None = None
-        self.proj_g: nn.Sequential | None = None
-        self.proj_c: nn.Sequential | None = None
-        if mu_align > 0 and input_text_dim > 0:
-            # Bias-free projections: randomly-initialised bias creates a
-            # large shared offset that, after L2-normalisation in InfoNCE,
-            # collapses all embeddings to cos-sim > 0.99 and makes the
-            # contrastive loss degenerate (loss = log M).  Without bias
-            # the MLP preserves input diversity (cos-sim stays ~0.17).
-            self.ln_g = nn.LayerNorm(node_dim)
-            self.ln_c = nn.LayerNorm(input_text_dim)
-            self.proj_g = _build_proj_mlp(
-                node_dim, d_a, align_proj_depth, use_bn=align_proj_bn,
-            )
-            self.proj_c = _build_proj_mlp(
-                input_text_dim, d_a, align_proj_depth, use_bn=align_proj_bn,
-            )
-
-        # L_mask_c head (semantic identification from geometry-real h).
-        # Targets are text embeddings (d_c), NOT manifold coordinates.
-        # Entity embeddings cluster near the manifold origin (cos-sim
-        # > 0.998) making manifold-coordinate targets indistinguishable;
-        # text embeddings have healthy diversity (cos-sim ~0.20).
-        self.proj_mask_c: nn.Sequential | None
-        if nu_mask_c > 0 and input_text_dim > 0:
-            self.proj_mask_c = nn.Sequential(
-                nn.LayerNorm(node_dim),
-                nn.Linear(node_dim, node_dim, bias=False),
-                nn.GELU(),
-                nn.Linear(node_dim, input_text_dim, bias=False),
-            )
-        else:
-            self.proj_mask_c = None
+        self.lambda_X = lambda_X
+        self.lambda_ex = lambda_ex
+        self.lambda_ty = lambda_ty
+        self.lambda_align_R = lambda_align_R
+        self.align_tau = align_tau
 
     def forward(
         self,
         V_hat: Tensor,
         u_t: Tensor,
         x_t: Tensor,
-        P_hat: Tensor,
+        ell_ex: Tensor,
+        ell_type: Tensor,
         E_1: Tensor,
+        mu_t: Tensor,
         node_mask: Tensor,
-        h: Tensor | None = None,
-        node_text: Tensor | None = None,
-        mask_type: Tensor | None = None,
-        true_text_emb: Tensor | None = None,
+        m_coord: Tensor | None = None,
+        z_R: Tensor | None = None,
+        z_C: Tensor | None = None,
     ) -> tuple[Tensor, dict[str, Tensor]]:
-        """Compute combined loss.
+        """Compute the combined loss.
 
         Args:
             V_hat: Predicted vector field, shape ``(B, N, D)``.
             u_t: Target vector field, shape ``(B, N, D)``.
-            x_t: Interpolated manifold coords, shape ``(B, N, D)``.
-            P_hat: Predicted edge logits, shape ``(B, N, N, K)``.
+            x_t: Interpolated coordinates, shape ``(B, N, D)``.
+            ell_ex: Edge existence logits, shape ``(B, N, N)``.
+            ell_type: Edge type logits, shape ``(B, N, N, K)``.
             E_1: Target edge types, shape ``(B, N, N, K)``.
-            node_mask: Bool mask, shape ``(B, N)``.
-            h: Backbone hidden states for L_align / L_mask_c, shape
-                ``(B, N, node_dim)``.  None to skip both.
-            node_text: Raw text embeddings (AFTER masking replacement) for
-                L_align, shape ``(B, N, d_c)``.  None to skip L_align.
-            mask_type: Node partition labels, shape ``(B, N)``.
-                ``{-1: VIRTUAL, 0: REAL, 1: MASK_C, 2: MASK_X}``.
-                None to skip L_mask_c / L_mask_x.
-            true_text_emb: Pre-masking text embeddings for M_c targets,
-                shape ``(B, N, d_c)``.  Only needed when mask_type is
-                provided and L_mask_c is enabled.
+            mu_t: Mask indicator, shape ``(B, N, N)``.
+            node_mask: Real-vs-virtual bool mask, shape ``(B, N)``.
+            m_coord: Per-node coordinate-mask gate for L_X, shape
+                ``(B, N)``. ``None`` uses ``node_mask`` (all real nodes
+                participate). Stage 2 wires this from modality masking.
+            z_R: Pre-projected relation embeddings, shape ``(K, d_p)``.
+                Omitted when ``lambda_align_R == 0``.
+            z_C: Pre-projected relation text embeddings, shape
+                ``(K, d_p)``.
 
         Returns:
-            Tuple of (total_loss, metrics_dict).
+            ``(total_loss, metrics)``.
         """
-        from riemannfm.data.collator import MASK_C, MASK_REAL, MASK_X
+        l_x_mask = node_mask if m_coord is None else (node_mask & m_coord)
+        l_X = continuous_flow_loss(self.manifold, V_hat, u_t, x_t, l_x_mask)
+        l_ex = edge_existence_loss(ell_ex, E_1, node_mask, mu_t)
+        l_ty = edge_type_loss(ell_type, E_1, node_mask, mu_t)
 
-        if mask_type is not None:
-            real_mask = node_mask & (mask_type == MASK_REAL)
-            mx_mask = node_mask & (mask_type == MASK_X)
-            mc_mask = node_mask & (mask_type == MASK_C)
+        if self.lambda_align_R > 0 and z_R is not None and z_C is not None:
+            l_align_R = relation_align_infonce(z_R, z_C, tau=self.align_tau)
         else:
-            real_mask = node_mask
-            mx_mask = torch.zeros_like(node_mask)
-            mc_mask = torch.zeros_like(node_mask)
-
-        # L_cont: standard flow matching on REAL nodes only.
-        l_cont = continuous_flow_loss(
-            self.manifold, V_hat, u_t, x_t, real_mask,
-        )
-
-        # L_mask_x: identical flow matching formula on M_x subset (t=0).
-        # Reuses continuous_flow_loss; the collator already forced t=0
-        # on these positions so x_t[M_x] = x_0 and u_t is the initial
-        # velocity pointing to x_1.
-        if mask_type is not None and mx_mask.any():
-            l_mask_x = continuous_flow_loss(
-                self.manifold, V_hat, u_t, x_t, mx_mask,
+            l_align_R = torch.tensor(
+                0.0, device=V_hat.device, dtype=V_hat.dtype,
             )
-        else:
-            l_mask_x = torch.tensor(0.0, device=V_hat.device, dtype=V_hat.dtype)
 
-        # L_disc: edge flow matching (full node_mask — edges span pairs,
-        # unaffected by per-node mask labels).
-        l_disc = discrete_flow_loss(
-            P_hat, E_1, node_mask,
-            neg_ratio=self.neg_ratio,
-            mode=self.edge_loss_mode,
-        )
-
-        # L_align: contrastive alignment on REAL nodes only.
-        if (
-            self.mu_align > 0
-            and self.proj_g is not None
-            and self.proj_c is not None
-            and h is not None
-            and node_text is not None
-            and node_text.shape[-1] > 0
-        ):
-            B, N, _ = h.shape
-            mask_flat = real_mask.reshape(-1)
-            valid_idx = mask_flat.nonzero(as_tuple=True)[0]
-
-            if valid_idx.numel() > self.max_align_nodes:
-                perm = torch.randperm(
-                    valid_idx.numel(), device=valid_idx.device,
-                )[:self.max_align_nodes]
-                valid_idx = valid_idx[perm]
-
-            if valid_idx.numel() < 2:
-                l_align = torch.tensor(0.0, device=h.device, dtype=h.dtype)
-            else:
-                h_valid = h.reshape(B * N, -1)[valid_idx]
-                t_valid = node_text.reshape(B * N, -1)[valid_idx]
-                assert self.ln_g is not None and self.ln_c is not None
-                g_valid = self.proj_g(self.ln_g(h_valid))
-                c_valid = self.proj_c(self.ln_c(t_valid))
-                if self.align_loss_mode == "barlow":
-                    l_align = _barlow_twins_loss_from_pairs(
-                        g_valid, c_valid, self.barlow_lambda_off,
-                    )
-                else:
-                    l_align = _contrastive_loss_from_pairs(
-                        g_valid, c_valid, self.temperature,
-                    )
-        else:
-            l_align = torch.tensor(0.0, device=V_hat.device, dtype=V_hat.dtype)
-
-        # L_mask_c: InfoNCE on M_c nodes against their true text embeddings.
-        if (
-            self.nu_mask_c > 0
-            and self.proj_mask_c is not None
-            and h is not None
-            and mask_type is not None
-            and true_text_emb is not None
-            and mc_mask.any()
-        ):
-            B, N, _ = h.shape
-            mc_flat = mc_mask.reshape(-1)
-            mc_idx = mc_flat.nonzero(as_tuple=True)[0]
-
-            if mc_idx.numel() < 2:
-                l_mask_c = torch.tensor(0.0, device=h.device, dtype=h.dtype)
-            else:
-                h_mc = h.reshape(B * N, -1)[mc_idx]
-                true_mc = true_text_emb.reshape(B * N, -1)[mc_idx]
-                l_mask_c = masked_node_loss(
-                    h_mc, self.proj_mask_c, true_mc,
-                    temperature=self.mask_c_temperature,
-                )
-        else:
-            l_mask_c = torch.tensor(0.0, device=V_hat.device, dtype=V_hat.dtype)
-
-        # Total loss.
         total = (
-            l_cont
-            + self.lambda_disc * l_disc
-            + self.mu_align * l_align
-            + self.nu_mask_c * l_mask_c
-            + self.nu_mask_x * l_mask_x
+            self.lambda_X * l_X
+            + self.lambda_ex * l_ex
+            + self.lambda_ty * l_ty
+            + self.lambda_align_R * l_align_R
         )
 
         metrics = {
             "loss/total": total.detach(),
-            "loss/cont": l_cont.detach(),
-            "loss/disc": l_disc.detach(),
-            "loss/align": l_align.detach(),
-            "loss/mask_c": l_mask_c.detach(),
-            "loss/mask_x": l_mask_x.detach(),
+            "loss/X": l_X.detach(),
+            "loss/ex": l_ex.detach(),
+            "loss/ty": l_ty.detach(),
+            "loss/align_R": l_align_R.detach(),
         }
-
         return total, metrics

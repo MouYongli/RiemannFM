@@ -1,7 +1,9 @@
-"""Flow matching losses: continuous (Def 6.6) and discrete (Def 6.8).
+"""Flow matching losses (spec §7.4, §8.5).
 
-L_cont: Riemannian norm MSE of vector field prediction error.
-L_disc: Weighted binary cross-entropy for edge prediction.
+  - L_X   : continuous node flow matching, Riemannian MSE of the tangent
+            residual (def 7.2).
+  - L_ex  : edge existence BCE on masked positions (def 8.2).
+  - L_ty  : edge type BCE on masked-and-positive positions (def 8.3).
 """
 
 from __future__ import annotations
@@ -23,129 +25,111 @@ def continuous_flow_loss(
     x_t: Tensor,
     node_mask: Tensor,
 ) -> Tensor:
-    """Continuous flow matching loss L_cont (Def 6.6).
+    """Node continuous flow matching loss L_X (spec def 7.2).
 
-    L_cont = (1/|V_real|) * sum_{i: m_i=1} ||V_hat_i - u_t_i||^2_{T_{x_t} M}
+    ``L_X = (1/Z) · Σ_i m_i · ‖V̂_i − u_{t,i}‖²_{T_{x_t}M}``
 
-    The squared norm is computed via :meth:`tangent_norm_sq`, which avoids
-    the ``sqrt`` of :meth:`tangent_norm`.  Going through ``sqrt`` then
-    ``pow(2)`` is mathematically equivalent in the forward pass but produces
-    ``NaN`` gradients whenever the residual vanishes at any token (the
-    backward of ``sqrt`` at zero is ``inf``, multiplied by the mask zero).
+    The squared norm is computed via :meth:`tangent_norm_sq` (no
+    intermediate ``sqrt`` — avoids NaN gradients when residuals vanish).
 
     Args:
         manifold: Product manifold for tangent norm computation.
         V_hat: Predicted vector field, shape ``(B, N, D)``.
         u_t: Target vector field, shape ``(B, N, D)``.
-        x_t: Base points for tangent norm, shape ``(B, N, D)``.
-        node_mask: Bool mask, shape ``(B, N)``. True = real node.
+        x_t: Base points, shape ``(B, N, D)``.
+        node_mask: Bool/float gating mask, shape ``(B, N)``.
 
     Returns:
-        Scalar loss (mean over real nodes).
+        Scalar loss (mean over gated nodes).
     """
-    # Residual in tangent space.
     residual = V_hat - u_t  # (B, N, D)
 
-    # Riemannian norm squared per node, computed without an intermediate sqrt.
-    # Force float32 for Lorentz inner product stability under AMP.
     norm_sq = manifold.tangent_norm_sq(
         x_t.float(), residual.float(),
     )  # (B, N)
 
-    # Mask virtual nodes and average over real nodes.
-    mask_float = node_mask.float()  # (B, N)
-    num_real = mask_float.sum().clamp(min=1)
-    loss = (norm_sq * mask_float).sum() / num_real
-
-    return loss
+    mask_float = node_mask.to(norm_sq.dtype)
+    denom = mask_float.sum().clamp(min=1)
+    return (norm_sq * mask_float).sum() / denom
 
 
-def discrete_flow_loss(
-    P_hat: Tensor,
+def _pair_mask(node_mask: Tensor) -> Tensor:
+    """Valid node-pair mask m_i · m_j, shape ``(B, N, N)``."""
+    m = node_mask.to(torch.float32)
+    return m.unsqueeze(2) * m.unsqueeze(1)
+
+
+def edge_existence_loss(
+    ell_ex: Tensor,
     E_1: Tensor,
     node_mask: Tensor,
-    neg_ratio: float = 1.0,
-    mode: str = "bce",
+    mu_t: Tensor,
 ) -> Tensor:
-    """Discrete flow matching loss L_disc (Def 6.8) with negative sampling.
+    """Edge existence BCE on masked positions (spec def 8.2).
 
-    Instead of computing BCE over all N*N*K elements (dominated by trivial
-    negatives), we gather only positive node pairs + sampled negative pairs,
-    then compute BCE on the gathered subset. This is both faster (smaller
-    tensors) and produces stronger gradient signal for edge prediction.
+    ``L_ex = (1/Z_ex) · Σ_{ij} m_i m_j · μ_{t,ij} · BCE(ℓ̂^ex_{ij}, e_{1,ij})``
+
+    Only masked positions (``μ_{t,ij} = 1``) contribute — decoded
+    positions are conditional inputs, not prediction targets.
 
     Args:
-        P_hat: Predicted edge logits (pre-sigmoid), shape ``(B, N, N, K)``.
-        E_1: Target edge types, shape ``(B, N, N, K)``.
-        node_mask: Bool mask, shape ``(B, N)``. True = real node.
-        neg_ratio: Ratio of negative to positive pairs to sample.
-        mode: ``"bce"`` (per-channel binary CE, multi-hot compatible) or
-            ``"softmax_ce"`` (softmax-CE over K on positive pairs +
-            all-zero BCE on negative pairs). Softmax mode removes the
-            ~1/K channel-level positive dilution that keeps L_disc
-            stuck at trivially low values when K is large.
+        ell_ex: Existence logits, shape ``(B, N, N)``.
+        E_1: Data edge types, shape ``(B, N, N, K)``.
+        node_mask: Bool mask, shape ``(B, N)``.
+        mu_t: Mask indicator, shape ``(B, N, N)`` (1 = masked).
 
     Returns:
-        Scalar loss (mean over sampled pairs and relations).
+        Scalar loss.
     """
-    # Valid node pairs only.
-    pair_mask = node_mask.unsqueeze(2) & node_mask.unsqueeze(1)  # (B, N, N)
+    e_true = (E_1.sum(dim=-1) > 0.5).to(ell_ex.dtype)  # (B, N, N)
+    weight = _pair_mask(node_mask).to(ell_ex.dtype) * mu_t.to(ell_ex.dtype)
 
-    # Positive pairs: (i, j) where at least one relation is active.
-    has_edge = E_1.sum(dim=-1) > 0.5  # (B, N, N)
-    pos_mask = has_edge & pair_mask  # (B, N, N)
+    if weight.sum() < 0.5:
+        return torch.tensor(0.0, device=ell_ex.device, dtype=ell_ex.dtype)
 
-    # Flatten to (B*N*N,) for indexing.
-    pos_flat = pos_mask.reshape(-1)  # (L,)
-    pos_idx = pos_flat.nonzero(as_tuple=False).squeeze(1)  # (P,)
-
-    if pos_idx.numel() == 0:
-        return torch.tensor(0.0, device=P_hat.device, dtype=P_hat.dtype)
-
-    # Negative pool: valid pairs with no edge.
-    neg_flat = ((~has_edge) & pair_mask).reshape(-1).float()  # (L,)
-
-    # Sample negatives via multinomial.
-    num_pos = pos_idx.shape[0]
-    num_neg_pool = int(neg_flat.sum().item())
-    n_neg = min(int(num_pos * neg_ratio), num_neg_pool)
-
-    if n_neg > 0:
-        neg_idx = torch.multinomial(neg_flat, n_neg, replacement=False)
-    else:
-        neg_idx = torch.empty(0, dtype=torch.long, device=P_hat.device)
-
-    K = E_1.shape[-1]
-    P_flat = P_hat.reshape(-1, K)  # (L, K)
-    E_flat = E_1.reshape(-1, K)    # (L, K)
-
-    if mode == "softmax_ce":
-        # Positive pairs: soft-label CE over K relations.  Target is the
-        # multi-hot row normalised to a probability distribution so that
-        # single-hot pairs reduce to standard CE and multi-hot pairs split
-        # mass uniformly across active relations.
-        P_pos = P_flat[pos_idx]                          # (P, K)
-        E_pos = E_flat[pos_idx]                          # (P, K)
-        target = E_pos / E_pos.sum(dim=-1, keepdim=True).clamp_min(1.0)
-        log_p = F.log_softmax(P_pos, dim=-1)
-        loss_pos = -(target * log_p).sum(dim=-1).mean()
-
-        # Negative pairs: push every channel's sigmoid toward 0 so that
-        # sampling-time Bernoulli decoding still produces "no edge" on
-        # empty pairs.  BCE with zero target = softplus(logit).
-        if neg_idx.numel() > 0:
-            P_neg = P_flat[neg_idx]
-            loss_neg = F.binary_cross_entropy_with_logits(
-                P_neg, torch.zeros_like(P_neg),
-            )
-        else:
-            loss_neg = torch.tensor(0.0, device=P_hat.device, dtype=P_hat.dtype)
-        return loss_pos + loss_neg
-
-    # Default: per-channel BCE on the gathered subset.
-    sample_idx = (
-        torch.cat([pos_idx, neg_idx], dim=0) if neg_idx.numel() > 0 else pos_idx
+    loss_elem = F.binary_cross_entropy_with_logits(
+        ell_ex, e_true, reduction="none",
     )
-    P_sampled = P_flat[sample_idx]  # (S, K)
-    E_sampled = E_flat[sample_idx]  # (S, K)
-    return F.binary_cross_entropy_with_logits(P_sampled, E_sampled)
+    return (loss_elem * weight).sum() / weight.sum()
+
+
+def edge_type_loss(
+    ell_type: Tensor,
+    E_1: Tensor,
+    node_mask: Tensor,
+    mu_t: Tensor,
+) -> Tensor:
+    """Edge type BCE on masked-and-positive positions (spec def 8.3).
+
+    ``L_ty = (1/Z_ty) · Σ_{ij} m_i m_j · μ_{t,ij} · e_{1,ij}
+              · Σ_k BCE(ℓ̂^(k)_{ij}, E_{1,ij}^(k))``
+
+    Double-gated: only masked positions where the truth has at least one
+    active relation contribute. Type learning signal is not diluted by
+    the overwhelming negative pairs.
+
+    Args:
+        ell_type: Per-relation type logits, shape ``(B, N, N, K)``.
+        E_1: Data edge types, shape ``(B, N, N, K)``.
+        node_mask: Bool mask, shape ``(B, N)``.
+        mu_t: Mask indicator, shape ``(B, N, N)``.
+
+    Returns:
+        Scalar loss.
+    """
+    has_edge = (E_1.sum(dim=-1) > 0.5).to(ell_type.dtype)  # (B, N, N)
+    pair_gate = _pair_mask(node_mask).to(ell_type.dtype)
+    position_weight = (
+        pair_gate * mu_t.to(ell_type.dtype) * has_edge
+    )  # (B, N, N)
+
+    if position_weight.sum() < 0.5:
+        return torch.tensor(0.0, device=ell_type.device, dtype=ell_type.dtype)
+
+    # Per-channel BCE over K relations, reduced by mean over K so the
+    # scale is comparable to L_ex.
+    loss_elem = F.binary_cross_entropy_with_logits(
+        ell_type, E_1.to(ell_type.dtype), reduction="none",
+    )  # (B, N, N, K)
+    loss_per_pos = loss_elem.mean(dim=-1)  # (B, N, N)
+    return (loss_per_pos * position_weight).sum() / position_weight.sum()
