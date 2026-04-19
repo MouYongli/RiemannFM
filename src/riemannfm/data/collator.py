@@ -1,100 +1,113 @@
-"""Batch collation for graph data with virtual node padding.
+"""Batch collation with virtual-node padding + modality masking (§3.7-3.8, §9).
 
-Pads graphs in a batch to N_max and stacks into batched tensors.
-Aligned with math spec Definitions 3.7-3.8:
-- Virtual node edges: E[i,j] = 0_K for all virtual nodes       [Def 3.7]
-- Virtual node text: c_i = 0_{d_c}                              [Def 3.7]
-- Node mask: m_i = 1 for real nodes, 0 for virtual              [Def 3.8]
+Pads graphs in a batch to ``N_max`` with virtual nodes (zero edges, zero
+text, ``node_mask = False``). Virtual-node manifold coordinates are a
+model-level concern handled during flow matching.
 
-Masked node prediction (Def 6.9a — node three-way partition):
-- Each real node is labelled REAL, MASK_C, or MASK_X (disjoint).
-- ``MASK_C``: text masked, geometry kept.  Target = true text (L_mask_c).
-- ``MASK_X``: geometry masked (x forced to noise at t=0), text kept.
-  Target = vector field ``u_t`` at t=0 (L_mask_x, shares L_cont machinery).
-- ``REAL``:  both real — participates in L_cont and L_align.
+Modality masking (spec §9) is applied per subgraph at batch time:
 
-The collator emits ``t_node`` per position: ``0`` for M_x, ``1`` for M_c,
-``NaN`` for REAL/VIRTUAL (filled later with batch-sampled t in the
-lightning module).  This makes collation the single source of truth for
-mask semantics; downstream modules consume ``mask_type`` + ``t_node``.
+  - ``MODE_FULL``       : m_text = 1, m_coord = 1 everywhere (standard).
+  - ``MODE_TEXT_MASK``  : fraction ``rho_tm`` of real nodes get m_text = 0
+                          (their text is replaced by ``mask_emb`` at the
+                          lightning module). m_coord stays 1.
+  - ``MODE_COORD_MASK`` : fraction ``rho_cm`` of real nodes get m_coord = 0
+                          (their x_t is held at the prior sample for all
+                          t, and they are excluded from L_X). m_text stays 1.
 
-Note: Virtual node *coordinates* (anchor points on the manifold) are NOT
-set here — that is a model-level concern handled during flow matching.
+Mode is sampled per-subgraph from ``mode_probs`` (default
+``(0.70, 0.15, 0.15)``). The emitted ``mode_idx`` tensor lets the flow
+module pick the correct per-sample ``p_t`` (Beta(5, 1) for text-mask,
+default otherwise — spec §9.6).
 """
 
 import torch
 
 from riemannfm.data.graph import RiemannFMGraphData
 
-# Mask type constants used in mask_type tensor.
-MASK_REAL: int = 0      # real node, unmasked — participates in L_cont / L_align
-MASK_C: int = 1         # text masked, x kept — participates in L_mask_c
-MASK_X: int = 2         # geometry masked (x=noise at t=0), text kept — L_mask_x
-MASK_VIRTUAL: int = -1  # virtual (padding) node
+MODE_FULL: int = 0
+MODE_TEXT_MASK: int = 1
+MODE_COORD_MASK: int = 2
 
 
 class RiemannFMGraphCollator:
-    """Collates a list of RiemannFMGraphData into a padded batch.
-
-    All graphs are padded to max_nodes (N_max) with virtual nodes that have
-    zero edges, zero text embeddings, and mask=0.
+    """Collate a list of RiemannFMGraphData into a padded batch.
 
     Args:
-        max_nodes: Fixed N_max to pad all graphs to.
-            If None, pads to the maximum in the batch.
-        num_edge_types: Total number of relation types K.
-            If None, inferred from the first sample.
-        mask_ratio_c: Fraction of real nodes assigned to MASK_C (text mask).
-        mask_ratio_x: Fraction of real nodes assigned to MASK_X (geom mask).
-        rwpe_k: Number of random-walk steps for the structural positional
-            encoding.  0 disables PE (``node_pe`` omitted from batch).
+        max_nodes: Fixed N_max padding. ``None`` uses per-batch max.
+        num_edge_types: K. ``None`` infers from the first sample.
+        rwpe_k: Steps for random-walk PE (``0`` disables).
+        mode_probs: Probabilities over ``(full, text_mask, coord_mask)``.
+            Must be non-negative and sum to 1. Default ``(1, 0, 0)``
+            disables modality masking — the caller (datamodule /
+            training config) is expected to pass spec defaults
+            ``(0.70, 0.15, 0.15)`` when training.
+        rho_tm: Fraction of real nodes whose text is masked in text-mask
+            mode (spec §9.2). Default 0.30.
+        rho_cm: Fraction of real nodes whose coord is masked in
+            coord-mask mode. Default 0.15.
     """
 
     def __init__(
         self,
         max_nodes: int | None = None,
         num_edge_types: int | None = None,
-        mask_ratio_c: float = 0.0,
-        mask_ratio_x: float = 0.0,
         rwpe_k: int = 0,
+        mode_probs: tuple[float, float, float] = (1.0, 0.0, 0.0),
+        rho_tm: float = 0.30,
+        rho_cm: float = 0.15,
     ):
+        if len(mode_probs) != 3:
+            msg = f"mode_probs must be (p_full, p_tm, p_cm), got {mode_probs!r}"
+            raise ValueError(msg)
+        if any(p < 0 for p in mode_probs):
+            msg = f"mode_probs must be non-negative, got {mode_probs!r}"
+            raise ValueError(msg)
+        total = sum(mode_probs)
+        if total <= 0:
+            msg = f"mode_probs must sum to a positive number, got {mode_probs!r}"
+            raise ValueError(msg)
+        if not (0.0 <= rho_tm <= 1.0):
+            msg = f"rho_tm must be in [0, 1], got {rho_tm}"
+            raise ValueError(msg)
+        if not (0.0 <= rho_cm <= 1.0):
+            msg = f"rho_cm must be in [0, 1], got {rho_cm}"
+            raise ValueError(msg)
+
         self.max_nodes = max_nodes
         self.num_edge_types = num_edge_types
-        self.mask_ratio_c = mask_ratio_c
-        self.mask_ratio_x = mask_ratio_x
         self.rwpe_k = rwpe_k
+        self.mode_probs = torch.tensor(
+            [p / total for p in mode_probs], dtype=torch.float32,
+        )
+        self.rho_tm = rho_tm
+        self.rho_cm = rho_cm
 
     def __call__(self, batch: list[RiemannFMGraphData]) -> dict[str, object]:
-        """Collate a batch of RiemannFMGraphData into padded tensors.
-
-        Args:
-            batch: List of RiemannFMGraphData samples.
+        """Collate into padded tensors.
 
         Returns:
-            Dictionary with batched tensors:
-                - edge_types:      (B, N_max, N_max, K)  float32  multi-hot
-                - node_text:       (B, N_max, d_c)       float32  text embeddings
-                - node_mask:       (B, N_max)             bool     real vs virtual
-                - node_ids:        (B, N_max)             long     entity IDs (-1 = virtual)
-                - num_real_nodes:  (B,)                   long     real node counts
-                - mask_type:       (B, N_max)             long     {-1, 0, 1, 2}
-                - t_node:          (B, N_max)             float32  per-node time label
-                                                                   (NaN = use batch-t)
-                - batch_size:      int
+            dict with:
+              - edge_types     (B, N_max, N_max, K)  float32
+              - node_text      (B, N_max, d_c)       float32
+              - node_mask      (B, N_max)            bool
+              - node_ids       (B, N_max)            long    -1 = virtual
+              - num_real_nodes (B,)                  long
+              - m_text         (B, N_max)            bool    1 = keep text
+              - m_coord        (B, N_max)            bool    1 = keep coord
+              - mode_idx       (B,)                  long    {0, 1, 2}
+              - batch_size     int
+              - node_pe        (B, N_max, rwpe_k)    float32 (if rwpe_k > 0)
         """
         B = len(batch)
         N_max = self.max_nodes or max(g.total_nodes for g in batch)
         K = self.num_edge_types or batch[0].n_relations
         d_c = batch[0].node_text.shape[-1]
 
-        # Initialize padded tensors (zeros = virtual node defaults per Def 3.7)
         edge_types = torch.zeros(B, N_max, N_max, K, dtype=torch.float32)
         node_text = torch.zeros(B, N_max, d_c, dtype=torch.float32)
         node_mask = torch.zeros(B, N_max, dtype=torch.bool)
         node_ids = torch.full((B, N_max), -1, dtype=torch.long)
         num_real = torch.zeros(B, dtype=torch.long)
-        mask_type = torch.full((B, N_max), MASK_VIRTUAL, dtype=torch.long)
-        t_node = torch.full((B, N_max), float("nan"), dtype=torch.float32)
 
         for i, g in enumerate(batch):
             n = min(g.total_nodes, N_max)
@@ -102,17 +115,14 @@ class RiemannFMGraphCollator:
             node_text[i, :n] = g.node_text[:n]
             node_mask[i, :n] = g.node_mask[:n]
             node_ids[i, :n] = g.node_ids[:n]
-            nr = min(g.num_nodes, N_max)
-            num_real[i] = nr
-            # Real nodes default to MASK_REAL (0); virtual stays MASK_VIRTUAL (-1).
-            mask_type[i, :nr] = MASK_REAL
+            num_real[i] = min(g.num_nodes, N_max)
 
-        # Apply masked node partition if enabled.
-        if self.mask_ratio_c > 0 or self.mask_ratio_x > 0:
-            _apply_node_masking(
-                mask_type, t_node, num_real,
-                self.mask_ratio_c, self.mask_ratio_x,
-            )
+        mode_idx = torch.multinomial(
+            self.mode_probs, num_samples=B, replacement=True,
+        ).to(torch.long)
+        m_text, m_coord = _apply_modality_masks(
+            mode_idx, num_real, N_max, self.rho_tm, self.rho_cm,
+        )
 
         out: dict[str, object] = {
             "edge_types": edge_types,
@@ -120,8 +130,9 @@ class RiemannFMGraphCollator:
             "node_mask": node_mask,
             "node_ids": node_ids,
             "num_real_nodes": num_real,
-            "mask_type": mask_type,
-            "t_node": t_node,
+            "m_text": m_text,
+            "m_coord": m_coord,
+            "mode_idx": mode_idx,
             "batch_size": B,
         }
 
@@ -131,34 +142,53 @@ class RiemannFMGraphCollator:
         return out
 
 
+def _apply_modality_masks(
+    mode_idx: torch.Tensor,
+    num_real: torch.Tensor,
+    N_max: int,
+    rho_tm: float,
+    rho_cm: float,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Per-subgraph modality masks (spec §9.3).
+
+    Virtual-node positions keep the default of 1 so they don't
+    accidentally look like masked content downstream; the real gating
+    against virtual nodes uses ``node_mask``.
+    """
+    B = mode_idx.shape[0]
+    m_text = torch.ones(B, N_max, dtype=torch.bool)
+    m_coord = torch.ones(B, N_max, dtype=torch.bool)
+
+    for i in range(B):
+        nr = int(num_real[i].item())
+        mode = int(mode_idx[i].item())
+
+        if mode == MODE_TEXT_MASK and nr > 0:
+            k = max(1, round(rho_tm * nr))
+            k = min(k, nr)
+            idx = torch.randperm(nr)[:k]
+            m_text[i, idx] = False
+        elif mode == MODE_COORD_MASK and nr > 0:
+            k = max(1, round(rho_cm * nr))
+            k = min(k, nr)
+            idx = torch.randperm(nr)[:k]
+            m_coord[i, idx] = False
+
+    return m_text, m_coord
+
+
 def _compute_rwpe(
     edge_types: torch.Tensor,
     node_mask: torch.Tensor,
     k: int,
 ) -> torch.Tensor:
-    """Random-walk positional encoding (Dwivedi et al. 2022).
-
-    For each graph, builds a binary adjacency ``A`` from any edge type
-    being present, row-normalises to ``P = D^{-1} A``, and stacks the
-    diagonals ``[P^1_ii, P^2_ii, ..., P^k_ii]`` as each node's PE.
-    Identity-free: depends only on ``A``, so it is computable at inference
-    when node entities are unknown.
-
-    Args:
-        edge_types: Multi-hot edges, shape ``(B, N, N, K)``.
-        node_mask: Bool mask, shape ``(B, N)``.
-        k: Number of walk steps.
-
-    Returns:
-        Tensor of shape ``(B, N, k)``.  Virtual-node rows are zero.
-    """
+    """Random-walk positional encoding (spec §10.4)."""
     B, N, _, _ = edge_types.shape
-    # Binary adjacency: edge present if any relation type is active.
-    A = (edge_types.sum(dim=-1) > 0).float()  # (B, N, N)
+    A = (edge_types.sum(dim=-1) > 0).float()
     A = A * node_mask.unsqueeze(1).float() * node_mask.unsqueeze(2).float()
 
-    deg = A.sum(dim=-1, keepdim=True).clamp(min=1.0)  # (B, N, 1)
-    P = A / deg  # (B, N, N)
+    deg = A.sum(dim=-1, keepdim=True).clamp(min=1.0)
+    P = A / deg
 
     pe = torch.zeros(B, N, k, dtype=torch.float32)
     P_power = P.clone()
@@ -166,59 +196,5 @@ def _compute_rwpe(
         pe[..., step] = torch.diagonal(P_power, dim1=-2, dim2=-1)
         if step < k - 1:
             P_power = P_power @ P
-    # Zero out virtual node rows.
     pe = pe * node_mask.unsqueeze(-1).float()
     return pe
-
-
-def _apply_node_masking(
-    mask_type: torch.Tensor,
-    t_node: torch.Tensor,
-    num_real: torch.Tensor,
-    mask_ratio_c: float,
-    mask_ratio_x: float,
-) -> None:
-    """Partition real nodes into disjoint REAL / MASK_C / MASK_X subsets.
-
-    For each graph:
-      - Draw ``n_c = ceil(p_c * nr)`` nodes → MASK_C (t_node = 1.0)
-      - From the remainder, draw ``n_x = ceil(p_x * nr)`` → MASK_X (t_node = 0.0)
-      - At least one real node is kept as REAL anchor (|U| >= 1)
-
-    Modifies ``mask_type`` and ``t_node`` in-place.
-
-    Args:
-        mask_type: Tensor of shape ``(B, N_max)`` to modify in-place.
-        t_node: Tensor of shape ``(B, N_max)`` to modify in-place.
-            M_x positions written to ``0.0``; M_c positions to ``1.0``.
-        num_real: Tensor of shape ``(B,)`` with real node counts.
-        mask_ratio_c: Fraction of real nodes to label MASK_C.
-        mask_ratio_x: Fraction of real nodes to label MASK_X.
-    """
-    B = mask_type.shape[0]
-    for i in range(B):
-        nr = int(num_real[i].item())
-        if nr < 2:
-            continue
-        # Compute target sizes with at-least-one-REAL anchor constraint.
-        max_masked = nr - 1
-        n_c = min(int(torch.ceil(torch.tensor(mask_ratio_c * nr)).item()), max_masked)
-        n_x = min(
-            int(torch.ceil(torch.tensor(mask_ratio_x * nr)).item()),
-            max_masked - n_c,
-        )
-        n_c = max(0, n_c)
-        n_x = max(0, n_x)
-
-        if n_c == 0 and n_x == 0:
-            continue
-
-        perm = torch.randperm(nr, device=mask_type.device)
-        c_idx = perm[:n_c]
-        x_idx = perm[n_c:n_c + n_x]
-        if n_c > 0:
-            mask_type[i, c_idx] = MASK_C
-            t_node[i, c_idx] = 1.0
-        if n_x > 0:
-            mask_type[i, x_idx] = MASK_X
-            t_node[i, x_idx] = 0.0
