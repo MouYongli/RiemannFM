@@ -24,6 +24,22 @@ from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
+
+def _safe_zip_extractall(zf: zipfile.ZipFile, target_dir: Path) -> None:
+    """Extract all members of a zip archive, refusing paths that escape target_dir.
+
+    Python's ``ZipFile.extractall`` strips absolute paths and normalizes
+    separators, but we add an explicit ``..`` guard as defence-in-depth
+    against archive sources we do not control.
+    """
+    target_resolved = target_dir.resolve()
+    for name in zf.namelist():
+        resolved = (target_resolved / name).resolve()
+        if target_resolved not in resolved.parents and resolved != target_resolved:
+            raise RuntimeError(f"Unsafe path in zip archive: {name!r}")
+    zf.extractall(target_dir)
+
+
 # ─── Download-specific registry ──────────────────────────────────────────────
 
 
@@ -160,7 +176,7 @@ def _download_tar_gz(slug: str, meta: DownloadMeta, raw_dir: Path) -> None:
         archive_path = Path(tmpdir) / "dataset.tar.gz"
         urlretrieve(meta.download_url, str(archive_path))
         with tarfile.open(archive_path, "r:gz") as tar:
-            tar.extractall(tmpdir)
+            tar.extractall(tmpdir, filter="data")
 
         for extracted_dir in Path(tmpdir).iterdir():
             if extracted_dir.is_dir() and extracted_dir.name != "__MACOSX":
@@ -187,7 +203,7 @@ def _download_wikidata5m(slug: str, meta: DownloadMeta, raw_dir: Path) -> None:
         archive_path = Path(tmpdir) / "wikidata5m_transductive.tar.gz"
         urlretrieve(meta.download_url, str(archive_path))
         with tarfile.open(archive_path, "r:gz") as tar:
-            tar.extractall(tmpdir)
+            tar.extractall(tmpdir, filter="data")
 
         # Archive contains: wikidata5m_transductive_{train,valid,test}.txt
         rename_map = {
@@ -237,7 +253,7 @@ def _download_zip(slug: str, meta: DownloadMeta, raw_dir: Path) -> None:
         archive_path = Path(tmpdir) / "dataset.zip"
         urlretrieve(meta.download_url, str(archive_path))
         with zipfile.ZipFile(archive_path, "r") as zf:
-            zf.extractall(tmpdir)
+            _safe_zip_extractall(zf, Path(tmpdir))
 
         for extracted in Path(tmpdir).iterdir():
             if extracted.is_dir() and extracted.name != "__MACOSX":
@@ -310,11 +326,17 @@ def _download_wiki27k(slug: str, meta: DownloadMeta, raw_dir: Path) -> None:
 
         with zipfile.ZipFile(zip_path, "r") as zf:
             prefix = "dataset/Wiki27K/"
+            raw_dir_resolved = raw_dir.resolve()
             for member in zf.namelist():
-                if member.startswith(prefix) and not member.endswith("/"):
-                    fname = member[len(prefix) :]
-                    with zf.open(member) as fin, open(raw_dir / fname, "wb") as fout:
-                        shutil.copyfileobj(fin, fout)
+                if not (member.startswith(prefix) and not member.endswith("/")):
+                    continue
+                fname = member[len(prefix) :]
+                target = (raw_dir / fname).resolve()
+                if raw_dir_resolved not in target.parents and target != raw_dir_resolved:
+                    logger.warning(f"[{slug}] Skipping unsafe archive member: {member}")
+                    continue
+                with zf.open(member) as fin, open(target, "wb") as fout:
+                    shutil.copyfileobj(fin, fout)
 
     # Build entity_texts.tsv from label + definition.
     _build_wiki27k_entity_texts(raw_dir)
