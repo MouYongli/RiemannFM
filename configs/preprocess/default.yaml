@@ -1,0 +1,11 @@
+batch_size: 256
+device: cuda
+force: false
+
+# Mini dataset builder (relation-aware sampling).
+# mini_min_* are floors (Phase 1 per-relation sampling and Phase 2 entity
+# top-up). Phase 3 densify has no upper bound, so actual output is
+# typically several x larger. See build_mini_wikidata_5m docstring.
+build_mini: false
+mini_min_entities: 1000
+mini_min_triples: 5000

@@ -2,6 +2,8 @@ defaults:
   - paths: default
   - data: wikidata_5m
   - download: default
+  - preprocess: default
+  - embedding: qwen3
   - _self_
 
 seed: 42

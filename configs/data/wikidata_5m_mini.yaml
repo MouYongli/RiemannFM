@@ -1,0 +1,12 @@
+# Engineering-validation subset of wikidata_5m produced by
+# 'riemannfm-preprocess data=wikidata_5m preprocess.build_mini=true'.
+# It is NOT independently downloadable; use this config after running
+# the mini builder. Fields match the other data configs' download-scope
+# slice: slug / dataset / data_dir / text_source + dataset-identity
+# counts. Datamodule hyperparameters arrive in a later Issue.
+slug: wikidata_5m_mini
+dataset: wikidata
+data_dir: ${paths.data_dir}/wikidata_5m_mini
+num_entities: 7833
+num_edge_types: 822
+text_source: wikidata_description

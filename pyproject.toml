@@ -45,6 +45,7 @@ dev = [
 
 [project.scripts]
 riemannfm-download = "riemannfm.cli.download:main"
+riemannfm-preprocess = "riemannfm.cli.preprocess:main"
 
 [build-system]
 requires = ["hatchling"]
