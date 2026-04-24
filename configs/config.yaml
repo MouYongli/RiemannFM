@@ -1,6 +1,6 @@
 defaults:
   - paths: default
-  - data: wikidata_5m_mini
+  - data: wikidata_5m
   - download: default
   - _self_
 

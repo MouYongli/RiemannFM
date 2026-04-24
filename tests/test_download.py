@@ -20,6 +20,10 @@ def test_all_datasets_enumerated() -> None:
     assert set(ALL_DATASETS) == EXPECTED_DATASETS
 
 
+def test_mini_not_in_download_registry() -> None:
+    assert "wikidata_5m_mini" not in ALL_DATASETS
+
+
 def test_registry_shapes() -> None:
     for slug, meta in _DOWNLOAD_REGISTRY.items():
         assert isinstance(meta, DownloadMeta), slug
