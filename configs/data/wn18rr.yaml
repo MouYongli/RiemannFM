@@ -1,14 +1,6 @@
-_target_: riemannfm.data.datamodule.RiemannFMDataModule
 slug: wn18rr
 dataset: wordnet
 data_dir: ${paths.data_dir}/wn18rr
 num_entities: 40943
 num_edge_types: 11
-max_nodes: 64
-max_hops: 3
-num_workers: 8
 text_source: wordnet_defs
-text_encoder: ${embedding.model_name}
-val_epoch_size: 3034
-test_epoch_size: 3134
-rwpe_k: 8

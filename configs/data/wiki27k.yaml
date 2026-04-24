@@ -1,14 +1,6 @@
-_target_: riemannfm.data.datamodule.RiemannFMDataModule
 slug: wiki27k
 dataset: wikidata
 data_dir: ${paths.data_dir}/wiki27k
 num_entities: 27112
 num_edge_types: 62
-max_nodes: 64
-max_hops: 2
-num_workers: 8
 text_source: wikidata_description
-text_encoder: ${embedding.model_name}
-val_epoch_size: 5000
-test_epoch_size: 5000
-rwpe_k: 8
