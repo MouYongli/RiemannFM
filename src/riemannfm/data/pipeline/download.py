@@ -312,7 +312,7 @@ def _download_wiki27k(slug: str, meta: DownloadMeta, raw_dir: Path) -> None:
             prefix = "dataset/Wiki27K/"
             for member in zf.namelist():
                 if member.startswith(prefix) and not member.endswith("/"):
-                    fname = member[len(prefix):]
+                    fname = member[len(prefix) :]
                     with zf.open(member) as fin, open(raw_dir / fname, "wb") as fout:
                         shutil.copyfileobj(fin, fout)
 
@@ -505,10 +505,7 @@ def _build_wn18rr_offset_mapping(
         (entity2id, offset_to_synset) — entity2id maps offset strings to
         dummy integer IDs; offset_to_synset maps offset to synset name.
     """
-    _WN_TEXT_BASE = (
-        "https://raw.githubusercontent.com/villmow/datasets_knowledge_embedding"
-        "/master/WN18RR/text"
-    )
+    _WN_TEXT_BASE = "https://raw.githubusercontent.com/villmow/datasets_knowledge_embedding/master/WN18RR/text"
 
     logger.info("[wn18rr] Building offset→synset mapping from text/ triples...")
 
@@ -822,9 +819,7 @@ def _extract_relation_texts_wikidata5m(raw_dir: Path, output_path: Path) -> None
     logger.info(f"[wikidata_5m] Wrote {count} relation texts to {output_path}")
 
 
-def _extract_relation_texts_from_triples(
-    raw_dir: Path, output_path: Path, style: str
-) -> None:
+def _extract_relation_texts_from_triples(raw_dir: Path, output_path: Path, style: str) -> None:
     """Extract relation texts by collecting unique relations from triple files.
 
     Converts relation IDs to human-readable text based on naming style:
