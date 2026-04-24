@@ -88,15 +88,17 @@ _CODEX_SPLIT_URLS: dict[str, str] = {
 # rest of our pipeline consumes: core triple splits, entity label/definition
 # (fed to _build_wiki27k_entity_texts), and relation label JSON (fed to
 # _build_wiki27k_relation_texts).
-_WIKI27K_KEEP: frozenset[str] = frozenset({
-    "train.txt",
-    "valid.txt",
-    "test.txt",
-    "entity2label.txt",
-    "entity2definition.txt",
-    "relation2label.json",
-    "relation2template.json",
-})
+_WIKI27K_KEEP: frozenset[str] = frozenset(
+    {
+        "train.txt",
+        "valid.txt",
+        "test.txt",
+        "entity2label.txt",
+        "entity2definition.txt",
+        "relation2label.json",
+        "relation2template.json",
+    }
+)
 
 
 def get_download_meta(slug: str) -> DownloadMeta:
