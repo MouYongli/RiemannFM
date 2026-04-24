@@ -67,7 +67,7 @@ uv run python -m riemannfm.cli.preprocess data=wikidata_5m preprocess.build_mini
 uv run python -m riemannfm.cli.preprocess data=wikidata_5m_mini embedding=sbert
 ```
 
-See [docs/data.md](docs/data.md) for full documentation (all datasets, embedding options, `.env` configuration).
+See [docs/data_CN.md](docs/data_CN.md) for full documentation (all datasets, embedding options, `.env` configuration). 中文文档。
 
 ## Pretraining
 
