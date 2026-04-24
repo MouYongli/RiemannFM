@@ -1,0 +1,14 @@
+_target_: riemannfm.data.datamodule.RiemannFMDataModule
+slug: yago3_10
+dataset: yago
+data_dir: ${paths.data_dir}/yago3_10
+num_entities: 123182
+num_edge_types: 37
+max_nodes: 128
+max_hops: 2
+num_workers: 8
+text_source: entity_name
+text_encoder: ${embedding.model_name}
+val_epoch_size: 5000
+test_epoch_size: 5000
+rwpe_k: 8
