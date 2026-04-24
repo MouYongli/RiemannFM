@@ -272,24 +272,33 @@ def _load_texts_ordered(texts_path: Path, id_path: Path) -> list[str]:
 def build_mini_wikidata_5m(
     source_dir: str = "data/wikidata_5m",
     output_dir: str = "data/wikidata_5m_mini",
-    max_entities: int = 1000,
-    target_triples: int = 5000,
+    min_entities: int = 1000,
+    min_triples: int = 5000,
     seed: int = 42,
     force: bool = False,
 ) -> Path:
     """Build a small engineering validation subset from full WikiData5M.
 
     Uses relation-aware sampling to ensure diverse relation coverage:
-    1. Sample triples from every relation type for coverage
-    2. Fill entity budget with additional triples
-    3. Densify by adding triples within the sampled entity set
-    4. Split into train/val/test (80/10/10)
+    1. Sample ``max(3, min_triples // num_relations)`` triples per relation
+       to guarantee coverage; this alone can already overshoot ``min_triples``
+       and ``min_entities`` when num_relations is large.
+    2. If Phase 1 entities < ``min_entities``, fill from remaining triples.
+    3. Densify: add all remaining triples whose h and t are both already in
+       the selected entity set. Densification has no upper bound and is
+       what typically dominates the final size — e.g. with min_triples=5000
+       and min_entities=1000 against the 822-relation WikiData5M we end up
+       with ~7.8K entities / ~23K triples in practice.
+    4. Split into train/val/test (80/10/10).
+
+    ``min_*`` are floors / hints, not caps. If you need a hard cap on the
+    final size, subsample Phase 3's output downstream.
 
     Args:
         source_dir: Path to full WikiData5M dataset (with raw/ subdirectory).
         output_dir: Path for the mini dataset output.
-        max_entities: Target number of entities (~1K).
-        target_triples: Target number of triples (~5K).
+        min_entities: Minimum entity count Phase 2 aims for (may be exceeded by Phase 1).
+        min_triples: Per-relation sampling floor for Phase 1 (may be exceeded by Phase 3 densify).
         seed: Random seed for deterministic sampling.
         force: Rebuild even if output already exists.
 
@@ -333,7 +342,7 @@ def build_mini_wikidata_5m(
         rel_to_triples[r].append((h, r, t))
 
     num_relations = len(rel_to_triples)
-    per_rel = max(3, target_triples // num_relations)
+    per_rel = max(3, min_triples // num_relations)
     logger.info(f"  {num_relations} relation types, sampling {per_rel} triples per relation")
 
     selected: list[tuple[str, str, str]] = []
@@ -353,11 +362,11 @@ def build_mini_wikidata_5m(
     logger.info(f"  Phase 1 (relation coverage): {len(selected):,} triples, {len(entities):,} entities")
 
     # ── Phase 2: Fill entity budget ─────────────────────────────────────────
-    if len(entities) < max_entities:
+    if len(entities) < min_entities:
         remaining = [t for t in all_triples if t not in selected_set]
         random.shuffle(remaining)
         for triple in remaining:
-            if len(entities) >= max_entities:
+            if len(entities) >= min_entities:
                 break
             if triple not in selected_set:
                 selected.append(triple)

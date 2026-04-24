@@ -29,8 +29,8 @@ def main(cfg: DictConfig):
         build_mini_wikidata_5m(
             source_dir=cfg.data.data_dir,
             output_dir=str(Path(cfg.data.data_dir).parent / "wikidata_5m_mini"),
-            max_entities=cfg.preprocess.get("mini_max_entities", 1000),
-            target_triples=cfg.preprocess.get("mini_target_triples", 5000),
+            min_entities=cfg.preprocess.get("mini_min_entities", 1000),
+            min_triples=cfg.preprocess.get("mini_min_triples", 5000),
             force=cfg.preprocess.force,
         )
         return
