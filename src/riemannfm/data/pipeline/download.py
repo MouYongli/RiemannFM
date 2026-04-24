@@ -24,22 +24,6 @@ from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
-
-def _safe_zip_extractall(zf: zipfile.ZipFile, target_dir: Path) -> None:
-    """Extract all members of a zip archive, refusing paths that escape target_dir.
-
-    Python's ``ZipFile.extractall`` strips absolute paths and normalizes
-    separators, but we add an explicit ``..`` guard as defence-in-depth
-    against archive sources we do not control.
-    """
-    target_resolved = target_dir.resolve()
-    for name in zf.namelist():
-        resolved = (target_resolved / name).resolve()
-        if target_resolved not in resolved.parents and resolved != target_resolved:
-            raise RuntimeError(f"Unsafe path in zip archive: {name!r}")
-    zf.extractall(target_dir)
-
-
 # ─── Download-specific registry ──────────────────────────────────────────────
 
 
@@ -147,14 +131,10 @@ def download_graph(
         logger.info(f"[{slug}] Graph files already exist in raw/, skipping download.")
         return raw_dir
 
-    if meta.download_format == "tar.gz":
-        _download_tar_gz(slug, meta, raw_dir)
-    elif meta.download_format == "wikidata5m":
+    if meta.download_format == "wikidata5m":
         _download_wikidata5m(slug, meta, raw_dir)
     elif meta.download_format == "codex":
         _download_codex(slug, raw_dir)
-    elif meta.download_format == "zip":
-        _download_zip(slug, meta, raw_dir)
     elif meta.download_format == "github_files":
         _download_github_files(slug, meta, raw_dir)
     elif meta.download_format == "wiki27k":
@@ -163,29 +143,6 @@ def download_graph(
         logger.warning(f"[{slug}] Unknown download format: {meta.download_format}")
 
     return raw_dir
-
-
-def _download_tar_gz(slug: str, meta: DownloadMeta, raw_dir: Path) -> None:
-    """Download and extract a tar.gz archive."""
-    if meta.download_url is None:
-        logger.warning(f"[{slug}] No download URL configured. Please manually place graph files in {raw_dir}/")
-        return
-
-    logger.info(f"[{slug}] Downloading from {meta.download_url}...")
-    with tempfile.TemporaryDirectory() as tmpdir:
-        archive_path = Path(tmpdir) / "dataset.tar.gz"
-        urlretrieve(meta.download_url, str(archive_path))
-        with tarfile.open(archive_path, "r:gz") as tar:
-            tar.extractall(tmpdir, filter="data")
-
-        for extracted_dir in Path(tmpdir).iterdir():
-            if extracted_dir.is_dir() and extracted_dir.name != "__MACOSX":
-                for f in extracted_dir.iterdir():
-                    if f.is_file():
-                        shutil.copy2(f, raw_dir / f.name)
-                break
-
-    logger.info(f"[{slug}] Graph files downloaded to {raw_dir}/")
 
 
 def _download_wikidata5m(slug: str, meta: DownloadMeta, raw_dir: Path) -> None:
@@ -240,29 +197,6 @@ def _download_codex(slug: str, raw_dir: Path) -> None:
             logger.warning(f"[{slug}] Could not download {fname}, may need manual setup.")
 
     logger.info(f"[{slug}] CoDEx-L downloaded to {raw_dir}/")
-
-
-def _download_zip(slug: str, meta: DownloadMeta, raw_dir: Path) -> None:
-    """Download and extract a zip archive."""
-    if meta.download_url is None:
-        logger.warning(f"[{slug}] No download URL configured. Please manually place graph files in {raw_dir}/")
-        return
-
-    logger.info(f"[{slug}] Downloading from {meta.download_url}...")
-    with tempfile.TemporaryDirectory() as tmpdir:
-        archive_path = Path(tmpdir) / "dataset.zip"
-        urlretrieve(meta.download_url, str(archive_path))
-        with zipfile.ZipFile(archive_path, "r") as zf:
-            _safe_zip_extractall(zf, Path(tmpdir))
-
-        for extracted in Path(tmpdir).iterdir():
-            if extracted.is_dir() and extracted.name != "__MACOSX":
-                for f in extracted.iterdir():
-                    if f.is_file():
-                        shutil.copy2(f, raw_dir / f.name)
-                break
-
-    logger.info(f"[{slug}] Graph files downloaded to {raw_dir}/")
 
 
 def _download_github_files(slug: str, meta: DownloadMeta, raw_dir: Path) -> None:
