@@ -358,7 +358,7 @@ def _build_wiki27k_entity_texts(raw_dir: Path) -> None:
     labels: dict[str, str] = {}
     label_path = raw_dir / "entity2label.txt"
     if label_path.exists():
-        with open(label_path) as f:
+        with open(label_path, encoding="utf-8") as f:
             for line in f:
                 parts = line.strip().split("\t", 1)
                 if len(parts) == 2:
@@ -367,7 +367,7 @@ def _build_wiki27k_entity_texts(raw_dir: Path) -> None:
     defs: dict[str, str] = {}
     def_path = raw_dir / "entity2definition.txt"
     if def_path.exists():
-        with open(def_path) as f:
+        with open(def_path, encoding="utf-8") as f:
             for line in f:
                 parts = line.strip().split("\t", 1)
                 if len(parts) == 2:
@@ -377,7 +377,7 @@ def _build_wiki27k_entity_texts(raw_dir: Path) -> None:
     for name in ("train.txt", "valid.txt", "test.txt"):
         path = raw_dir / name
         if path.exists():
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 for line in f:
                     parts = line.strip().split("\t")
                     if len(parts) >= 3:
@@ -385,7 +385,7 @@ def _build_wiki27k_entity_texts(raw_dir: Path) -> None:
                         entities.add(parts[2])
 
     output = raw_dir / "entity_texts.tsv"
-    with open(output, "w") as f:
+    with open(output, "w", encoding="utf-8") as f:
         for eid in sorted(entities):
             label = labels.get(eid, eid)
             defn = defs.get(eid, "")
@@ -400,21 +400,21 @@ def _build_wiki27k_relation_texts(raw_dir: Path) -> None:
     label_path = raw_dir / "relation2label.json"
     rel_labels: dict[str, str] = {}
     if label_path.exists():
-        with open(label_path) as f:
+        with open(label_path, encoding="utf-8") as f:
             rel_labels = json.load(f)
 
     relations: set[str] = set()
     for name in ("train.txt", "valid.txt", "test.txt"):
         path = raw_dir / name
         if path.exists():
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 for line in f:
                     parts = line.strip().split("\t")
                     if len(parts) >= 3:
                         relations.add(parts[1])
 
     output = raw_dir / "relation_texts.tsv"
-    with open(output, "w") as f:
+    with open(output, "w", encoding="utf-8") as f:
         for rid in sorted(relations):
             text = rel_labels.get(rid, rid)
             f.write(f"{rid}\t{text}\n")
@@ -497,7 +497,7 @@ def _extract_texts_wordnet(raw_dir: Path, output_path: Path) -> None:
         offset_to_synset = None
 
     logger.info(f"[wn18rr] Extracting WordNet definitions for {len(entity2id)} entities...")
-    with open(output_path, "w") as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         for entity_name in tqdm(entity2id, desc="Extracting WordNet texts"):
             # Resolve synset name from offset if needed.
             if offset_to_synset is not None:
@@ -546,7 +546,7 @@ def _build_wn18rr_offset_mapping(
         path = raw_dir / split
         if not path.exists():
             continue
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             for line in f:
                 parts = line.strip().split("\t")
                 if len(parts) >= 3:
@@ -564,7 +564,7 @@ def _build_wn18rr_offset_mapping(
                 tmp_path = Path(tmp.name)
             urlretrieve(url, str(tmp_path))
 
-            with open(orig_path) as f_orig, open(tmp_path) as f_text:
+            with open(orig_path, encoding="utf-8") as f_orig, open(tmp_path, encoding="utf-8") as f_text:
                 for orig_line, text_line in zip(f_orig, f_text):
                     orig_parts = orig_line.strip().split("\t")
                     text_parts = text_line.strip().split("\t")
@@ -598,7 +598,7 @@ def _extract_texts_wikipedia_mapping(raw_dir: Path, output_path: Path, text_url:
         urlretrieve(text_url, str(tmp_path))
 
         entity2id = _load_entity_mapping(raw_dir)
-        with open(tmp_path) as fin, open(output_path, "w") as fout:
+        with open(tmp_path, encoding="utf-8") as fin, open(output_path, "w", encoding="utf-8") as fout:
             for line in fin:
                 parts = line.strip().split("\t", 1)
                 if len(parts) == 2:
@@ -624,10 +624,10 @@ def _extract_texts_wikidata_description(raw_dir: Path, output_path: Path, text_u
     try:
         urlretrieve(text_url, str(tmp_path))
 
-        with open(tmp_path) as fin:
+        with open(tmp_path, encoding="utf-8") as fin:
             entities_data = json.load(fin)
 
-        with open(output_path, "w") as fout:
+        with open(output_path, "w", encoding="utf-8") as fout:
             for entity_id, info_dict in entities_data.items():
                 if isinstance(info_dict, dict):
                     label = info_dict.get("label", "")
@@ -651,10 +651,10 @@ def _extract_texts_wikipedia(raw_dir: Path, output_path: Path) -> None:
     entities_path = raw_dir / "entities.json"
     if entities_path.exists():
         logger.info("[wikidata_5m] Extracting texts from entities.json...")
-        with open(entities_path) as f:
+        with open(entities_path, encoding="utf-8") as f:
             entities = json.load(f)
 
-        with open(output_path, "w") as fout:
+        with open(output_path, "w", encoding="utf-8") as fout:
             for entity_id, info_dict in tqdm(entities.items(), desc="Extracting texts"):
                 label = info_dict.get("label", "")
                 description = info_dict.get("description", "")
@@ -675,7 +675,7 @@ def _extract_texts_wikipedia(raw_dir: Path, output_path: Path) -> None:
         urlretrieve(meta.text_url, str(gz_path))
 
         count = 0
-        with gzip.open(gz_path, "rt", encoding="utf-8") as fin, open(output_path, "w") as fout:
+        with gzip.open(gz_path, "rt", encoding="utf-8") as fin, open(output_path, "w", encoding="utf-8") as fout:
             for line in tqdm(fin, desc="Extracting entity texts"):
                 parts = line.strip().split("\t", 1)
                 if len(parts) == 2:
@@ -710,7 +710,7 @@ def _extract_texts_entity_name(raw_dir: Path, output_path: Path) -> None:
         for name in ("train.txt", "train_triples.txt"):
             path = raw_dir / name
             if path.exists():
-                with open(path) as f:
+                with open(path, encoding="utf-8") as f:
                     for line in f:
                         parts = line.strip().split("\t")
                         if len(parts) >= 3:
@@ -723,7 +723,7 @@ def _extract_texts_entity_name(raw_dir: Path, output_path: Path) -> None:
 
     logger.info(f"[entity_name] Generating text for {len(entity_names)} entities from names...")
 
-    with open(output_path, "w") as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         for name in tqdm(entity_names, desc="Cleaning entity names"):
             cleaned = name.replace("_", " ").replace("/", " ").strip()
             # Remove leading dots or special chars.
@@ -740,7 +740,7 @@ def _load_entity_mapping(raw_dir: Path) -> dict[str, int]:
     entity_file = raw_dir / "entities.dict"
     entity2id: dict[str, int] = {}
     if entity_file.exists():
-        with open(entity_file) as f:
+        with open(entity_file, encoding="utf-8") as f:
             for line in f:
                 parts = line.strip().split("\t")
                 if len(parts) == 2:
@@ -818,7 +818,7 @@ def _extract_relation_texts_wikidata5m(raw_dir: Path, output_path: Path) -> None
 
         # Parse alias file
         known: dict[str, str] = {}
-        with open(rel_files[0]) as fin:
+        with open(rel_files[0], encoding="utf-8") as fin:
             for line in fin:
                 parts = line.strip().split("\t")
                 if len(parts) >= 2:
@@ -832,14 +832,14 @@ def _extract_relation_texts_wikidata5m(raw_dir: Path, output_path: Path) -> None
         for fname in ("train_triples.txt", "val_triples.txt", "test_triples.txt"):
             fpath = raw_dir / fname
             if fpath.exists():
-                with open(fpath) as f:
+                with open(fpath, encoding="utf-8") as f:
                     for line in f:
                         parts = line.strip().split("\t")
                         if len(parts) == 3:
                             all_rels.add(parts[1])
 
         count = 0
-        with open(output_path, "w") as fout:
+        with open(output_path, "w", encoding="utf-8") as fout:
             for rel_id in sorted(all_rels | known.keys()):
                 text = known.get(rel_id, rel_id)
                 fout.write(f"{rel_id}\t{text}\n")
@@ -860,7 +860,7 @@ def _extract_relation_texts_from_triples(raw_dir: Path, output_path: Path, style
     for fname in ("train.txt", "train_triples.txt"):
         fpath = raw_dir / fname
         if fpath.exists():
-            with open(fpath) as f:
+            with open(fpath, encoding="utf-8") as f:
                 for line in f:
                     parts = line.strip().split("\t")
                     if len(parts) >= 3:
@@ -871,7 +871,7 @@ def _extract_relation_texts_from_triples(raw_dir: Path, output_path: Path, style
         return
 
     count = 0
-    with open(output_path, "w") as fout:
+    with open(output_path, "w", encoding="utf-8") as fout:
         for rel in sorted(relations):
             if style == "wordnet":
                 text = rel.lstrip("_").replace("_", " ")
@@ -897,7 +897,7 @@ def _extract_relation_texts_codex(raw_dir: Path, output_path: Path) -> None:
         return
 
     count = 0
-    with open(rel_file) as fin, open(output_path, "w") as fout:
+    with open(rel_file, encoding="utf-8") as fin, open(output_path, "w", encoding="utf-8") as fout:
         for line in fin:
             parts = line.strip().split("\t")
             if len(parts) == 2:
