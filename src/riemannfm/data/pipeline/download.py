@@ -293,10 +293,17 @@ def _download_github_files(slug: str, meta: DownloadMeta, raw_dir: Path) -> None
         try:
             urlretrieve(url, str(dest))
             logger.info(f"[{slug}]   ✓ {fname}")
-        except Exception:
+        except Exception as exc:
             if fname in ("train.txt", "valid.txt", "test.txt"):
-                logger.warning(f"[{slug}]   ✗ {fname} (required file missing!)")
-            # Optional files (dicts, json) — silently skip.
+                logger.warning(
+                    f"[{slug}]   ✗ {fname} failed to download: {exc!r} "
+                    "(required file — check network / upstream availability)",
+                    exc_info=True,
+                )
+            else:
+                # Optional files (dicts, json): log at debug for diagnosis
+                # without cluttering normal output.
+                logger.debug(f"[{slug}]   ✗ {fname} (optional) skipped: {exc!r}")
 
     logger.info(f"[{slug}] Graph files downloaded to {raw_dir}/")
 
