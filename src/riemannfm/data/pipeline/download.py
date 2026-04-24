@@ -918,9 +918,15 @@ def run_pipeline(
     extract_entity_texts(slug, data_dir, text_source, force=force)
     extract_relation_texts(slug, data_dir, force=force)
 
-    from riemannfm.data.pipeline.validate import validate_raw
-
-    if not validate_raw(data_dir, slug=slug):
-        raise RuntimeError(f"[{slug}] Validation failed — check logs above.")
+    # validate_raw lives in riemannfm.data.pipeline.validate which is not yet
+    # on main (arrives with the preprocess Issue). Invoke it only if present
+    # so end-to-end download works in isolation.
+    try:
+        from riemannfm.data.pipeline.validate import validate_raw
+    except ImportError:
+        logger.info(f"[{slug}] validate_raw not available yet; skipping post-download validation.")
+    else:
+        if not validate_raw(data_dir, slug=slug):
+            raise RuntimeError(f"[{slug}] Validation failed — check logs above.")
 
     logger.info(f"[{slug}] Download complete.")
