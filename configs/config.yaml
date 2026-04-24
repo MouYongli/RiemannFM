@@ -1,0 +1,13 @@
+defaults:
+  - paths: default
+  - data: wikidata_5m
+  - download: default
+  - _self_
+
+seed: 42
+project_name: riemannfm
+run_name: ${now:%Y%m%d_%H%M%S}
+
+hydra:
+  run:
+    dir: outputs/${run_name}

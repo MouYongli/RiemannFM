@@ -1,0 +1,6 @@
+slug: fb15k_237
+dataset: freebase
+data_dir: ${paths.data_dir}/fb15k_237
+num_entities: 14541
+num_edge_types: 237
+text_source: wikipedia_mapping

@@ -1,0 +1,6 @@
+slug: yago3_10
+dataset: yago
+data_dir: ${paths.data_dir}/yago3_10
+num_entities: 123182
+num_edge_types: 37
+text_source: entity_name

@@ -1,0 +1,6 @@
+slug: codex_l
+dataset: codex
+data_dir: ${paths.data_dir}/codex_l
+num_entities: 77951
+num_edge_types: 69
+text_source: wikidata_description

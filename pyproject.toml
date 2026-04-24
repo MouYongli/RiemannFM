@@ -43,6 +43,9 @@ dev = [
     "pre-commit>=4.0.0",
 ]
 
+[project.scripts]
+riemannfm-download = "riemannfm.cli.download:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

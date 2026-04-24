@@ -1,0 +1,6 @@
+slug: wn18rr
+dataset: wordnet
+data_dir: ${paths.data_dir}/wn18rr
+num_entities: 40943
+num_edge_types: 11
+text_source: wordnet_defs

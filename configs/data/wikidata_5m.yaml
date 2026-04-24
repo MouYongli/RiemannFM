@@ -1,0 +1,12 @@
+# Fields consumed by the download CLI: slug, data_dir, text_source.
+# num_entities, num_edge_types are dataset facts kept here for identity.
+# Datamodule / preprocess hyperparameters (max_nodes, max_hops, rwpe_k,
+# num_workers, text_encoder, val/test_epoch_size, _target_) arrive in a
+# later Issue and will live in configs/datamodule/ or be merged back as
+# appropriate.
+slug: wikidata_5m
+dataset: wikidata
+data_dir: ${paths.data_dir}/wikidata_5m
+num_entities: 4594485
+num_edge_types: 822
+text_source: wikipedia

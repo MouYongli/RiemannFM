@@ -1,0 +1,6 @@
+slug: wiki27k
+dataset: wikidata
+data_dir: ${paths.data_dir}/wiki27k
+num_entities: 27112
+num_edge_types: 62
+text_source: wikidata_description
