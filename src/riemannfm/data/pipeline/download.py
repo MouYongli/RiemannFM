@@ -865,7 +865,20 @@ def run_pipeline(
     text_source: str,
     force: bool = False,
 ) -> None:
-    """Run the download pipeline: graph structure + entity texts.
+    """Run the full download pipeline for a dataset.
+
+    Stages (each idempotent — skipped when outputs already exist unless
+    ``force=True``):
+
+    1. ``download_graph``: fetch triples and entity/relation mappings → ``raw/``.
+    2. ``extract_entity_texts``: build ``raw/entity_texts.tsv`` according to
+       the dataset's ``text_source`` strategy (Wikipedia first-paragraph,
+       WordNet definitions, WikiData labels, etc.).
+    3. ``extract_relation_texts``: build ``raw/relation_texts.tsv`` from the
+       dataset's relation inventory.
+    4. Optional post-download validation via
+       ``riemannfm.data.pipeline.validate.validate_raw`` when that module is
+       present (it lands with the preprocess Issue); skipped otherwise.
 
     Args:
         slug: Dataset slug (for registry lookup and logging).
