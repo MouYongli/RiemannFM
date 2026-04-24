@@ -11,7 +11,13 @@ from pathlib import Path
 
 import pytest
 
-from riemannfm.data.pipeline.download import _DOWNLOAD_REGISTRY, ALL_DATASETS, DownloadMeta, run_pipeline
+from riemannfm.data.pipeline.download import (
+    _DOWNLOAD_REGISTRY,
+    _WIKI27K_KEEP,
+    ALL_DATASETS,
+    DownloadMeta,
+    run_pipeline,
+)
 
 EXPECTED_DATASETS = {
     "wikidata_5m",
@@ -56,6 +62,37 @@ def test_cli_imports() -> None:
 )
 def test_registry_download_format(slug: str, expected_format: str) -> None:
     assert _DOWNLOAD_REGISTRY[slug].download_format == expected_format
+
+
+def test_wiki27k_whitelist_excludes_pkgc_artifacts() -> None:
+    """The PKGC zip ships ~578MB of KGE negative-sampling and LP eval files;
+    none of those should be extracted into raw/."""
+    must_keep = {
+        "train.txt",
+        "valid.txt",
+        "test.txt",
+        "entity2label.txt",
+        "entity2definition.txt",
+        "relation2label.json",
+        "relation2template.json",
+    }
+    must_skip = {
+        "train_neg_kge_all.txt",
+        "train_neg_rand.txt",
+        "link_prediction_head.txt",
+        "link_prediction_tail.txt",
+        "o_test_pos.txt",
+        "o_test_neg.txt",
+        "o_valid_pos.txt",
+        "o_valid_neg.txt",
+        "test_pos.txt",
+        "test_neg.txt",
+        "valid_pos.txt",
+        "valid_neg.txt",
+        "pipeline.py",
+    }
+    assert must_keep == set(_WIKI27K_KEEP)
+    assert must_skip.isdisjoint(_WIKI27K_KEEP)
 
 
 def test_run_pipeline_fb15k_237_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

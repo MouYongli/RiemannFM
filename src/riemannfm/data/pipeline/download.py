@@ -83,6 +83,21 @@ _CODEX_SPLIT_URLS: dict[str, str] = {
     "test": f"{_CODEX_BASE}/test.txt",
 }
 
+# Wiki27K PKGC zip ships ~578MB of KGE negative-sampling and link-prediction
+# eval files we don't use in flow matching. Whitelist only the members the
+# rest of our pipeline consumes: core triple splits, entity label/definition
+# (fed to _build_wiki27k_entity_texts), and relation label JSON (fed to
+# _build_wiki27k_relation_texts).
+_WIKI27K_KEEP: frozenset[str] = frozenset({
+    "train.txt",
+    "valid.txt",
+    "test.txt",
+    "entity2label.txt",
+    "entity2definition.txt",
+    "relation2label.json",
+    "relation2template.json",
+})
+
 
 def get_download_meta(slug: str) -> DownloadMeta:
     """Look up download metadata from the registry.
@@ -272,6 +287,8 @@ def _download_wiki27k(slug: str, meta: DownloadMeta, raw_dir: Path) -> None:
                 if not (member.startswith(prefix) and not member.endswith("/")):
                     continue
                 fname = member[len(prefix) :]
+                if fname not in _WIKI27K_KEEP:
+                    continue
                 target = (raw_dir / fname).resolve()
                 if raw_dir_resolved not in target.parents and target != raw_dir_resolved:
                     logger.warning(f"[{slug}] Skipping unsafe archive member: {member}")
