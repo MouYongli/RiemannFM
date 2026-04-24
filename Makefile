@@ -1,4 +1,4 @@
-.PHONY: help install install-dev lint format test test-cov typecheck precommit clean
+.PHONY: help install install-dev lint format test test-cov typecheck precommit download clean
 
 SRC = src/riemannfm
 TESTS = tests
@@ -47,6 +47,10 @@ test: ## Run tests
 
 test-cov: ## Run tests with coverage
 	$(RUN) pytest $(TESTS) -v --cov=$(SRC) --cov-report=term-missing --cov-report=html
+
+# ─── Data ─────────────────────────────────────────────────────────────
+download: ## Download datasets and precompute text embeddings
+	$(RUN) python -m riemannfm.cli.download $(ARGS)
 
 # ─── Cleanup ──────────────────────────────────────────────────────────
 clean: ## Remove build artifacts
