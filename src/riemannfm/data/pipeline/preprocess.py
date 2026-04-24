@@ -319,7 +319,7 @@ def build_mini_wikidata_5m(
             f'Source data not found at {source_raw}. Run `make download ARGS="data=wikidata_5m"` first.'
         )
 
-    random.seed(seed)
+    rng = random.Random(seed)
     output_raw.mkdir(parents=True, exist_ok=True)
 
     # ── Load all triples from all splits ────────────────────────────────────
@@ -351,7 +351,7 @@ def build_mini_wikidata_5m(
 
     for _rel, triples in rel_to_triples.items():
         k = min(per_rel, len(triples))
-        sampled = random.sample(triples, k)
+        sampled = rng.sample(triples, k)
         for triple in sampled:
             if triple not in selected_set:
                 selected.append(triple)
@@ -364,7 +364,7 @@ def build_mini_wikidata_5m(
     # ── Phase 2: Fill entity budget ─────────────────────────────────────────
     if len(entities) < min_entities:
         remaining = [t for t in all_triples if t not in selected_set]
-        random.shuffle(remaining)
+        rng.shuffle(remaining)
         for triple in remaining:
             if len(entities) >= min_entities:
                 break
@@ -387,7 +387,7 @@ def build_mini_wikidata_5m(
     logger.info(f"  Phase 3 (densify): +{densified:,} triples → {len(selected):,} total")
 
     # ── Split into train/val/test (80/10/10) ────────────────────────────────
-    random.shuffle(selected)
+    rng.shuffle(selected)
     n = len(selected)
     n_val = max(1, n // 10)
     n_test = max(1, n // 10)
