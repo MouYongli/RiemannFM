@@ -12,6 +12,7 @@ Build mini validation dataset from full WikiData5M:
 """
 
 import logging
+from pathlib import Path
 
 import hydra
 from omegaconf import DictConfig
@@ -27,6 +28,7 @@ def main(cfg: DictConfig):
         logger.info("Building mini WikiData5M validation dataset...")
         build_mini_wikidata_5m(
             source_dir=cfg.data.data_dir,
+            output_dir=str(Path(cfg.data.data_dir).parent / "wikidata_5m_mini"),
             max_entities=cfg.preprocess.get("mini_max_entities", 1000),
             target_triples=cfg.preprocess.get("mini_target_triples", 5000),
             force=cfg.preprocess.force,
