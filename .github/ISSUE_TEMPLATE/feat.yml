@@ -1,0 +1,47 @@
+name: Feature Request
+description: Propose a new feature or enhancement
+labels: ["type:feat", "priority:medium"]
+body:
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: Why is this feature needed? What problem does it solve?
+    validations:
+      required: true
+  - type: textarea
+    id: approach
+    attributes:
+      label: Proposed Approach
+      description: How should this be implemented? Include technical details.
+    validations:
+      required: false
+  - type: textarea
+    id: criteria
+    attributes:
+      label: Acceptance Criteria
+      description: What conditions must be met for this feature to be complete?
+      value: |
+        - [ ]
+        - [ ]
+        - [ ]
+    validations:
+      required: false
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Module Scope
+      description: Which module(s) does this affect?
+      multiple: true
+      options:
+        - manifolds
+        - flow
+        - models
+        - layers
+        - data
+        - losses
+        - utils
+        - cli
+        - configs
+    validations:
+      required: false
