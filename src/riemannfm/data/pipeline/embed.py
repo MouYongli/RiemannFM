@@ -416,7 +416,11 @@ class RiemannFMTextEmbedder:
         n_failed_concurrent = len(failed)
         n_recovered = len(seq_recovered)
         n_permanent = len(permanently_failed)
-        n_retried_inline = len(retried_batches - {idx for idx, _ in failed})
+        # retried_batches is populated only on the success path at L354
+        # (inside 'if attempt > 0' before 'return'), so it is disjoint
+        # from 'failed' by construction — the earlier set subtraction
+        # was a no-op.
+        n_retried_inline = len(retried_batches)
         n_first_try = n_total - n_retried_inline - n_failed_concurrent
 
         summary_lines = [
