@@ -64,8 +64,11 @@ run_module() {
 }
 
 # ── GPU ────────────────────────────────────────────────────────────────
+# Relies on $RUN being set by activate_env() — otherwise a bare `python`
+# call would probe the system interpreter (usually no torch) and silently
+# report 0 GPUs, forcing single-GPU fall-through in run_distributed.
 detect_gpus() {
-    python -c "import torch; print(torch.cuda.device_count())" 2>/dev/null || echo 0
+    ${RUN:-} python -c "import torch; print(torch.cuda.device_count())" 2>/dev/null || echo 0
 }
 
 # ── Local distributed ─────────────────────────────────────────────────
