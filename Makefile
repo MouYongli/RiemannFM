@@ -1,4 +1,4 @@
-.PHONY: help install install-dev lint format test test-cov typecheck precommit download preprocess clean
+.PHONY: help install install-dev lint format test test-cov typecheck precommit download pretrain finetune evaluate generate preprocess clean
 
 SRC = src/riemannfm
 TESTS = tests
@@ -51,6 +51,19 @@ test-cov: ## Run tests with coverage
 # ─── Data ─────────────────────────────────────────────────────────────
 download: ## Download datasets
 	$(RUN) python -m riemannfm.cli.download $(ARGS)
+
+# ─── Training ─────────────────────────────────────────────────────────
+pretrain: ## Run pretraining
+	$(RUN) python -m riemannfm.cli.pretrain $(ARGS)
+
+finetune: ## Run fine-tuning
+	$(RUN) python -m riemannfm.cli.finetune $(ARGS)
+
+evaluate: ## Run evaluation
+	$(RUN) python -m riemannfm.cli.evaluate $(ARGS)
+
+generate: ## Run graph generation
+	$(RUN) python -m riemannfm.cli.generate $(ARGS)
 
 preprocess: ## Build id mappings and precompute text embeddings
 	$(RUN) python -m riemannfm.cli.preprocess $(ARGS)

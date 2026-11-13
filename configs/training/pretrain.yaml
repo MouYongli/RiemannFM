@@ -1,0 +1,41 @@
+_target_: riemannfm.models.lightning_module.RiemannFMPretrainModule
+
+# Max_steps (not epochs) — subgraph sampling is an infinite data stream.
+max_steps: 500000
+val_check_interval: 10000
+
+batch_size: 8
+gradient_accumulation_steps: 8
+
+# Optimizer (spec §20).
+lr: 1.0e-4
+curvature_lr: 1.0e-5
+relation_lr: 3.3e-5          # spec §20.2: lr / 3
+weight_decay: 0.01
+warmup_steps: 10000
+max_grad_norm: 1.0
+mixed_precision: bf16
+lr_min_ratio: 0.0
+use_riemannian_optim: true
+
+# Loss weights (spec §19.6).
+lambda_X: 1.0
+lambda_ex: 1.0
+lambda_ty: 0.5
+lambda_align_R: 0.02         # optional relation-text InfoNCE
+align_tau: 0.1
+d_p: 128                     # L_align^R projection dim
+
+# Modality masking (spec §9).  Defaults match §9.2.
+modality_mask:
+  p_full: 0.70
+  p_tm: 0.15
+  p_cm: 0.15
+  rho_tm: 0.30
+  rho_cm: 0.15
+  # Text-mask mode t-distribution (spec §9.6): Beta(a, b), biased toward 1.
+  beta_a_text_mask: 5.0
+  beta_b_text_mask: 1.0
+
+# Validation.
+limit_val_batches: 8

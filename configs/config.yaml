@@ -1,14 +1,24 @@
 defaults:
   - paths: default
+  - model: base
+  - manifold: product_h_s_e
+  - flow: joint
+  - embedding: qwen3
   - data: wikidata_5m
+  - training: pretrain
+  - ablation: full
+  - optional task: null
+  - accelerator: gpu
   - download: default
   - preprocess: default
-  - embedding: qwen3
+  - logger: default
+  - optional experiment: null
   - _self_
 
 seed: 42
 project_name: riemannfm
 run_name: ${now:%Y%m%d_%H%M%S}
+device: ${accelerator.accelerator}
 
 hydra:
   run:

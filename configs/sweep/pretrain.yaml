@@ -1,0 +1,38 @@
+# Stage 1 HP search: broad sweep on the small model.
+# Run with: experiment=pretrain_search sweep=pretrain --multirun
+# Multi-GPU: launch on N GPUs with the same study_name, Optuna syncs via SQLite.
+sampler: tpe
+n_trials: 20
+direction: minimize
+objective: val_loss
+study_name: hp_search_s1
+storage: sqlite:///hp_search_s1.db
+
+search_space:
+  training.lr:
+    type: categorical
+    choices: [3.0e-5, 1.0e-4, 3.0e-4, 1.0e-3]
+  training.curvature_lr:
+    type: categorical
+    choices: [1.0e-5, 5.0e-5, 1.0e-4, 5.0e-4]
+  training.lambda_X:
+    type: categorical
+    choices: [0.5, 1.0, 2.0]
+  training.lambda_ex:
+    type: categorical
+    choices: [0.5, 1.0, 2.0]
+  training.lambda_ty:
+    type: categorical
+    choices: [0.25, 0.5, 1.0]
+  training.lambda_align_R:
+    type: categorical
+    choices: [0.0, 0.02, 0.05]
+  training.weight_decay:
+    type: categorical
+    choices: [0.01, 0.05, 0.1]
+  training.warmup_steps:
+    type: categorical
+    choices: [500, 1000, 2000]
+  data.max_nodes:
+    type: categorical
+    choices: [64, 128]

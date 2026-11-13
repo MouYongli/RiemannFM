@@ -1,0 +1,23 @@
+_target_: riemannfm.models.finetune_module.RiemannFMKGCModule
+
+max_steps: 10000
+val_check_interval: 500
+
+batch_size: 512
+gradient_accumulation_steps: 1
+head_lr: 1.0e-3
+backbone_lr: 1.0e-5
+curvature_lr: 1.0e-5
+weight_decay: 0.01
+warmup_steps: 500
+max_grad_norm: 1.0
+mixed_precision: bf16
+
+# Backbone freeze control
+backbone_frozen: false
+
+# Optimization
+use_riemannian_optim: true
+
+# Validation
+limit_val_batches: 50

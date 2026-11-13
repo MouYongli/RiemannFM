@@ -1,0 +1,27 @@
+# @package _global_
+# E1: Main pretrain — base model, 3 seeds, best HP from search.
+# Target: ~3.5 days/seed on 1x H100 (100k steps × ~2.8s/step).
+defaults:
+  - override /model: base
+  - override /data: wikidata_5m
+  - override /training: pretrain
+  - _self_
+
+seed: 42
+run_name: pretrain_wiki5m_s${seed}_${now:%Y%m%d_%H%M%S}
+
+data:
+  max_nodes: 128
+
+training:
+  max_steps: 100000
+  warmup_steps: 2000
+  val_check_interval: 2000
+  batch_size: 4
+  gradient_accumulation_steps: 8
+  # Fill in from HP search (stage 2) before running:
+  # lr: ???
+  # lambda_X: ???
+  # lambda_ex: ???
+  # lambda_ty: ???
+  # lambda_align_R: ???

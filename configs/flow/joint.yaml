@@ -1,0 +1,16 @@
+_target_: riemannfm.flow.joint_flow.RiemannFMJointFlow
+num_inference_steps: 100
+time_distribution: logit_normal
+logit_normal_mu: 0.0
+logit_normal_sigma: 1.0
+beta_a: 5.0                # used when time_distribution == "beta"
+beta_b: 1.0
+edge_schedule: cosine      # α(t) for the masked discrete flow (§8.2)
+ode_method: euler
+ode_atol: 1.0e-5
+ode_rtol: 1.0e-5
+t_max: 0.999
+disable_continuous: false
+disable_discrete: false
+radius_h: 5.0
+sigma_e: 1.0

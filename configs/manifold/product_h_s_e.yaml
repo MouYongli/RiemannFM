@@ -1,0 +1,7 @@
+_target_: riemannfm.manifolds.product.RiemannFMProductManifold
+dim_hyperbolic: 32
+dim_spherical: 32
+dim_euclidean: 32
+init_curvature_h: -1.0
+init_curvature_s: 1.0
+learn_curvature: true

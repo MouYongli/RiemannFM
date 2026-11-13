@@ -44,8 +44,12 @@ dev = [
 ]
 
 [project.scripts]
-riemannfm-download = "riemannfm.cli.download:main"
+riemannfm-pretrain = "riemannfm.cli.pretrain:main"
+riemannfm-finetune = "riemannfm.cli.finetune:main"
+riemannfm-evaluate = "riemannfm.cli.evaluate:main"
+riemannfm-generate = "riemannfm.cli.generate:main"
 riemannfm-preprocess = "riemannfm.cli.preprocess:main"
+riemannfm-download = "riemannfm.cli.download:main"
 
 [build-system]
 requires = ["hatchling"]

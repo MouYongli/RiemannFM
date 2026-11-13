@@ -1,0 +1,6 @@
+task: kgc_lp
+
+scoring: manifold_dist  # manifold_dist | bilinear
+neg_samples: 256
+margin: 1.0
+eval_batch_size: 64

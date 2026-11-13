@@ -1,0 +1,11 @@
+_target_: riemannfm.models.riemannfm.RiemannFM
+num_layers: 14
+node_dim: 768
+rel_dim: 256
+edge_dim: 256
+num_heads_V: 12
+num_heads_R: 8
+rel_emb_dim: 64
+text_proj_dim: 512
+ff_mult: 4
+dropout: 0.1

@@ -1,0 +1,17 @@
+# @package _global_
+# Phase 0: Smoke test — verify code runs, loss decreases, no NaN/OOM.
+# Target: wikidata_5m_mini + small model, ~4 min on 1x H100.
+defaults:
+  - override /model: small
+  - override /data: wikidata_5m_mini
+  - override /training: pretrain
+  - _self_
+
+seed: 42
+run_name: smoke_test_${now:%Y%m%d_%H%M%S}
+
+training:
+  max_steps: 1000
+  warmup_steps: 200
+  val_check_interval: 500
+  gradient_accumulation_steps: 1

@@ -1,0 +1,28 @@
+# @package _global_
+# KGC link prediction fine-tuning on FB15K-237.
+defaults:
+  - override /model: base
+  - override /data: fb15k_237
+  - override /training: finetune
+  - _self_
+
+seed: 42
+run_name: kgc_lp_fb15k237_s${seed}_${now:%Y%m%d_%H%M%S}
+
+task:
+  task: kgc_lp
+  scoring: manifold_dist
+  neg_samples: 256
+  margin: 1.0
+  eval_batch_size: 64
+
+pretrain_ckpt: ???  # path to pretrained checkpoint
+
+training:
+  max_steps: 10000
+  warmup_steps: 500
+  val_check_interval: 500
+  batch_size: 512
+  backbone_frozen: false
+  backbone_lr: 1.0e-5
+  head_lr: 1.0e-3

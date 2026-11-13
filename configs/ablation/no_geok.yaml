@@ -1,0 +1,9 @@
+# Ablation: disable geodesic kernel in A_V (spec §12.2).
+use_a_r: true
+use_c: true
+use_d_vr: true
+use_d_ve: true
+use_e_v: true
+use_e_r: true
+use_geodesic_kernel: false
+use_relation_similarity_bias: true

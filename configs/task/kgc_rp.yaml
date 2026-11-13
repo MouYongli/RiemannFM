@@ -1,0 +1,5 @@
+task: kgc_rp
+
+hidden_dim: 512
+neg_samples: 256
+eval_batch_size: 64
