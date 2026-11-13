@@ -79,12 +79,11 @@ def build_id_mappings(
         relation2id = _load_id_mapping(relation2id_path)
 
         # Verify triples exist too
-        all_exist = all(
-            (processed_dir / f"{split}_triples.pt").exists()
-            for split in _SPLIT_NAMES
-        )
+        all_exist = all((processed_dir / f"{split}_triples.pt").exists() for split in _SPLIT_NAMES)
         if all_exist:
-            logger.info(f"ID mappings already exist ({len(entity2id)} entities, {len(relation2id)} relations), skipping.")
+            logger.info(
+                f"ID mappings already exist ({len(entity2id)} entities, {len(relation2id)} relations), skipping."
+            )
             return entity2id, relation2id
 
     # Collect all entities and relations from all splits
@@ -101,7 +100,7 @@ def build_id_mappings(
             continue
 
         triples: list[tuple[str, str, str]] = []
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             for line in f:
                 parts = line.strip().split("\t")
                 if len(parts) == 3:
@@ -140,7 +139,7 @@ def build_id_mappings(
 
 def _save_id_mapping(mapping: dict[str, int], path: Path) -> None:
     """Save string→int mapping as TSV."""
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         for key, idx in sorted(mapping.items(), key=lambda x: x[1]):
             f.write(f"{key}\t{idx}\n")
 
@@ -148,7 +147,7 @@ def _save_id_mapping(mapping: dict[str, int], path: Path) -> None:
 def _load_id_mapping(path: Path) -> dict[str, int]:
     """Load string→int mapping from TSV."""
     mapping: dict[str, int] = {}
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         for line in f:
             parts = line.strip().split("\t")
             if len(parts) == 2:
@@ -234,7 +233,7 @@ def _load_texts_ordered(texts_path: Path, id_path: Path) -> list[str]:
     """
     # Build string_id -> text lookup
     id_to_text: dict[str, str] = {}
-    with open(texts_path) as f:
+    with open(texts_path, encoding="utf-8") as f:
         for line in f:
             parts = line.strip().split("\t", 1)
             if len(parts) == 2:
@@ -242,7 +241,7 @@ def _load_texts_ordered(texts_path: Path, id_path: Path) -> list[str]:
 
     # Load id mapping: string_id -> int_id
     id_mapping: list[tuple[str, int]] = []
-    with open(id_path) as f:
+    with open(id_path, encoding="utf-8") as f:
         for line in f:
             parts = line.strip().split("\t")
             if len(parts) == 2:
@@ -260,9 +259,7 @@ def _load_texts_ordered(texts_path: Path, id_path: Path) -> list[str]:
             missing += 1
 
     if missing > 0:
-        logger.warning(
-            f"{missing}/{n} IDs in {id_path.name} have no text in {texts_path.name}"
-        )
+        logger.warning(f"{missing}/{n} IDs in {id_path.name} have no text in {texts_path.name}")
     else:
         logger.info(f"Loaded {n} texts aligned with {id_path.name}")
 
@@ -275,24 +272,33 @@ def _load_texts_ordered(texts_path: Path, id_path: Path) -> list[str]:
 def build_mini_wikidata_5m(
     source_dir: str = "data/wikidata_5m",
     output_dir: str = "data/wikidata_5m_mini",
-    max_entities: int = 1000,
-    target_triples: int = 5000,
+    min_entities: int = 1000,
+    min_triples: int = 5000,
     seed: int = 42,
     force: bool = False,
 ) -> Path:
     """Build a small engineering validation subset from full WikiData5M.
 
     Uses relation-aware sampling to ensure diverse relation coverage:
-    1. Sample triples from every relation type for coverage
-    2. Fill entity budget with additional triples
-    3. Densify by adding triples within the sampled entity set
-    4. Split into train/val/test (80/10/10)
+    1. Sample ``max(3, min_triples // num_relations)`` triples per relation
+       to guarantee coverage; this alone can already overshoot ``min_triples``
+       and ``min_entities`` when num_relations is large.
+    2. If Phase 1 entities < ``min_entities``, fill from remaining triples.
+    3. Densify: add all remaining triples whose h and t are both already in
+       the selected entity set. Densification has no upper bound and is
+       what typically dominates the final size — e.g. with min_triples=5000
+       and min_entities=1000 against the 822-relation WikiData5M we end up
+       with ~7.8K entities / ~23K triples in practice.
+    4. Split into train/val/test (80/10/10).
+
+    ``min_*`` are floors / hints, not caps. If you need a hard cap on the
+    final size, subsample Phase 3's output downstream.
 
     Args:
         source_dir: Path to full WikiData5M dataset (with raw/ subdirectory).
         output_dir: Path for the mini dataset output.
-        max_entities: Target number of entities (~1K).
-        target_triples: Target number of triples (~5K).
+        min_entities: Minimum entity count Phase 2 aims for (may be exceeded by Phase 1).
+        min_triples: Per-relation sampling floor for Phase 1 (may be exceeded by Phase 3 densify).
         seed: Random seed for deterministic sampling.
         force: Rebuild even if output already exists.
 
@@ -310,11 +316,10 @@ def build_mini_wikidata_5m(
 
     if not source_raw.exists():
         raise FileNotFoundError(
-            f"Source data not found at {source_raw}. "
-            "Run `make download ARGS=\"data=wikidata_5m\"` first."
+            f'Source data not found at {source_raw}. Run `make download ARGS="data=wikidata_5m"` first.'
         )
 
-    random.seed(seed)
+    rng = random.Random(seed)
     output_raw.mkdir(parents=True, exist_ok=True)
 
     # ── Load all triples from all splits ────────────────────────────────────
@@ -323,7 +328,7 @@ def build_mini_wikidata_5m(
         path = _find_split_file(source_raw, split)
         if path is None:
             continue
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             for line in f:
                 parts = line.strip().split("\t")
                 if len(parts) == 3:
@@ -337,7 +342,7 @@ def build_mini_wikidata_5m(
         rel_to_triples[r].append((h, r, t))
 
     num_relations = len(rel_to_triples)
-    per_rel = max(3, target_triples // num_relations)
+    per_rel = max(3, min_triples // num_relations)
     logger.info(f"  {num_relations} relation types, sampling {per_rel} triples per relation")
 
     selected: list[tuple[str, str, str]] = []
@@ -346,7 +351,7 @@ def build_mini_wikidata_5m(
 
     for _rel, triples in rel_to_triples.items():
         k = min(per_rel, len(triples))
-        sampled = random.sample(triples, k)
+        sampled = rng.sample(triples, k)
         for triple in sampled:
             if triple not in selected_set:
                 selected.append(triple)
@@ -357,11 +362,11 @@ def build_mini_wikidata_5m(
     logger.info(f"  Phase 1 (relation coverage): {len(selected):,} triples, {len(entities):,} entities")
 
     # ── Phase 2: Fill entity budget ─────────────────────────────────────────
-    if len(entities) < max_entities:
+    if len(entities) < min_entities:
         remaining = [t for t in all_triples if t not in selected_set]
-        random.shuffle(remaining)
+        rng.shuffle(remaining)
         for triple in remaining:
-            if len(entities) >= max_entities:
+            if len(entities) >= min_entities:
                 break
             if triple not in selected_set:
                 selected.append(triple)
@@ -382,7 +387,7 @@ def build_mini_wikidata_5m(
     logger.info(f"  Phase 3 (densify): +{densified:,} triples → {len(selected):,} total")
 
     # ── Split into train/val/test (80/10/10) ────────────────────────────────
-    random.shuffle(selected)
+    rng.shuffle(selected)
     n = len(selected)
     n_val = max(1, n // 10)
     n_test = max(1, n // 10)
@@ -396,7 +401,7 @@ def build_mini_wikidata_5m(
 
     for split_name, triples in splits.items():
         out_path = output_raw / f"{split_name}_triples.txt"
-        with open(out_path, "w") as f:
+        with open(out_path, "w", encoding="utf-8") as f:
             for h, r, t in triples:
                 f.write(f"{h}\t{r}\t{t}\n")
         logger.info(f"  {split_name}: {len(triples):,} triples → {out_path.name}")
@@ -430,7 +435,7 @@ def build_mini_wikidata_5m(
 
 def _filter_text_file(src: Path, dst: Path, keep_ids: set[str]) -> None:
     """Filter a TSV text file to only include IDs in keep_ids."""
-    with open(src) as fin, open(dst, "w") as fout:
+    with open(src, encoding="utf-8") as fin, open(dst, "w", encoding="utf-8") as fout:
         for line in fin:
             parts = line.split("\t", 1)
             if parts and parts[0] in keep_ids:
@@ -470,10 +475,7 @@ def run_preprocess(
     processed_dir = Path(data_dir) / "processed"
 
     if not raw_dir.exists():
-        raise FileNotFoundError(
-            f"Raw data not found at {raw_dir}. "
-            "Run `make download` first."
-        )
+        raise FileNotFoundError(f"Raw data not found at {raw_dir}. Run `make download` first.")
 
     # Stage 1: ID mappings + int triples
     build_id_mappings(raw_dir, processed_dir, force=force)
@@ -495,7 +497,8 @@ def run_preprocess(
         pooling=pooling,
     )
     precompute_embeddings(
-        raw_dir, processed_dir,
+        raw_dir,
+        processed_dir,
         embedder=embedder,
         encoder_key=key,
         dim=output_dim,

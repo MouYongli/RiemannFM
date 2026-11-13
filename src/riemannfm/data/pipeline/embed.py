@@ -165,9 +165,7 @@ class RiemannFMTextEmbedder:
             log_path.parent.mkdir(parents=True, exist_ok=True)
             file_handler = logging.FileHandler(log_path, mode="a", encoding="utf-8")
             file_handler.setLevel(logging.DEBUG)
-            file_handler.setFormatter(
-                logging.Formatter("%(asctime)s [%(levelname)s] %(name)s — %(message)s")
-            )
+            file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s — %(message)s"))
             logging.getLogger("riemannfm.data.pipeline.embed").addHandler(file_handler)
             logger.info(f"Embedding log → {log_path}")
 
@@ -175,9 +173,7 @@ class RiemannFMTextEmbedder:
             return self._embed_with_checkpoints(texts, output_path, shard_size)
         finally:
             if file_handler is not None:
-                logging.getLogger("riemannfm.data.pipeline.embed").removeHandler(
-                    file_handler
-                )
+                logging.getLogger("riemannfm.data.pipeline.embed").removeHandler(file_handler)
                 file_handler.close()
 
     def _embed_with_checkpoints(
@@ -207,16 +203,11 @@ class RiemannFMTextEmbedder:
 
         n_shards = (len(texts) + shard_size - 1) // shard_size
         logger.info(
-            f"Embedding {len(texts):,} texts in {n_shards} shards "
-            f"(shard_size={shard_size:,}), checkpoints → {ckpt_dir}"
+            f"Embedding {len(texts):,} texts in {n_shards} shards (shard_size={shard_size:,}), checkpoints → {ckpt_dir}"
         )
 
         # Count already-completed shards for progress bar initial position
-        done_shards = sum(
-            1
-            for si in range(n_shards)
-            if (ckpt_dir / f"shard_{si:05d}.pt").exists()
-        )
+        done_shards = sum(1 for si in range(n_shards) if (ckpt_dir / f"shard_{si:05d}.pt").exists())
         if done_shards > 0:
             logger.info(f"Resuming: {done_shards}/{n_shards} shards already done")
 
@@ -297,9 +288,7 @@ class RiemannFMTextEmbedder:
             if self.pooling == "last_token":
                 # Use the last non-padding token
                 seq_len = inputs["attention_mask"].sum(dim=1) - 1
-                embeds = outputs.last_hidden_state[
-                    torch.arange(len(batch_texts)), seq_len
-                ]
+                embeds = outputs.last_hidden_state[torch.arange(len(batch_texts)), seq_len]
             else:
                 # Mean pooling (default)
                 mask = inputs["attention_mask"].unsqueeze(-1).float()
@@ -325,8 +314,7 @@ class RiemannFMTextEmbedder:
             from openai import OpenAI
         except ImportError as e:
             raise ImportError(
-                "openai package required for ollama/openai embedding_provider. "
-                "Install with: pip install openai"
+                "openai package required for ollama/openai embedding_provider. Install with: pip install openai"
             ) from e
 
         api_base = self.api_base
@@ -364,14 +352,12 @@ class RiemannFMTextEmbedder:
                     )
                     if attempt > 0:
                         retried_batches.add(batch_idx)
-                        logger.info(
-                            f"Batch {batch_idx} succeeded on attempt {attempt + 1}"
-                        )
+                        logger.info(f"Batch {batch_idx} succeeded on attempt {attempt + 1}")
                     return torch.stack([torch.tensor(item.embedding) for item in response.data])
                 except Exception as e:
                     if attempt == max_attempts - 1:
                         raise
-                    delay = (2 ** attempt) + random.uniform(0, 1)
+                    delay = (2**attempt) + random.uniform(0, 1)
                     logger.warning(
                         f"Batch {batch_idx} (texts [{batch_idx * self.batch_size}..]) "
                         f"failed (attempt {attempt + 1}/{max_attempts}): "
@@ -387,8 +373,7 @@ class RiemannFMTextEmbedder:
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as pool:
             futures = {
-                pool.submit(_encode_batch, idx, batch_texts): idx
-                for idx, (_, batch_texts) in enumerate(batches)
+                pool.submit(_encode_batch, idx, batch_texts): idx for idx, (_, batch_texts) in enumerate(batches)
             }
             for future in concurrent.futures.as_completed(futures):
                 idx = futures[future]
@@ -396,8 +381,7 @@ class RiemannFMTextEmbedder:
                     results[idx] = future.result()
                 except Exception as e:
                     logger.error(
-                        f"Batch {idx} (texts [{idx * self.batch_size}..]) "
-                        f"failed after {max_attempts} attempts: {e!r}"
+                        f"Batch {idx} (texts [{idx * self.batch_size}..]) failed after {max_attempts} attempts: {e!r}"
                     )
                     failed.append((idx, batches[idx][1]))
                 pbar.update(1)
@@ -432,12 +416,15 @@ class RiemannFMTextEmbedder:
         n_failed_concurrent = len(failed)
         n_recovered = len(seq_recovered)
         n_permanent = len(permanently_failed)
-        n_retried_inline = len(retried_batches - {idx for idx, _ in failed})
+        # retried_batches is populated only on the success path at L354
+        # (inside 'if attempt > 0' before 'return'), so it is disjoint
+        # from 'failed' by construction — the earlier set subtraction
+        # was a no-op.
+        n_retried_inline = len(retried_batches)
         n_first_try = n_total - n_retried_inline - n_failed_concurrent
 
         summary_lines = [
-            f"Embedding summary: {n_total} batches, "
-            f"{len(texts):,} texts, batch_size={self.batch_size}",
+            f"Embedding summary: {n_total} batches, {len(texts):,} texts, batch_size={self.batch_size}",
             f"  first-try success : {n_first_try}",
             f"  retried (in-line) : {n_retried_inline}",
             f"  failed→sequential : {n_failed_concurrent}",
@@ -457,10 +444,7 @@ class RiemannFMTextEmbedder:
         out = torch.cat([r for r in results if r is not None], dim=0)
         # Truncate to output_dim (supports Matryoshka embeddings like qwen3).
         if out.shape[-1] > self.output_dim:
-            logger.info(
-                f"Truncating embeddings from {out.shape[-1]} to {self.output_dim} "
-                f"(Matryoshka truncation)"
-            )
+            logger.info(f"Truncating embeddings from {out.shape[-1]} to {self.output_dim} (Matryoshka truncation)")
             out = out[..., : self.output_dim]
         return out
 

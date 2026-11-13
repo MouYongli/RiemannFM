@@ -24,7 +24,7 @@ jobs:
           python-version: "3.12"
       - run: uv sync --group dev
       - run: make lint
-      - run: uv run ruff format --check src/riedfm tests
+      - run: uv run ruff format --check src/riemannfm tests
 
   typecheck:
     name: Type Check

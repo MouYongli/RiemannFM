@@ -104,8 +104,9 @@ uv run python -m riemannfm.cli.download data=codex_l
 uv run python -m riemannfm.cli.download data=yago3_10
 uv run python -m riemannfm.cli.download data=wiki27k              # Google Drive via gdown
 
-# 下载全部数据集
-uv run python -m riemannfm.cli.download download.all=true
+# 下载全部数据集（Hydra multirun）
+uv run python -m riemannfm.cli.download --multirun \
+    data=wikidata_5m,fb15k_237,wn18rr,codex_l,wiki27k,yago3_10
 
 # 强制重新下载
 uv run python -m riemannfm.cli.download data=wn18rr download.force=true
@@ -117,7 +118,7 @@ uv run python -m riemannfm.cli.download data=wn18rr download.force=true
 |------|--------|------|
 | `data=` | `wikidata_5m` | 选择数据集（对应 `configs/data/*.yaml`） |
 | `download.force` | `false` | 强制重新下载 |
-| `download.all` | `false` | 下载全部数据集 |
+| `--multirun` | — | 批量运行多个数据集，配合 `data=slug1,slug2,...` |
 
 ### 4.3 三阶段流水线
 
@@ -283,8 +284,9 @@ uv run python -m riemannfm.cli.preprocess data=wikidata_5m_mini embedding=sbert
 ### 全量下载 + 预处理
 
 ```bash
-# 1. 下载全部数据集
-uv run python -m riemannfm.cli.download download.all=true
+# 1. 下载全部数据集（Hydra multirun）
+uv run python -m riemannfm.cli.download --multirun \
+    data=wikidata_5m,fb15k_237,wn18rr,codex_l,wiki27k,yago3_10
 
 # 2. 预处理 WikiData5M
 uv run python -m riemannfm.cli.preprocess data=wikidata_5m embedding=qwen3

@@ -33,7 +33,7 @@ def _check_triples(path: Path, label: str) -> tuple[bool, int, set[str], set[str
     bad_lines = 0
     total = 0
 
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         for i, line in enumerate(f):
             parts = line.strip().split("\t")
             if len(parts) != 3:
@@ -56,9 +56,7 @@ def _check_triples(path: Path, label: str) -> tuple[bool, int, set[str], set[str
     return ok, total, entities, relations
 
 
-def _check_text_file(
-    path: Path, label: str, reference_ids: set[str]
-) -> bool:
+def _check_text_file(path: Path, label: str, reference_ids: set[str]) -> bool:
     """Validate a TSV text file (entity_texts.tsv or relation_texts.tsv)."""
     if not path.exists():
         logger.warning(f"  SKIP  {label}: file not found")
@@ -69,7 +67,7 @@ def _check_text_file(
     bad_lines = 0
     total = 0
 
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         for i, line in enumerate(f):
             parts = line.strip().split("\t", 1)
             if len(parts) != 2:
@@ -97,10 +95,11 @@ def _check_text_file(
 
 def _check_split_leakage(train: Path, val: Path | None, test: Path | None) -> bool:
     """Check for triple leakage between splits."""
+
     def load(p: Path | None) -> set[tuple[str, str, str]]:
         s: set[tuple[str, str, str]] = set()
         if p and p.exists():
-            with open(p) as f:
+            with open(p, encoding="utf-8") as f:
                 for line in f:
                     parts = line.strip().split("\t")
                     if len(parts) == 3:
@@ -124,7 +123,7 @@ def _check_split_leakage(train: Path, val: Path | None, test: Path | None) -> bo
 def _log_relation_distribution(train: Path) -> None:
     """Log top/bottom relations by frequency."""
     counter: Counter[str] = Counter()
-    with open(train) as f:
+    with open(train, encoding="utf-8") as f:
         for line in f:
             parts = line.strip().split("\t")
             if len(parts) == 3:

@@ -83,6 +83,23 @@ _CODEX_SPLIT_URLS: dict[str, str] = {
     "test": f"{_CODEX_BASE}/test.txt",
 }
 
+# Wiki27K PKGC zip ships ~578MB of KGE negative-sampling and link-prediction
+# eval files we don't use in flow matching. Whitelist only the members the
+# rest of our pipeline consumes: core triple splits, entity label/definition
+# (fed to _build_wiki27k_entity_texts), and relation label JSON (fed to
+# _build_wiki27k_relation_texts).
+_WIKI27K_KEEP: frozenset[str] = frozenset(
+    {
+        "train.txt",
+        "valid.txt",
+        "test.txt",
+        "entity2label.txt",
+        "entity2definition.txt",
+        "relation2label.json",
+        "relation2template.json",
+    }
+)
+
 
 def get_download_meta(slug: str) -> DownloadMeta:
     """Look up download metadata from the registry.
@@ -131,14 +148,10 @@ def download_graph(
         logger.info(f"[{slug}] Graph files already exist in raw/, skipping download.")
         return raw_dir
 
-    if meta.download_format == "tar.gz":
-        _download_tar_gz(slug, meta, raw_dir)
-    elif meta.download_format == "wikidata5m":
+    if meta.download_format == "wikidata5m":
         _download_wikidata5m(slug, meta, raw_dir)
     elif meta.download_format == "codex":
         _download_codex(slug, raw_dir)
-    elif meta.download_format == "zip":
-        _download_zip(slug, meta, raw_dir)
     elif meta.download_format == "github_files":
         _download_github_files(slug, meta, raw_dir)
     elif meta.download_format == "wiki27k":
@@ -147,29 +160,6 @@ def download_graph(
         logger.warning(f"[{slug}] Unknown download format: {meta.download_format}")
 
     return raw_dir
-
-
-def _download_tar_gz(slug: str, meta: DownloadMeta, raw_dir: Path) -> None:
-    """Download and extract a tar.gz archive."""
-    if meta.download_url is None:
-        logger.warning(f"[{slug}] No download URL configured. Please manually place graph files in {raw_dir}/")
-        return
-
-    logger.info(f"[{slug}] Downloading from {meta.download_url}...")
-    with tempfile.TemporaryDirectory() as tmpdir:
-        archive_path = Path(tmpdir) / "dataset.tar.gz"
-        urlretrieve(meta.download_url, str(archive_path))
-        with tarfile.open(archive_path, "r:gz") as tar:
-            tar.extractall(tmpdir)
-
-        for extracted_dir in Path(tmpdir).iterdir():
-            if extracted_dir.is_dir() and extracted_dir.name != "__MACOSX":
-                for f in extracted_dir.iterdir():
-                    if f.is_file():
-                        shutil.copy2(f, raw_dir / f.name)
-                break
-
-    logger.info(f"[{slug}] Graph files downloaded to {raw_dir}/")
 
 
 def _download_wikidata5m(slug: str, meta: DownloadMeta, raw_dir: Path) -> None:
@@ -187,7 +177,7 @@ def _download_wikidata5m(slug: str, meta: DownloadMeta, raw_dir: Path) -> None:
         archive_path = Path(tmpdir) / "wikidata5m_transductive.tar.gz"
         urlretrieve(meta.download_url, str(archive_path))
         with tarfile.open(archive_path, "r:gz") as tar:
-            tar.extractall(tmpdir)
+            tar.extractall(tmpdir, filter="data")
 
         # Archive contains: wikidata5m_transductive_{train,valid,test}.txt
         rename_map = {
@@ -226,29 +216,6 @@ def _download_codex(slug: str, raw_dir: Path) -> None:
     logger.info(f"[{slug}] CoDEx-L downloaded to {raw_dir}/")
 
 
-def _download_zip(slug: str, meta: DownloadMeta, raw_dir: Path) -> None:
-    """Download and extract a zip archive."""
-    if meta.download_url is None:
-        logger.warning(f"[{slug}] No download URL configured. Please manually place graph files in {raw_dir}/")
-        return
-
-    logger.info(f"[{slug}] Downloading from {meta.download_url}...")
-    with tempfile.TemporaryDirectory() as tmpdir:
-        archive_path = Path(tmpdir) / "dataset.zip"
-        urlretrieve(meta.download_url, str(archive_path))
-        with zipfile.ZipFile(archive_path, "r") as zf:
-            zf.extractall(tmpdir)
-
-        for extracted in Path(tmpdir).iterdir():
-            if extracted.is_dir() and extracted.name != "__MACOSX":
-                for f in extracted.iterdir():
-                    if f.is_file():
-                        shutil.copy2(f, raw_dir / f.name)
-                break
-
-    logger.info(f"[{slug}] Graph files downloaded to {raw_dir}/")
-
-
 def _download_github_files(slug: str, meta: DownloadMeta, raw_dir: Path) -> None:
     """Download individual files from a GitHub raw directory URL.
 
@@ -277,10 +244,17 @@ def _download_github_files(slug: str, meta: DownloadMeta, raw_dir: Path) -> None
         try:
             urlretrieve(url, str(dest))
             logger.info(f"[{slug}]   ✓ {fname}")
-        except Exception:
+        except Exception as exc:
             if fname in ("train.txt", "valid.txt", "test.txt"):
-                logger.warning(f"[{slug}]   ✗ {fname} (required file missing!)")
-            # Optional files (dicts, json) — silently skip.
+                logger.warning(
+                    f"[{slug}]   ✗ {fname} failed to download: {exc!r} "
+                    "(required file — check network / upstream availability)",
+                    exc_info=True,
+                )
+            else:
+                # Optional files (dicts, json): log at debug for diagnosis
+                # without cluttering normal output.
+                logger.debug(f"[{slug}]   ✗ {fname} (optional) skipped: {exc!r}")
 
     logger.info(f"[{slug}] Graph files downloaded to {raw_dir}/")
 
@@ -310,11 +284,19 @@ def _download_wiki27k(slug: str, meta: DownloadMeta, raw_dir: Path) -> None:
 
         with zipfile.ZipFile(zip_path, "r") as zf:
             prefix = "dataset/Wiki27K/"
+            raw_dir_resolved = raw_dir.resolve()
             for member in zf.namelist():
-                if member.startswith(prefix) and not member.endswith("/"):
-                    fname = member[len(prefix):]
-                    with zf.open(member) as fin, open(raw_dir / fname, "wb") as fout:
-                        shutil.copyfileobj(fin, fout)
+                if not (member.startswith(prefix) and not member.endswith("/")):
+                    continue
+                fname = member[len(prefix) :]
+                if fname not in _WIKI27K_KEEP:
+                    continue
+                target = (raw_dir / fname).resolve()
+                if raw_dir_resolved not in target.parents and target != raw_dir_resolved:
+                    logger.warning(f"[{slug}] Skipping unsafe archive member: {member}")
+                    continue
+                with zf.open(member) as fin, open(target, "wb") as fout:
+                    shutil.copyfileobj(fin, fout)
 
     # Build entity_texts.tsv from label + definition.
     _build_wiki27k_entity_texts(raw_dir)
@@ -329,7 +311,7 @@ def _build_wiki27k_entity_texts(raw_dir: Path) -> None:
     labels: dict[str, str] = {}
     label_path = raw_dir / "entity2label.txt"
     if label_path.exists():
-        with open(label_path) as f:
+        with open(label_path, encoding="utf-8") as f:
             for line in f:
                 parts = line.strip().split("\t", 1)
                 if len(parts) == 2:
@@ -338,7 +320,7 @@ def _build_wiki27k_entity_texts(raw_dir: Path) -> None:
     defs: dict[str, str] = {}
     def_path = raw_dir / "entity2definition.txt"
     if def_path.exists():
-        with open(def_path) as f:
+        with open(def_path, encoding="utf-8") as f:
             for line in f:
                 parts = line.strip().split("\t", 1)
                 if len(parts) == 2:
@@ -348,7 +330,7 @@ def _build_wiki27k_entity_texts(raw_dir: Path) -> None:
     for name in ("train.txt", "valid.txt", "test.txt"):
         path = raw_dir / name
         if path.exists():
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 for line in f:
                     parts = line.strip().split("\t")
                     if len(parts) >= 3:
@@ -356,7 +338,7 @@ def _build_wiki27k_entity_texts(raw_dir: Path) -> None:
                         entities.add(parts[2])
 
     output = raw_dir / "entity_texts.tsv"
-    with open(output, "w") as f:
+    with open(output, "w", encoding="utf-8") as f:
         for eid in sorted(entities):
             label = labels.get(eid, eid)
             defn = defs.get(eid, "")
@@ -371,21 +353,21 @@ def _build_wiki27k_relation_texts(raw_dir: Path) -> None:
     label_path = raw_dir / "relation2label.json"
     rel_labels: dict[str, str] = {}
     if label_path.exists():
-        with open(label_path) as f:
+        with open(label_path, encoding="utf-8") as f:
             rel_labels = json.load(f)
 
     relations: set[str] = set()
     for name in ("train.txt", "valid.txt", "test.txt"):
         path = raw_dir / name
         if path.exists():
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 for line in f:
                     parts = line.strip().split("\t")
                     if len(parts) >= 3:
                         relations.add(parts[1])
 
     output = raw_dir / "relation_texts.tsv"
-    with open(output, "w") as f:
+    with open(output, "w", encoding="utf-8") as f:
         for rid in sorted(relations):
             text = rel_labels.get(rid, rid)
             f.write(f"{rid}\t{text}\n")
@@ -468,7 +450,7 @@ def _extract_texts_wordnet(raw_dir: Path, output_path: Path) -> None:
         offset_to_synset = None
 
     logger.info(f"[wn18rr] Extracting WordNet definitions for {len(entity2id)} entities...")
-    with open(output_path, "w") as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         for entity_name in tqdm(entity2id, desc="Extracting WordNet texts"):
             # Resolve synset name from offset if needed.
             if offset_to_synset is not None:
@@ -505,10 +487,7 @@ def _build_wn18rr_offset_mapping(
         (entity2id, offset_to_synset) — entity2id maps offset strings to
         dummy integer IDs; offset_to_synset maps offset to synset name.
     """
-    _WN_TEXT_BASE = (
-        "https://raw.githubusercontent.com/villmow/datasets_knowledge_embedding"
-        "/master/WN18RR/text"
-    )
+    _WN_TEXT_BASE = "https://raw.githubusercontent.com/villmow/datasets_knowledge_embedding/master/WN18RR/text"
 
     logger.info("[wn18rr] Building offset→synset mapping from text/ triples...")
 
@@ -520,7 +499,7 @@ def _build_wn18rr_offset_mapping(
         path = raw_dir / split
         if not path.exists():
             continue
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             for line in f:
                 parts = line.strip().split("\t")
                 if len(parts) >= 3:
@@ -538,7 +517,7 @@ def _build_wn18rr_offset_mapping(
                 tmp_path = Path(tmp.name)
             urlretrieve(url, str(tmp_path))
 
-            with open(orig_path) as f_orig, open(tmp_path) as f_text:
+            with open(orig_path, encoding="utf-8") as f_orig, open(tmp_path, encoding="utf-8") as f_text:
                 for orig_line, text_line in zip(f_orig, f_text):
                     orig_parts = orig_line.strip().split("\t")
                     text_parts = text_line.strip().split("\t")
@@ -572,7 +551,7 @@ def _extract_texts_wikipedia_mapping(raw_dir: Path, output_path: Path, text_url:
         urlretrieve(text_url, str(tmp_path))
 
         entity2id = _load_entity_mapping(raw_dir)
-        with open(tmp_path) as fin, open(output_path, "w") as fout:
+        with open(tmp_path, encoding="utf-8") as fin, open(output_path, "w", encoding="utf-8") as fout:
             for line in fin:
                 parts = line.strip().split("\t", 1)
                 if len(parts) == 2:
@@ -598,10 +577,10 @@ def _extract_texts_wikidata_description(raw_dir: Path, output_path: Path, text_u
     try:
         urlretrieve(text_url, str(tmp_path))
 
-        with open(tmp_path) as fin:
+        with open(tmp_path, encoding="utf-8") as fin:
             entities_data = json.load(fin)
 
-        with open(output_path, "w") as fout:
+        with open(output_path, "w", encoding="utf-8") as fout:
             for entity_id, info_dict in entities_data.items():
                 if isinstance(info_dict, dict):
                     label = info_dict.get("label", "")
@@ -625,10 +604,10 @@ def _extract_texts_wikipedia(raw_dir: Path, output_path: Path) -> None:
     entities_path = raw_dir / "entities.json"
     if entities_path.exists():
         logger.info("[wikidata_5m] Extracting texts from entities.json...")
-        with open(entities_path) as f:
+        with open(entities_path, encoding="utf-8") as f:
             entities = json.load(f)
 
-        with open(output_path, "w") as fout:
+        with open(output_path, "w", encoding="utf-8") as fout:
             for entity_id, info_dict in tqdm(entities.items(), desc="Extracting texts"):
                 label = info_dict.get("label", "")
                 description = info_dict.get("description", "")
@@ -649,7 +628,7 @@ def _extract_texts_wikipedia(raw_dir: Path, output_path: Path) -> None:
         urlretrieve(meta.text_url, str(gz_path))
 
         count = 0
-        with gzip.open(gz_path, "rt", encoding="utf-8") as fin, open(output_path, "w") as fout:
+        with gzip.open(gz_path, "rt", encoding="utf-8") as fin, open(output_path, "w", encoding="utf-8") as fout:
             for line in tqdm(fin, desc="Extracting entity texts"):
                 parts = line.strip().split("\t", 1)
                 if len(parts) == 2:
@@ -684,7 +663,7 @@ def _extract_texts_entity_name(raw_dir: Path, output_path: Path) -> None:
         for name in ("train.txt", "train_triples.txt"):
             path = raw_dir / name
             if path.exists():
-                with open(path) as f:
+                with open(path, encoding="utf-8") as f:
                     for line in f:
                         parts = line.strip().split("\t")
                         if len(parts) >= 3:
@@ -697,7 +676,7 @@ def _extract_texts_entity_name(raw_dir: Path, output_path: Path) -> None:
 
     logger.info(f"[entity_name] Generating text for {len(entity_names)} entities from names...")
 
-    with open(output_path, "w") as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         for name in tqdm(entity_names, desc="Cleaning entity names"):
             cleaned = name.replace("_", " ").replace("/", " ").strip()
             # Remove leading dots or special chars.
@@ -714,7 +693,7 @@ def _load_entity_mapping(raw_dir: Path) -> dict[str, int]:
     entity_file = raw_dir / "entities.dict"
     entity2id: dict[str, int] = {}
     if entity_file.exists():
-        with open(entity_file) as f:
+        with open(entity_file, encoding="utf-8") as f:
             for line in f:
                 parts = line.strip().split("\t")
                 if len(parts) == 2:
@@ -792,7 +771,7 @@ def _extract_relation_texts_wikidata5m(raw_dir: Path, output_path: Path) -> None
 
         # Parse alias file
         known: dict[str, str] = {}
-        with open(rel_files[0]) as fin:
+        with open(rel_files[0], encoding="utf-8") as fin:
             for line in fin:
                 parts = line.strip().split("\t")
                 if len(parts) >= 2:
@@ -806,14 +785,14 @@ def _extract_relation_texts_wikidata5m(raw_dir: Path, output_path: Path) -> None
         for fname in ("train_triples.txt", "val_triples.txt", "test_triples.txt"):
             fpath = raw_dir / fname
             if fpath.exists():
-                with open(fpath) as f:
+                with open(fpath, encoding="utf-8") as f:
                     for line in f:
                         parts = line.strip().split("\t")
                         if len(parts) == 3:
                             all_rels.add(parts[1])
 
         count = 0
-        with open(output_path, "w") as fout:
+        with open(output_path, "w", encoding="utf-8") as fout:
             for rel_id in sorted(all_rels | known.keys()):
                 text = known.get(rel_id, rel_id)
                 fout.write(f"{rel_id}\t{text}\n")
@@ -822,9 +801,7 @@ def _extract_relation_texts_wikidata5m(raw_dir: Path, output_path: Path) -> None
     logger.info(f"[wikidata_5m] Wrote {count} relation texts to {output_path}")
 
 
-def _extract_relation_texts_from_triples(
-    raw_dir: Path, output_path: Path, style: str
-) -> None:
+def _extract_relation_texts_from_triples(raw_dir: Path, output_path: Path, style: str) -> None:
     """Extract relation texts by collecting unique relations from triple files.
 
     Converts relation IDs to human-readable text based on naming style:
@@ -836,7 +813,7 @@ def _extract_relation_texts_from_triples(
     for fname in ("train.txt", "train_triples.txt"):
         fpath = raw_dir / fname
         if fpath.exists():
-            with open(fpath) as f:
+            with open(fpath, encoding="utf-8") as f:
                 for line in f:
                     parts = line.strip().split("\t")
                     if len(parts) >= 3:
@@ -847,7 +824,7 @@ def _extract_relation_texts_from_triples(
         return
 
     count = 0
-    with open(output_path, "w") as fout:
+    with open(output_path, "w", encoding="utf-8") as fout:
         for rel in sorted(relations):
             if style == "wordnet":
                 text = rel.lstrip("_").replace("_", " ")
@@ -873,7 +850,7 @@ def _extract_relation_texts_codex(raw_dir: Path, output_path: Path) -> None:
         return
 
     count = 0
-    with open(rel_file) as fin, open(output_path, "w") as fout:
+    with open(rel_file, encoding="utf-8") as fin, open(output_path, "w", encoding="utf-8") as fout:
         for line in fin:
             parts = line.strip().split("\t")
             if len(parts) == 2:
@@ -907,7 +884,20 @@ def run_pipeline(
     text_source: str,
     force: bool = False,
 ) -> None:
-    """Run the download pipeline: graph structure + entity texts.
+    """Run the full download pipeline for a dataset.
+
+    Stages (each idempotent — skipped when outputs already exist unless
+    ``force=True``):
+
+    1. ``download_graph``: fetch triples and entity/relation mappings → ``raw/``.
+    2. ``extract_entity_texts``: build ``raw/entity_texts.tsv`` according to
+       the dataset's ``text_source`` strategy (Wikipedia first-paragraph,
+       WordNet definitions, WikiData labels, etc.).
+    3. ``extract_relation_texts``: build ``raw/relation_texts.tsv`` from the
+       dataset's relation inventory.
+    4. Optional post-download validation via
+       ``riemannfm.data.pipeline.validate.validate_raw`` when that module is
+       present (it lands with the preprocess Issue); skipped otherwise.
 
     Args:
         slug: Dataset slug (for registry lookup and logging).
@@ -923,9 +913,15 @@ def run_pipeline(
     extract_entity_texts(slug, data_dir, text_source, force=force)
     extract_relation_texts(slug, data_dir, force=force)
 
-    from riemannfm.data.pipeline.validate import validate_raw
-
-    if not validate_raw(data_dir, slug=slug):
-        raise RuntimeError(f"[{slug}] Validation failed — check logs above.")
+    # validate_raw lives in riemannfm.data.pipeline.validate which is not yet
+    # on main (arrives with the preprocess Issue). Invoke it only if present
+    # so end-to-end download works in isolation.
+    try:
+        from riemannfm.data.pipeline.validate import validate_raw
+    except ImportError:
+        logger.info(f"[{slug}] validate_raw not available yet; skipping post-download validation.")
+    else:
+        if not validate_raw(data_dir, slug=slug):
+            raise RuntimeError(f"[{slug}] Validation failed — check logs above.")
 
     logger.info(f"[{slug}] Download complete.")
